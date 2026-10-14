@@ -59,10 +59,12 @@ services:
       UNI_SERVER_URL: http://uni:4200
       SEARXNG_URL: http://searxng:8080
       OLLAMA_URL: ${OLLAMA_URL:-http://host.docker.internal:11434}
+      COURSEWARE_DIR: /courseware
     extra_hosts:
       - "host.docker.internal:host-gateway"
     volumes:
       - engine-data:/data
+      - ./courseware:/courseware:ro
     ports: ["4100:4100"]
     depends_on:
       uni: { condition: service_healthy }

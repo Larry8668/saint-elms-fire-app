@@ -7,6 +7,7 @@ import { Switch } from '@/components/ui/overlays';
 import { Badge, Eyebrow, Input, Label, PageHeader, Panel, Skeleton } from '@/components/ui/primitives';
 import { api, type StoredSettings } from '@/lib/api';
 import { useHealth, useSaveSettings, useSettings } from '@/lib/queries';
+import { ProfilePanel } from './ProfilePanel';
 
 const ROLE_INFO: Record<ModelRole, { label: string; hint: string; icon: typeof Cpu }> = {
   tutor: { label: 'Teachers', hint: 'Chat for the Friend, Guide and Philosopher. Needs tool calling.', icon: Cpu },
@@ -51,15 +52,9 @@ export function SettingsView() {
         />
 
         <div className="space-y-6">
+          <ProfilePanel />
+
           <Panel className="grid gap-4 p-6 md:grid-cols-2">
-            <div>
-              <Label>Your name</Label>
-              <Input value={form.studentName} onChange={(e) => set('studentName', e.target.value)} />
-            </div>
-            <div>
-              <Label>Cohort</Label>
-              <Input value={form.cohortId} onChange={(e) => set('cohortId', e.target.value)} />
-            </div>
             <div>
               <Label>University server</Label>
               <Input value={form.uniServerUrl} onChange={(e) => set('uniServerUrl', e.target.value)} />

@@ -1,5 +1,5 @@
 import { conceptKey, type LessonMeta, type SyncStatus } from '@sef/shared';
-import { ArrowLeft, BookOpen, CheckCircle2, Clock, CloudDownload, LifeBuoy, MessageCircleQuestion, RefreshCw, ShieldCheck, WifiOff } from 'lucide-react';
+import { ArrowLeft, BookOpen, CheckCircle2, Clock, CloudDownload, KeyRound, LifeBuoy, MessageCircleQuestion, RefreshCw, ShieldCheck, WifiOff } from 'lucide-react';
 import { motion } from 'motion/react';
 import { useMemo } from 'react';
 import { Markdown } from '@/components/Markdown';
@@ -68,7 +68,13 @@ export function LibraryView() {
           }
         />
 
-        {sync.data && !sync.data.uniReachable && (
+        {sync.data?.authRequired && (
+          <Panel className="mb-6 flex items-center gap-3 border-ember-400/25 p-4 text-sm text-night-300">
+            <KeyRound className="size-4 text-ember-400" />
+            This device has no current university session for you. Sign out and sign back in while online to check for new releases. Everything installed keeps working.
+          </Panel>
+        )}
+        {sync.data && !sync.data.uniReachable && !sync.data.authRequired && (
           <Panel className="mb-6 flex items-center gap-3 border-ember-400/25 p-4 text-sm text-night-300">
             <WifiOff className="size-4 text-ember-400" />
             The university server is out of reach. Installed courses still work — new releases will appear when you are back online.
