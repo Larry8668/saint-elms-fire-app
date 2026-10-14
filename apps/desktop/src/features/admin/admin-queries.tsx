@@ -70,7 +70,8 @@ export function useSetReleased() {
       const previous = client.getQueryData<CohortSummary[]>(adminKeys.cohorts);
       client.setQueryData<CohortSummary[]>(adminKeys.cohorts, (rows) =>
         rows?.map((c) => {
-          if (c.id !== cohortId) return c;
+          // A '*' cohort has everything released; leave it to the server's answer.
+          if (c.id !== cohortId || c.courses.includes('*')) return c;
           const set = new Set(c.courses);
           for (const id of courseIds) released ? set.add(id) : set.delete(id);
           return { ...c, courses: [...set] };

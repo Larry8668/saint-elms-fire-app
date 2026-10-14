@@ -81,6 +81,32 @@ test('tokens reject tampering and expiry', async () => {
   assert.throws(() => verifyToken(token, keys.publicKeyPem, Date.now() + 120_000), /expired/);
 });
 
+test('validly signed tokens with malformed claims are rejected, never treated as non-expiring', async () => {
+  const { keys } = await harness();
+  const now = Math.floor(Date.now() / 1000);
+  const base = { iss: 'x', sub: 'ananya', role: 'student' as const, name: 'A', email: 'a@x', iat: now, exp: now + 60 };
+  const { exp: _exp, ...noExp } = base;
+  for (const claims of [noExp, { ...base, exp: 'later' }, { ...base, role: 'root' }]) {
+    const token = signToken(claims as never, keys.privateKey);
+    assert.throws(() => verifyToken(token, keys.publicKeyPem), /malformed claims/);
+  }
+  const [prefix, payload] = signToken(base, keys.privateKey).split('.');
+  assert.throws(() => verifyToken(`${prefix}.${payload}.!!not-base64!!`, keys.publicKeyPem), TokenError);
+});
+
+test('emails are unique regardless of case', async () => {
+  const { app, login } = await harness();
+  const admin = await login('admin@saintelms.local');
+  const create = (email: string) =>
+    app.request('/v1/admin/accounts', {
+      method: 'POST',
+      headers: { authorization: `Bearer ${admin}`, 'content-type': 'application/json' },
+      body: JSON.stringify({ email, name: 'Dee', password: 'long-enough-pw', role: 'student', cohortId: 'bsc-pma-2026' }),
+    });
+  assert.equal((await create('Dee@Saintelms.local')).status, 201);
+  assert.equal((await create('dee@saintelms.local')).status, 409);
+});
+
 test('students only see their own cohort and cannot reach admin routes', async () => {
   const { login, get } = await harness();
   assert.equal((await get('/v1/catalogue')).status, 401);

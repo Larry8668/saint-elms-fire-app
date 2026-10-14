@@ -1,5 +1,5 @@
 import path from 'node:path';
-import { DEMO_ADMIN, DEMO_PERSONAS, type Account, type AccountPatch, type NewAccount } from '@sef/shared';
+import { DEMO_ADMIN, DEMO_PASSWORD_DEFAULT, DEMO_PERSONAS, normalizeEmail, type Account, type AccountPatch, type NewAccount } from '@sef/shared';
 import { hashPassword, verifyPassword } from '@sef/shared/node';
 import { config } from '../config';
 import { log } from '../logger';
@@ -34,6 +34,9 @@ export class AccountStore {
   }
 
   private async seedDemo(): Promise<void> {
+    if (config.demoPassword === DEMO_PASSWORD_DEFAULT) {
+      log.warn('demo_password_default', { hint: 'Seeded accounts use the public demo password. Set DEMO_PASSWORD before exposing this server.' });
+    }
     const passwordHash = await hashPassword(config.demoPassword);
     const createdAt = new Date().toISOString();
     this.accounts.set(DEMO_ADMIN.id, { ...DEMO_ADMIN, role: 'admin', createdAt, passwordHash });
@@ -60,7 +63,7 @@ export class AccountStore {
 
   /** Returns the account only if the password matches and the account is active. */
   async authenticate(email: string, password: string): Promise<Account | null> {
-    const account = [...this.accounts.values()].find((a) => a.email === email);
+    const account = this.findByEmail(email);
     if (!account || account.disabled) return null;
     return (await verifyPassword(password, account.passwordHash)) ? toPublic(account) : null;
   }
@@ -74,12 +77,18 @@ export class AccountStore {
     return [...this.accounts.values()].map(toPublic).sort((a, b) => a.name.localeCompare(b.name));
   }
 
+  private findByEmail(email: string): StoredAccount | undefined {
+    const wanted = normalizeEmail(email);
+    return [...this.accounts.values()].find((a) => normalizeEmail(a.email) === wanted);
+  }
+
   async create(input: NewAccount): Promise<Account> {
-    if ([...this.accounts.values()].some((a) => a.email === input.email)) throw new AccountExistsError(input.email);
-    let id = idFromEmail(input.email);
+    const email = normalizeEmail(input.email);
+    if (this.findByEmail(email)) throw new AccountExistsError(email);
+    let id = idFromEmail(email);
     while (this.accounts.has(id)) id = `${id}-${Math.random().toString(36).slice(2, 6)}`;
     const { password, ...rest } = input;
-    const stored: StoredAccount = { ...rest, id, createdAt: new Date().toISOString(), passwordHash: await hashPassword(password) };
+    const stored: StoredAccount = { ...rest, email, id, createdAt: new Date().toISOString(), passwordHash: await hashPassword(password) };
     this.accounts.set(id, stored);
     await this.persist();
     return toPublic(stored);

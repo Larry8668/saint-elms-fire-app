@@ -14,6 +14,8 @@ const normalise = (s: string) => s.toLowerCase().replace(/[^a-z0-9]+/g, ' ').tri
 export function useScrollToSection(container: RefObject<HTMLElement | null>, lessonId: string | null, index?: number, heading?: string) {
   useEffect(() => {
     if (!lessonId || (index === undefined && !heading)) return;
+    let flashed: HTMLElement | undefined;
+    let timer: number | undefined;
     const frame = requestAnimationFrame(() => {
       const nodes = [...(container.current?.querySelectorAll<HTMLElement>(HEADINGS) ?? [])];
       const wanted = heading ? normalise(heading) : '';
@@ -27,8 +29,13 @@ export function useScrollToSection(container: RefObject<HTMLElement | null>, les
       }
       target.scrollIntoView({ behavior: 'smooth', block: 'start' });
       target.classList.add('section-flash');
-      window.setTimeout(() => target.classList.remove('section-flash'), FLASH_MS);
+      flashed = target;
+      timer = window.setTimeout(() => target.classList.remove('section-flash'), FLASH_MS);
     });
-    return () => cancelAnimationFrame(frame);
+    return () => {
+      cancelAnimationFrame(frame);
+      window.clearTimeout(timer);
+      flashed?.classList.remove('section-flash');
+    };
   }, [container, lessonId, index, heading]);
 }

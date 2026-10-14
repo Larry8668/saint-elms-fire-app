@@ -9,6 +9,7 @@ import { Tooltip } from '@/components/ui/overlays';
 import { cn } from '@/lib/cn';
 import { log } from '@/lib/log';
 import { useNav } from '@/lib/nav';
+import { safeHref } from '@/lib/url';
 
 const SOURCE_STYLE: Record<SourceRef['kind'], { Icon: typeof BookOpen; tone: string }> = {
   lesson: { Icon: BookOpen, tone: 'text-beacon-300' },
@@ -37,16 +38,17 @@ function SourceChip({ source, expanded, muted, onToggle }: { source: SourceRef; 
     expanded ? 'border-beacon-400/40 bg-beacon-500/10 text-night-100' : 'border-white/[0.07] bg-white/[0.03] text-night-300 hover:border-white/[0.16] hover:text-night-100',
     muted && !expanded && 'opacity-60 hover:opacity-100',
   );
+  const href = safeHref(source.url);
   const body = (
     <>
       <Icon className={cn('size-3 shrink-0', tone)} />
       <span className="max-w-52 truncate">{source.title}</span>
-      {source.url && <span className="text-night-500">{hostOf(source.url)}</span>}
+      {href && <span className="text-night-500">{hostOf(href)}</span>}
     </>
   );
-  if (source.url) {
+  if (href) {
     return (
-      <a href={source.url} target="_blank" rel="noreferrer" className={cls}>
+      <a href={href} target="_blank" rel="noreferrer" className={cls}>
         {body}
         <ExternalLink className="size-2.5 text-night-500" />
       </a>

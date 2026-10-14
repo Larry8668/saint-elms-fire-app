@@ -23,6 +23,7 @@ export function useStickToBottom<T extends HTMLElement>(dependency: unknown) {
     const el = ref.current;
     if (!el) return;
     pinned.current = true;
+    setAtBottom(true);
     el.scrollTo({ top: el.scrollHeight, behavior });
   }, []);
 

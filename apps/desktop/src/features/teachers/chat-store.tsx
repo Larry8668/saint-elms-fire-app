@@ -84,7 +84,11 @@ function activeStore(profileId: string) {
       const next = { ...read() };
       if (sessionId) next[teacher] = sessionId;
       else delete next[teacher];
-      localStorage.setItem(key, JSON.stringify(next));
+      try {
+        localStorage.setItem(key, JSON.stringify(next));
+      } catch (error) {
+        log.warn('active_session_not_saved', { teacher, error: (error as Error).message });
+      }
     },
   };
 }

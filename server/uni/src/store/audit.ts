@@ -21,13 +21,15 @@ export class AuditLog {
 
   async record(actor: string, action: string, detail: string): Promise<void> {
     const entry: AuditEntry = { at: new Date().toISOString(), actor, action, detail };
+    await appendJsonLine(this.file, entry);
     this.entries.push(entry);
     if (this.entries.length > MEMORY_LIMIT) this.entries.shift();
     log.info('audit', { ...entry });
-    await appendJsonLine(this.file, entry);
   }
 
+  /** Newest first. `limit` is clamped to 1–MEMORY_LIMIT; non-numeric input falls back to 50. */
   recent(limit = 50): AuditEntry[] {
-    return this.entries.slice(-limit).reverse();
+    const n = Number.isFinite(limit) ? Math.min(MEMORY_LIMIT, Math.max(1, Math.floor(limit))) : 50;
+    return this.entries.slice(-n).reverse();
   }
 }

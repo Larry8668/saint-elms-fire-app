@@ -7,7 +7,7 @@ import { readJson, writeJson } from './json-file';
 /** What a student device sends. Cohort and author come from the verified token, never the body. */
 export const ShareBodySchema = z.object({
   title: z.string().min(1).max(160),
-  markdown: z.string().max(config.shareMaxBytes),
+  markdown: z.string().refine((s) => Buffer.byteLength(s, 'utf8') <= config.shareMaxBytes, `Shares are limited to ${config.shareMaxBytes} bytes`),
   image: z.object({ mimeType: z.string(), data: z.string() }).optional(),
 });
 export type ShareBody = z.infer<typeof ShareBodySchema>;
@@ -41,7 +41,8 @@ export class ShareStore {
 
   async add(input: Omit<Share, 'id' | 'createdAt'> & { createdAt?: string }): Promise<Share> {
     const dayAgo = Date.now() - 24 * 60 * 60 * 1000;
-    const recent = this.shares.filter((s) => s.fromAccountId === input.fromAccountId && Date.parse(s.createdAt) > dayAgo);
+    const author = (s: Pick<Share, 'fromAccountId' | 'fromStudent'>) => s.fromAccountId ?? `name:${s.fromStudent}`;
+    const recent = this.shares.filter((s) => author(s) === author(input) && Date.parse(s.createdAt) > dayAgo);
     if (!input.createdAt && recent.length >= config.sharesPerDay) {
       throw new ShareLimitError(`Limit of ${config.sharesPerDay} shares per day reached`);
     }
