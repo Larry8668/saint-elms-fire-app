@@ -21,10 +21,10 @@ export class AuditLog {
 
   async record(actor: string, action: string, detail: string): Promise<void> {
     const entry: AuditEntry = { at: new Date().toISOString(), actor, action, detail };
+    await appendJsonLine(this.file, entry);
     this.entries.push(entry);
     if (this.entries.length > MEMORY_LIMIT) this.entries.shift();
     log.info('audit', { ...entry });
-    await appendJsonLine(this.file, entry);
   }
 
   /** Newest first. `limit` is clamped to 1–MEMORY_LIMIT; non-numeric input falls back to 50. */

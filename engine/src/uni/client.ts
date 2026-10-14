@@ -39,5 +39,10 @@ export async function uniFetch<T>(baseUrl: string, pathname: string, req: UniReq
   }
   if (!res.ok) throw new UniHttpError(res.status, await res.json().catch(() => null), url);
   const text = await res.text();
-  return (text ? JSON.parse(text) : undefined) as T;
+  if (!text.trim()) return undefined as T;
+  try {
+    return JSON.parse(text) as T;
+  } catch {
+    throw new UniHttpError(res.status, { error: 'University server sent a response that is not JSON' }, url);
+  }
 }

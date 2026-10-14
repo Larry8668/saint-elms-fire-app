@@ -1,5 +1,5 @@
 import path from 'node:path';
-import { DEMO_ADMIN, DEMO_PERSONAS, normalizeEmail, type Account, type AccountPatch, type NewAccount } from '@sef/shared';
+import { DEMO_ADMIN, DEMO_PASSWORD_DEFAULT, DEMO_PERSONAS, normalizeEmail, type Account, type AccountPatch, type NewAccount } from '@sef/shared';
 import { hashPassword, verifyPassword } from '@sef/shared/node';
 import { config } from '../config';
 import { log } from '../logger';
@@ -34,6 +34,9 @@ export class AccountStore {
   }
 
   private async seedDemo(): Promise<void> {
+    if (config.demoPassword === DEMO_PASSWORD_DEFAULT) {
+      log.warn('demo_password_default', { hint: 'Seeded accounts use the public demo password. Set DEMO_PASSWORD before exposing this server.' });
+    }
     const passwordHash = await hashPassword(config.demoPassword);
     const createdAt = new Date().toISOString();
     this.accounts.set(DEMO_ADMIN.id, { ...DEMO_ADMIN, role: 'admin', createdAt, passwordHash });

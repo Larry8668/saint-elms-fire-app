@@ -36,7 +36,13 @@ export function verifyToken(token: string, publicKeyPem: string, now = Date.now(
   if (prefix !== TOKEN_PREFIX || !payload || !signature) throw new TokenError('malformed token');
   const ok = verify(null, Buffer.from(payload), createPublicKey(publicKeyPem), Buffer.from(signature, 'base64url'));
   if (!ok) throw new TokenError('bad signature');
-  const claims = JSON.parse(Buffer.from(payload, 'base64url').toString('utf8')) as TokenClaims;
+  let claims: TokenClaims;
+  try {
+    claims = JSON.parse(Buffer.from(payload, 'base64url').toString('utf8')) as TokenClaims;
+  } catch {
+    throw new TokenError('malformed claims');
+  }
+  if (typeof claims?.sub !== 'string' || typeof claims.exp !== 'number' || !Number.isFinite(claims.exp)) throw new TokenError('malformed claims');
   if (claims.exp * 1000 < now) throw new TokenError('expired');
   return claims;
 }
