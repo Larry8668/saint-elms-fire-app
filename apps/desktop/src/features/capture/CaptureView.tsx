@@ -1,10 +1,11 @@
 import { useMutation } from '@tanstack/react-query';
-import { ArrowRight, Camera, Check, ImageUp, Loader2, ScanText, ShieldCheck, Sparkles, Waypoints } from 'lucide-react';
+import { ArrowRight, Camera, Check, ImageUp, ScanText, ShieldCheck, Sparkles, Waypoints } from 'lucide-react';
 import { motion } from 'motion/react';
 import { useEffect, useRef, useState } from 'react';
 import { toast } from 'sonner';
 import { Markdown } from '@/components/Markdown';
 import { Button } from '@/components/ui/button';
+import { PixelLoader } from '@/components/ui/loading';
 import { Badge, Eyebrow, Input, PageHeader, Panel } from '@/components/ui/primitives';
 import { BrainDiff } from '@/features/brain/BrainDiff';
 import { api, fileToBase64 } from '@/lib/api';
@@ -130,7 +131,7 @@ export function CaptureView() {
                             done ? 'border-aurora-400/40 bg-aurora-500/15 text-aurora-300' : active ? 'border-beacon-400/50 bg-beacon-500/15 text-beacon-200' : 'border-white/[0.08] text-night-500',
                           )}
                         >
-                          {done ? <Check className="size-4" /> : active ? <Loader2 className="size-4 animate-spin" /> : <s.icon className="size-4" />}
+                          {done ? <Check className="size-4" /> : active ? <PixelLoader /> : <s.icon className="size-4" />}
                         </span>
                         <div>
                           <div className={cn('text-[14px] font-medium', active || done ? 'text-night-100' : 'text-night-300')}>{s.label}</div>

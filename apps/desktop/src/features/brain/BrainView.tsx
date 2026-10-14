@@ -4,7 +4,8 @@ import { motion } from 'motion/react';
 import { useMemo, useState } from 'react';
 import { Button } from '@/components/ui/button';
 import { Tabs } from '@/components/ui/overlays';
-import { Badge, EmptyState, PageHeader, Panel, Skeleton } from '@/components/ui/primitives';
+import { Badge, EmptyState, PageHeader, Panel } from '@/components/ui/primitives';
+import { CardGridSkeleton, RowListSkeleton, TimelineSkeleton } from '@/components/ui/skeletons';
 import { STATUS_STYLE } from '@/lib/brain-style';
 import { useNav } from '@/lib/nav';
 import { useBrainLog, useGraph, useLint, usePages } from '@/lib/queries';
@@ -46,13 +47,7 @@ export function BrainView() {
 
         {tab === 'pages' && (
           <>
-            {pages.isLoading && (
-              <div className="grid gap-3 md:grid-cols-2 lg:grid-cols-3">
-                {Array.from({ length: 6 }).map((_, i) => (
-                  <Skeleton key={i} className="h-40 rounded-2xl" />
-                ))}
-              </div>
-            )}
+            {pages.isLoading && <CardGridSkeleton />}
             {pages.data?.length === 0 && (
               <EmptyState
                 icon={<Brain />}
@@ -78,6 +73,7 @@ export function BrainView() {
 
         {tab === 'questions' && (
           <div className="space-y-3">
+            {lint.isLoading && <RowListSkeleton />}
             {lint.data?.length === 0 && <EmptyState icon={<Lightbulb />} title="No open questions" body="No unresolved misconceptions or shaky foundations right now. Keep going." />}
             {lint.data?.map((f, i) => (
               <motion.div key={`${f.key}-${i}`} initial={{ opacity: 0, y: 6 }} animate={{ opacity: 1, y: 0 }} transition={{ delay: i * 0.04 }}>
@@ -99,7 +95,8 @@ export function BrainView() {
           </div>
         )}
 
-        {tab === 'timeline' && (
+        {tab === 'timeline' && log.isLoading && <TimelineSkeleton />}
+        {tab === 'timeline' && !log.isLoading && (
           <div className="relative ml-3 border-l border-white/[0.08] pl-8">
             {log.data?.length === 0 && <p className="text-sm text-night-400">Your learning log is empty.</p>}
             {log.data?.map((entry, i) => {

@@ -2,6 +2,7 @@ import type { Verification } from '@sef/shared';
 import { BookOpen, Brain, CheckCircle2, ChevronDown, Cpu, Globe, LifeBuoy, Wrench, XCircle } from 'lucide-react';
 import { useState } from 'react';
 import { cn } from '@/lib/cn';
+import { safeHref } from '@/lib/url';
 
 const SOURCE_ICON = { lesson: BookOpen, brain: Brain, web: Globe, support: LifeBuoy } as const;
 
@@ -15,9 +16,10 @@ export function VerificationPanel({ verification }: { verification: Verification
     <div className="mt-2.5">
       <button
         onClick={() => setOpen((o) => !o)}
-        className="flex cursor-pointer flex-wrap items-center gap-x-3 gap-y-1 rounded-lg px-1 text-[11.5px] text-night-500 transition hover:text-night-300"
+        aria-expanded={open}
+        className="flex cursor-pointer flex-wrap items-center gap-x-3 gap-y-1 rounded-full border border-white/[0.06] bg-white/[0.02] px-2.5 py-1 text-[11.5px] text-night-500 transition hover:border-white/[0.12] hover:text-night-300"
       >
-        <span className={cn('flex items-center gap-1', allPassed ? 'text-aurora-400' : 'text-ember-400')}>
+        <span className={cn('flex items-center gap-1 font-medium', allPassed ? 'text-aurora-400' : 'text-ember-400')}>
           {allPassed ? <CheckCircle2 className="size-3.5" /> : <XCircle className="size-3.5" />}
           {passed}/{verification.checks.length} checks
         </span>
@@ -48,11 +50,12 @@ export function VerificationPanel({ verification }: { verification: Verification
               <ul className="space-y-1">
                 {verification.sources.map((s) => {
                   const Icon = SOURCE_ICON[s.kind];
+                  const href = safeHref(s.url);
                   return (
                     <li key={`${s.kind}:${s.id}`} className="flex items-center gap-2 text-night-300">
                       <Icon className="size-3.5 shrink-0 text-night-500" />
-                      {s.url ? (
-                        <a href={s.url} target="_blank" rel="noreferrer" className="truncate text-beacon-300 hover:underline">
+                      {href ? (
+                        <a href={href} target="_blank" rel="noreferrer" className="truncate text-beacon-300 hover:underline">
                           {s.title}
                         </a>
                       ) : (

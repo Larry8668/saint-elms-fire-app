@@ -5,6 +5,7 @@ import { toast } from 'sonner';
 import { Markdown } from '@/components/Markdown';
 import { Button } from '@/components/ui/button';
 import { Dialog } from '@/components/ui/overlays';
+import { WorkingLabel } from '@/components/ui/loading';
 import { Skeleton } from '@/components/ui/primitives';
 import { api, type QuizPayload, type QuizResult } from '@/lib/api';
 import { cn } from '@/lib/cn';
@@ -48,10 +49,16 @@ export function QuizDialog({ conceptKey, conceptLabel, open, onOpenChange }: { c
   return (
     <Dialog open={open} onOpenChange={onOpenChange} title={`Check: ${conceptLabel}`} description="Written from your lesson text by the quiz agent. Your score is evidence — it decides the star's status, not the model.">
       {create.isPending && (
-        <div className="space-y-3">
-          <p className="text-sm text-night-400">Writing questions from your lesson…</p>
-          <Skeleton className="h-20" />
-          <Skeleton className="h-20" />
+        <div className="space-y-5">
+          <WorkingLabel label="Writing questions from your lesson" startedAt={create.submittedAt || undefined} className="text-beacon-300" />
+          {[0, 1].map((i) => (
+            <div key={i} className="space-y-2.5">
+              <Skeleton className="h-4 w-4/5" />
+              {[0, 1, 2].map((o) => (
+                <Skeleton key={o} className="h-10 w-full rounded-xl" />
+              ))}
+            </div>
+          ))}
         </div>
       )}
       {quiz && (

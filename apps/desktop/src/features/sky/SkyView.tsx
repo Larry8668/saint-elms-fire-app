@@ -4,7 +4,8 @@ import { motion } from 'motion/react';
 import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 import { Button } from '@/components/ui/button';
 import { Tooltip } from '@/components/ui/overlays';
-import { EmptyState, Skeleton } from '@/components/ui/primitives';
+import { EmptyState } from '@/components/ui/primitives';
+import { SkyLoading } from './SkyLoading';
 import { ConceptSheet } from '@/features/brain/ConceptSheet';
 import { LESSON_HEX, ORIGIN_STYLE, STATUS_STYLE } from '@/lib/brain-style';
 import { cn } from '@/lib/cn';
@@ -26,7 +27,7 @@ export function SkyView() {
   const { data: graph, isLoading, error } = useGraph();
   const { go } = useNav();
 
-  if (isLoading) return <Skeleton className="m-6 h-[calc(100%-3rem)] rounded-3xl" />;
+  if (isLoading) return <SkyLoading />;
   if (error) return <EmptyState icon={<Sparkles />} title="The sky is hidden" body={(error as Error).message} />;
   if (!graph || graph.nodes.length === 0) {
     return (
