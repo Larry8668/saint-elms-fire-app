@@ -7,6 +7,7 @@ import { EmptyState, Input, Label } from '@/components/ui/primitives';
 import { TEACHER_LOOK } from '@/features/teachers/teacher-meta';
 import { EngineError } from '@/lib/api';
 import { cn } from '@/lib/cn';
+import { DEMO_MODE } from '@/lib/demo';
 import { useHealth } from '@/lib/queries';
 import { useSession } from '@/lib/session';
 
@@ -14,7 +15,7 @@ const YEAR_LABEL = ['First-year', 'Second-year', 'Third-year'];
 
 /** Demo accounts described by where they are in the programme, not by who they are. */
 const DEMO_ACCOUNTS = [
-  ...DEMO_PERSONAS.map((p) => ({ email: p.email, label: `${YEAR_LABEL[Math.ceil(p.throughSemester / 2) - 1] ?? 'Final-year'} student`, detail: p.stage, Icon: GraduationCap })),
+  ...DEMO_PERSONAS.map((p) => ({ email: p.email, label: `${YEAR_LABEL[Math.max(0, Math.ceil(p.throughSemester / 2) - 1)] ?? 'Final-year'} student`, detail: p.stage, Icon: GraduationCap })),
   { email: DEMO_ADMIN.email, label: 'Registrar', detail: 'Releases, dispersal, moderation', Icon: Landmark },
 ];
 
@@ -104,6 +105,7 @@ function SignInForm({ uniOffline }: { uniOffline: boolean }) {
       await signIn(email.trim(), password);
     } catch (err) {
       setError(err instanceof EngineError ? err.message : 'Sign-in failed. Try again.');
+    } finally {
       setPending(false);
     }
   };
@@ -148,7 +150,7 @@ function SignInForm({ uniOffline }: { uniOffline: boolean }) {
         Sign in
       </Button>
 
-      <DemoAccounts onPick={fillDemo} selected={email} />
+      {DEMO_MODE && <DemoAccounts onPick={fillDemo} selected={email} />}
     </form>
   );
 }

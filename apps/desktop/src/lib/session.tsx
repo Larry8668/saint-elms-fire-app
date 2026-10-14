@@ -37,7 +37,7 @@ const store = (session: Session | null) => {
 
 const adminTokenValid = (token: string) => {
   const claims = peekTokenClaims(token);
-  return Boolean(claims && claims.role === 'admin' && claims.exp * 1000 > Date.now());
+  return Boolean(claims && claims.role === 'admin' && typeof claims.exp === 'number' && claims.exp * 1000 > Date.now());
 };
 
 export function SessionProvider({ children }: { children: ReactNode }) {
@@ -57,10 +57,14 @@ export function SessionProvider({ children }: { children: ReactNode }) {
 
   const activate = useCallback(
     (session: Session) => {
-      setEngineSession(session.kind === 'student' ? session.token : null, () => {
-        toast.info('Your session ended. Please sign in again.');
-        clear('engine_rejected_token');
-      });
+      if (session.kind === 'student') {
+        setEngineSession(session.token, () => {
+          toast.info('Your session ended. Please sign in again.');
+          clear('engine_rejected_token');
+        });
+      } else {
+        setEngineSession(null);
+      }
       store(session);
       queryClient.clear();
       setState({ status: 'signed-in', session });

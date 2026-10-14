@@ -38,5 +38,11 @@ export async function uniFetch<T>(baseUrl: string, pathname: string, req: UniReq
     throw new UniUnreachableError(`${url}: ${(error as Error).message}`);
   }
   if (!res.ok) throw new UniHttpError(res.status, await res.json().catch(() => null), url);
-  return (await res.json()) as T;
+  const text = await res.text();
+  if (!text.trim()) return undefined as T;
+  try {
+    return JSON.parse(text) as T;
+  } catch {
+    throw new UniHttpError(res.status, { error: 'University server sent a response that is not JSON' }, url);
+  }
 }
