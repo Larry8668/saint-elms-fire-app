@@ -20,6 +20,7 @@ export interface HarnessDeps {
   content: ContentStore;
   brain: BrainService;
   sessions: SessionStore;
+  studentName: string;
 }
 
 const MAX_STEPS = 4;
@@ -103,7 +104,7 @@ export async function runChatTurn(req: ChatRequest, deps: HarnessDeps, emit: (ev
   }
 
   const resolved = resolveModel(settings, hasImage ? 'vision' : 'tutor');
-  const instructions = `${teacherInstructions(req.teacher, settings.studentName)}\n\n---\n${blocks.join('\n\n')}`;
+  const instructions = `${teacherInstructions(req.teacher, deps.studentName)}\n\n---\n${blocks.join('\n\n')}`;
   const agent = makeAgent(req.teacher, instructions, resolved, buildTools(req.teacher, { content: deps.content, brain: deps.brain, searxngUrl: settings.searxngUrl }, ctx));
 
   ctx.status(`${TEACHERS[req.teacher].name} is thinking…`);

@@ -53,10 +53,6 @@ export function SettingsView() {
         <div className="space-y-6">
           <Panel className="grid gap-4 p-6 md:grid-cols-2">
             <div>
-              <Label>Your name</Label>
-              <Input value={form.studentName} onChange={(e) => set('studentName', e.target.value)} />
-            </div>
-            <div>
               <Label>Cohort</Label>
               <Input value={form.cohortId} onChange={(e) => set('cohortId', e.target.value)} />
             </div>

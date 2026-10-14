@@ -1,25 +1,96 @@
 {
-  "$comment": "Which courses each cohort can download. '*' releases everything. The server is the release gate: unreleased courses are never sent to a device.",
+  "$comment": "Seed release plan. Which courses each cohort can download; '*' releases everything. Admin edits are saved under .data/uni/releases.json, not here. The server is the release gate: unreleased courses are never sent to a device.",
   "defaultCohort": "bsc-pma-2026",
   "cohorts": {
     "bsc-pma-2026": {
-      "name": "B.Sc. PMA, 2026 intake",
+      "name": "B.Sc. PMA, 2026 intake (Semester 1)",
       "courses": [
         "student-life-and-university-navigation",
-        "bridge-physics",
-        "mechanics",
-        "differential-calculus",
-        "integral-calculus",
         "astrophysics-i",
         "basic-electronics",
-        "electricity-and-magnetism",
+        "bridge-physics",
+        "differential-calculus",
+        "integral-calculus",
+        "mechanics",
+        "mechanics-lab"
+      ]
+    },
+    "bsc-pma-2025": {
+      "name": "B.Sc. PMA, 2025 intake (Semester 3)",
+      "courses": [
+        "student-life-and-university-navigation",
+        "astrophysics-i",
+        "basic-electronics",
+        "bridge-physics",
+        "differential-calculus",
+        "integral-calculus",
+        "mechanics",
+        "mechanics-lab",
+        "astrophysics-ii",
+        "calculus-using-python",
         "differential-equations",
-        "waves-and-optics"
+        "electricity-and-magnetism",
+        "electricity-and-magnetism-lab",
+        "introductory-algebra",
+        "thermal-physics-and-statistical-mechanics",
+        "thermal-physics-lab",
+        "analog-and-digital-electronics",
+        "astrophysics-iii",
+        "real-analysis",
+        "waves-and-optics",
+        "waves-and-optics-lab"
+      ]
+    },
+    "bsc-pma-2024": {
+      "name": "B.Sc. PMA, 2024 intake (Semester 5)",
+      "courses": [
+        "student-life-and-university-navigation",
+        "astrophysics-i",
+        "basic-electronics",
+        "bridge-physics",
+        "differential-calculus",
+        "integral-calculus",
+        "mechanics",
+        "mechanics-lab",
+        "astrophysics-ii",
+        "calculus-using-python",
+        "differential-equations",
+        "electricity-and-magnetism",
+        "electricity-and-magnetism-lab",
+        "introductory-algebra",
+        "thermal-physics-and-statistical-mechanics",
+        "thermal-physics-lab",
+        "analog-and-digital-electronics",
+        "astrophysics-iii",
+        "real-analysis",
+        "waves-and-optics",
+        "waves-and-optics-lab",
+        "abstract-algebra",
+        "astrophysics-iv",
+        "communication-electronics",
+        "communication-electronics-lab",
+        "introduction-to-quantum-mechanics",
+        "mathematics-lab-using-python-ii",
+        "numerical-methods",
+        "quantum-mechanics-lab",
+        "astronomy-and-astrophysics",
+        "astronomy-and-astrophysics-lab",
+        "calculus-of-several-variables",
+        "integral-transforms",
+        "linear-algebra",
+        "low-dimensional-materials",
+        "low-dimensional-materials-lab",
+        "microcontroller-and-embedded-systems",
+        "microcontroller-and-embedded-systems-lab",
+        "solid-state-physics",
+        "solid-state-physics-lab"
       ]
     },
     "demo-all": {
       "name": "Everything (staff preview)",
-      "courses": ["*"]
+      "courses": [
+        "*"
+      ]
     }
   }
 }

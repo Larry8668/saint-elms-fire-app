@@ -5,3 +5,5 @@ export * from './brain';
 export * from './teachers';
 export * from './api';
 export * from './logger';
+export * from './auth';
+export * from './demo';
