@@ -13,7 +13,7 @@ import {
 import { z } from 'zod';
 import { generateStructured } from '../agents/factory';
 import { BRAIN_KEEPER_INSTRUCTIONS, QUIZ_INSTRUCTIONS } from '../agents/prompts';
-import { config, log } from '../config';
+import { log } from '../config';
 import { excerptFor, queryTerms, searchLessons } from '../content/search';
 import type { ContentStore } from '../content/store';
 import { readJson, writeJson } from '../lib/fs';
@@ -88,6 +88,7 @@ export class BrainService {
     private readonly content: ContentStore,
     private readonly vault: BrainVault,
     private readonly settings: SettingsStore,
+    private readonly quizzesDir: string,
   ) {}
 
   async courseGraph(): Promise<CourseGraph> {
@@ -261,7 +262,7 @@ export class BrainService {
     const questions = finalizeQuestions(object);
     if (!questions.length) throw new Error('The model did not produce any well-formed questions. Try again.');
     const quiz: Quiz = { questions, id: randomUUID(), key, concept: concept.label, createdAt: new Date().toISOString(), model: resolved.label };
-    await writeJson(path.join(config.paths.quizzes, `${quiz.id}.json`), quiz);
+    await writeJson(path.join(this.quizzesDir, `${quiz.id}.json`), quiz);
     log.info('quiz_created', { key, questions: quiz.questions.length });
     return {
       id: quiz.id,
@@ -273,7 +274,7 @@ export class BrainService {
   }
 
   async submitQuiz(id: string, answers: number[]) {
-    const quiz = await readJson<Quiz | null>(path.join(config.paths.quizzes, `${id.replace(/[^a-zA-Z0-9-]/g, '')}.json`), null);
+    const quiz = await readJson<Quiz | null>(path.join(this.quizzesDir, `${id.replace(/[^a-zA-Z0-9-]/g, '')}.json`), null);
     if (!quiz) throw new Error('Quiz not found');
     const score = quiz.questions.reduce((n, q, i) => n + (answers[i] === q.answerIndex ? 1 : 0), 0);
     const graph = await this.courseGraph();

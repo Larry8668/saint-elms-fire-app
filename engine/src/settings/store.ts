@@ -2,15 +2,11 @@ import type { EngineSettings, ProviderConfig } from '@sef/shared';
 import { config, log } from '../config';
 import { readJson, writeJson } from '../lib/fs';
 
-export interface StoredSettings extends EngineSettings {
-  cohortId: string;
-}
+export type StoredSettings = EngineSettings;
 
 function defaultSettings(): StoredSettings {
   const d = config.defaults;
   return {
-    studentName: d.studentName,
-    cohortId: d.cohortId,
     uniServerUrl: d.uniServerUrl,
     searxngUrl: d.searxngUrl,
     thinking: true,
@@ -33,7 +29,8 @@ export class SettingsStore {
   async get(): Promise<StoredSettings> {
     if (!this.current) {
       const stored = await readJson<Partial<StoredSettings> | null>(config.paths.settings, null);
-      this.current = { ...defaultSettings(), ...stored } as StoredSettings;
+      const { studentName: _n, cohortId: _c, ...rest } = (stored ?? {}) as Partial<StoredSettings> & { studentName?: string; cohortId?: string };
+      this.current = { ...defaultSettings(), ...rest };
       if (!stored) {
         await writeJson(config.paths.settings, this.current);
         log.info('settings_created', { file: config.paths.settings });

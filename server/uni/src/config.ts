@@ -1,5 +1,6 @@
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { DEMO_PASSWORD_DEFAULT } from '@sef/shared';
 
 const here = path.dirname(fileURLToPath(import.meta.url));
 const serverRoot = path.resolve(here, '..');
@@ -19,4 +20,9 @@ export const config = {
   dataDir: path.resolve(env('UNI_DATA_DIR', path.join(serverRoot, '../../.data/uni'))),
   shareMaxBytes: Number(env('SHARE_MAX_BYTES', String(10 * 1024))),
   sharesPerDay: Number(env('SHARES_PER_DAY', '10')),
+  /** Password given to the seeded admin and demo students on first boot. */
+  demoPassword: env('DEMO_PASSWORD', DEMO_PASSWORD_DEFAULT),
+  /** Student tokens are long-lived so devices can keep working offline between syncs. */
+  studentTokenHours: Number(env('STUDENT_TOKEN_HOURS', String(24 * 30))),
+  adminTokenHours: Number(env('ADMIN_TOKEN_HOURS', '12')),
 };

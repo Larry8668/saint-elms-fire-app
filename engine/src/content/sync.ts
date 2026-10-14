@@ -4,37 +4,52 @@ import { canonicalJson, CatalogueSchema, CoursePackageSchema, type Catalogue, ty
 import { config, log } from '../config';
 import { readText, writeFileAtomic } from '../lib/fs';
 import type { SettingsStore } from '../settings/store';
+import { uniFetch, UniHttpError } from '../uni/client';
 import type { ContentStore } from './store';
 
 export class PackageVerificationError extends Error {}
+export class SyncAuthError extends Error {}
 
-const TRUSTED_KEY_FILE = () => path.join(config.paths.trust, 'uni-public.pem');
-const FETCH_TIMEOUT_MS = 15000;
-
-async function getJson(url: string): Promise<unknown> {
-  const res = await fetch(url, { signal: AbortSignal.timeout(FETCH_TIMEOUT_MS) });
-  if (!res.ok) throw new Error(`${url} → HTTP ${res.status}`);
-  return res.json();
+/** Who is syncing. The uni decides the cohort from the token; cohortId here is only for display. */
+export interface SyncIdentity {
+  cohortId: string;
+  uniToken?: string;
 }
 
-/** Pulls catalogue + signed course packages from the university server. */
+const TRUSTED_KEY_FILE = path.join(config.paths.trust, 'uni-public.pem');
+
+/** Pulls catalogue + signed course packages from the university server for one profile. */
 export class ContentSync {
+  private authRejected = false;
+
   constructor(
     private readonly settings: SettingsStore,
     private readonly store: ContentStore,
+    private readonly identity: () => Promise<SyncIdentity>,
   ) {}
 
-  private async base() {
-    const s = await this.settings.get();
-    return { url: s.uniServerUrl.replace(/\/+$/, ''), cohort: s.cohortId };
+  private async request<T>(pathname: string): Promise<T> {
+    const { uniServerUrl } = await this.settings.get();
+    const { uniToken } = await this.identity();
+    if (!uniToken) throw new SyncAuthError('This profile has no university session. Sign in while online to sync.');
+    try {
+      const body = await uniFetch<T>(uniServerUrl, pathname, { token: uniToken });
+      this.authRejected = false;
+      return body;
+    } catch (error) {
+      if (error instanceof UniHttpError && error.status === 401) {
+        this.authRejected = true;
+        throw new SyncAuthError('The university no longer accepts this session. Sign out and sign in again while online.');
+      }
+      throw error;
+    }
   }
 
   async catalogue(): Promise<Catalogue | null> {
-    const { url, cohort } = await this.base();
     try {
-      return CatalogueSchema.parse(await getJson(`${url}/v1/catalogue?cohort=${encodeURIComponent(cohort)}`));
+      return CatalogueSchema.parse(await this.request('/v1/catalogue'));
     } catch (error) {
-      log.warn('uni_catalogue_unreachable', { url, error: (error as Error).message });
+      log.warn('uni_catalogue_unavailable', { error: (error as Error).message });
       return null;
     }
   }
@@ -69,20 +84,23 @@ export class ContentSync {
         support: local.support,
       });
     }
+    const identity = await this.identity();
     return {
       uniReachable: Boolean(catalogue),
+      authRequired: this.authRejected || !identity.uniToken,
+      cohortId: catalogue?.cohortId ?? identity.cohortId,
       courses: [...rows.values()].sort((a, b) => a.semesterNumber - b.semesterNumber || a.title.localeCompare(b.title)),
     };
   }
 
-  /** Trust on first use: the first key seen is pinned; a different key later is refused. */
+  /** Trust on first use, per device: the first key seen is pinned; a different key later is refused. */
   private async trustedKey(): Promise<string> {
-    const { url } = await this.base();
-    const remote = (await getJson(`${url}/v1/keys`)) as { publicKeyPem: string };
-    const pinned = await readText(TRUSTED_KEY_FILE());
+    const { uniServerUrl } = await this.settings.get();
+    const remote = await uniFetch<{ publicKeyPem: string }>(uniServerUrl, '/v1/keys');
+    const pinned = await readText(TRUSTED_KEY_FILE);
     if (!pinned) {
-      await writeFileAtomic(TRUSTED_KEY_FILE(), remote.publicKeyPem);
-      log.info('uni_key_pinned', { url });
+      await writeFileAtomic(TRUSTED_KEY_FILE, remote.publicKeyPem);
+      log.info('uni_key_pinned', { url: uniServerUrl });
       return remote.publicKeyPem;
     }
     if (pinned.trim() !== remote.publicKeyPem.trim()) {
@@ -92,14 +110,11 @@ export class ContentSync {
   }
 
   async install(courseId: string): Promise<{ courseId: string; version: string; files: number }> {
-    const { url, cohort } = await this.base();
     const catalogue = await this.catalogue();
     const course = catalogue?.courses.find((c) => c.id === courseId);
-    if (!course) throw new Error(`Course ${courseId} is not released to cohort ${cohort}`);
+    if (!course) throw new Error(`Course ${courseId} is not released to your cohort`);
 
-    const pkg = CoursePackageSchema.parse(
-      await getJson(`${url}/v1/courses/${encodeURIComponent(courseId)}/package?cohort=${encodeURIComponent(cohort)}`),
-    );
+    const pkg = CoursePackageSchema.parse(await this.request(`/v1/courses/${encodeURIComponent(courseId)}/package`));
     const keyPem = await this.trustedKey();
     const signatureOk = verify(null, Buffer.from(canonicalJson(pkg.manifest)), createPublicKey(keyPem), Buffer.from(pkg.signature, 'base64'));
     if (!signatureOk) throw new PackageVerificationError(`Signature check failed for ${courseId}`);

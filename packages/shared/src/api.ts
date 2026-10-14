@@ -103,8 +103,8 @@ export interface ProviderConfig {
   apiKey?: string;
 }
 
+/** Device-wide settings. Who is studying comes from the signed-in profile, not from here. */
 export interface EngineSettings {
-  studentName: string;
   uniServerUrl: string;
   searxngUrl: string;
   providers: ProviderConfig[];
@@ -114,6 +114,9 @@ export interface EngineSettings {
 
 export interface SyncStatus {
   uniReachable: boolean;
+  /** The uni rejected this profile's token: sign in online again to sync. */
+  authRequired?: boolean;
+  cohortId: string;
   courses: Array<{
     id: string;
     title: string;

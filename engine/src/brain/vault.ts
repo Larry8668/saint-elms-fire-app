@@ -1,7 +1,7 @@
 import { appendFile, mkdir, readdir } from 'node:fs/promises';
 import path from 'node:path';
 import type { BrainLogEntry, ConceptPage } from '@sef/shared';
-import { config, log } from '../config';
+import { log } from '../config';
 import { readText, writeFileAtomic } from '../lib/fs';
 import { computeStatus } from './mastery';
 import { parsePage, serializePage } from './page-format';
@@ -24,10 +24,14 @@ Rules the brain keeper follows:
 
 /** The student's brain on disk: markdown pages plus index, log and history. */
 export class BrainVault {
-  private readonly root = config.paths.brain;
-  private readonly conceptsDir = path.join(this.root, 'concepts');
-  private readonly historyDir = path.join(this.root, '.history');
+  private readonly conceptsDir: string;
+  private readonly historyDir: string;
   private pages: Map<string, ConceptPage> | null = null;
+
+  constructor(readonly root: string) {
+    this.conceptsDir = path.join(root, 'concepts');
+    this.historyDir = path.join(root, '.history');
+  }
 
   async init(): Promise<void> {
     await mkdir(this.conceptsDir, { recursive: true });
@@ -78,6 +82,17 @@ export class BrainVault {
     return { before, after };
   }
 
+  /** Writes a page exactly as given (timestamps included), without history. Used by the demo seeder. */
+  async writeSeeded(page: ConceptPage): Promise<void> {
+    const next = { ...page, status: computeStatus(page) };
+    await writeFileAtomic(this.pagePath(page.key), serializePage(next));
+    (await this.all()).set(next.key, next);
+  }
+
+  async isEmpty(): Promise<boolean> {
+    return (await this.all()).size === 0;
+  }
+
   async writeIndex(): Promise<void> {
     const pages = [...(await this.all()).values()].sort((a, b) => a.concept.localeCompare(b.concept));
     const rows = pages.map((p) => {
@@ -87,8 +102,7 @@ export class BrainVault {
     await writeFileAtomic(path.join(this.root, 'index.md'), `# Index\n\n${pages.length} concept pages.\n\n${rows.join('\n')}\n`);
   }
 
-  async appendLog(entry: Omit<BrainLogEntry, 'at'>): Promise<void> {
-    const at = new Date().toISOString();
+  async appendLog(entry: Omit<BrainLogEntry, 'at'>, at = new Date().toISOString()): Promise<void> {
     const line = `## [${at.slice(0, 19).replace('T', ' ')}] ${entry.kind} | ${entry.title}\n${entry.detail ? `${entry.detail}\n` : ''}\n`;
     await appendFile(path.join(this.root, 'log.md'), line);
   }

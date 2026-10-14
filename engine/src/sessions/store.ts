@@ -1,7 +1,6 @@
 import { readdir } from 'node:fs/promises';
 import path from 'node:path';
 import type { ChatTurn, SourceRef, TeacherId } from '@sef/shared';
-import { config } from '../config';
 import { readJson, writeJson } from '../lib/fs';
 
 export interface StoredTurn {
@@ -22,12 +21,21 @@ export interface Session {
   ingestedTurns: number;
 }
 
-const fileFor = (id: string) => path.join(config.paths.sessions, `${id.replace(/[^a-zA-Z0-9_-]/g, '')}.json`);
-
 /** Chat transcripts, kept on the device. Images are not stored — only that one was sent. */
 export class SessionStore {
+  constructor(private readonly dir: string) {}
+
+  private fileFor(id: string) {
+    return path.join(this.dir, `${id.replace(/[^a-zA-Z0-9_-]/g, '')}.json`);
+  }
+
+  /** Writes a whole session as-is (used by the demo seeder). */
+  async put(session: Session): Promise<void> {
+    await writeJson(this.fileFor(session.id), session);
+  }
+
   async get(id: string): Promise<Session | null> {
-    return readJson<Session | null>(fileFor(id), null);
+    return readJson<Session | null>(this.fileFor(id), null);
   }
 
   async appendTurn(id: string, teacher: TeacherId, user: ChatTurn, assistant: string, sources: SourceRef[], lessonIds: string[]): Promise<Session> {
@@ -39,18 +47,18 @@ export class SessionStore {
     const known = new Set(session.sources.map((s) => `${s.kind}:${s.id}`));
     for (const s of sources) if (!known.has(`${s.kind}:${s.id}`)) session.sources.push(s);
     session.updatedAt = now;
-    await writeJson(fileFor(id), session);
+    await writeJson(this.fileFor(id), session);
     return session;
   }
 
   async markIngested(session: Session): Promise<void> {
     session.ingestedTurns = session.turns.length;
-    await writeJson(fileFor(session.id), session);
+    await writeJson(this.fileFor(session.id), session);
   }
 
   async list(limit = 30): Promise<Array<Pick<Session, 'id' | 'teacher' | 'startedAt' | 'updatedAt'> & { turns: number; pending: number; preview: string }>> {
-    const names = await readdir(config.paths.sessions).catch(() => [] as string[]);
-    const sessions = await Promise.all(names.filter((n) => n.endsWith('.json')).map((n) => readJson<Session | null>(path.join(config.paths.sessions, n), null)));
+    const names = await readdir(this.dir).catch(() => [] as string[]);
+    const sessions = await Promise.all(names.filter((n) => n.endsWith('.json')).map((n) => readJson<Session | null>(path.join(this.dir, n), null)));
     return sessions
       .filter((s): s is Session => Boolean(s))
       .sort((a, b) => b.updatedAt.localeCompare(a.updatedAt))
