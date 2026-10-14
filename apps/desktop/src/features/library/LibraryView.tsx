@@ -4,7 +4,8 @@ import { motion } from 'motion/react';
 import { useMemo } from 'react';
 import { Markdown } from '@/components/Markdown';
 import { Button } from '@/components/ui/button';
-import { Badge, EmptyState, Eyebrow, PageHeader, Panel, Skeleton } from '@/components/ui/primitives';
+import { Badge, EmptyState, Eyebrow, PageHeader, Panel } from '@/components/ui/primitives';
+import { ArticleSkeleton, CardGridSkeleton } from '@/components/ui/skeletons';
 import { cn } from '@/lib/cn';
 import { useNav } from '@/lib/nav';
 import { useInstallCourses, useLesson, useLibrary, useSyncStatus } from '@/lib/queries';
@@ -81,13 +82,7 @@ export function LibraryView() {
           </Panel>
         )}
 
-        {sync.isLoading && (
-          <div className="grid gap-3 md:grid-cols-2 lg:grid-cols-3">
-            {Array.from({ length: 6 }).map((_, i) => (
-              <Skeleton key={i} className="h-36 rounded-2xl" />
-            ))}
-          </div>
-        )}
+        {sync.isLoading && <CardGridSkeleton />}
 
         {sync.data && sync.data.courses.length === 0 && (
           <EmptyState icon={<BookOpen />} title="No courses yet" body="Nothing has been released to your cohort. Check that the university server URL in Settings is right." />
@@ -205,7 +200,7 @@ function CourseReader({ title, lessons, lessonId, onLesson, onBack }: { title: s
       </aside>
 
       <div className="flex-1 overflow-y-auto">
-        {lesson.isLoading && <Skeleton className="m-10 h-96" />}
+        {lesson.isLoading && <ArticleSkeleton />}
         {lesson.data && (
           <article className="mx-auto max-w-3xl px-8 py-10 animate-rise">
             <Eyebrow>{lesson.data.moduleName}</Eyebrow>

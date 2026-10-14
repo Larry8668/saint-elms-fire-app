@@ -20,6 +20,7 @@
   --color-night-800: oklch(0.22 0.03 265);
   --color-night-700: oklch(0.29 0.035 265);
   --color-night-600: oklch(0.38 0.035 265);
+  --color-night-500: oklch(0.5 0.032 262);
   --color-night-400: oklch(0.62 0.03 260);
   --color-night-300: oklch(0.75 0.025 260);
   --color-night-200: oklch(0.86 0.015 260);
@@ -54,6 +55,18 @@
   @keyframes rise {
     from { opacity: 0; transform: translateY(6px); }
     to { opacity: 1; transform: translateY(0); }
+  }
+  @keyframes shimmer {
+    from { background-position: 200% 0; }
+    to { background-position: -200% 0; }
+  }
+  @keyframes pixel {
+    0%, 100% { opacity: 0.12; transform: scale(0.82); }
+    40% { opacity: 1; transform: scale(1); }
+  }
+  @keyframes caret {
+    0%, 45% { opacity: 1; }
+    55%, 100% { opacity: 0; }
   }
 }
 
@@ -94,6 +107,32 @@
   }
   .hairline {
     @apply border-white/[0.07];
+  }
+  /* Loading surfaces: a slow light sweep, so waiting reads as "working" rather than "frozen". */
+  .skeleton {
+    background-color: oklch(1 0 0 / 0.04);
+    background-image: linear-gradient(100deg, transparent 30%, oklch(1 0 0 / 0.07) 50%, transparent 70%);
+    background-size: 200% 100%;
+    animation: shimmer 1.8s linear infinite;
+  }
+  .text-shimmer {
+    background-image: linear-gradient(100deg, var(--color-night-400) 35%, var(--color-night-100) 50%, var(--color-night-400) 65%);
+    background-size: 200% 100%;
+    -webkit-background-clip: text;
+    background-clip: text;
+    color: transparent;
+    animation: shimmer 2.2s linear infinite;
+  }
+  .stream-caret .prose-sky > :last-child::after {
+    content: '';
+    display: inline-block;
+    width: 0.5em;
+    height: 1.05em;
+    margin-left: 2px;
+    vertical-align: -0.18em;
+    border-radius: 2px;
+    background: var(--color-beacon-300);
+    animation: caret 1s steps(1) infinite;
   }
   .sky-backdrop {
     background:

@@ -15,9 +15,10 @@ export function VerificationPanel({ verification }: { verification: Verification
     <div className="mt-2.5">
       <button
         onClick={() => setOpen((o) => !o)}
-        className="flex cursor-pointer flex-wrap items-center gap-x-3 gap-y-1 rounded-lg px-1 text-[11.5px] text-night-500 transition hover:text-night-300"
+        aria-expanded={open}
+        className="flex cursor-pointer flex-wrap items-center gap-x-3 gap-y-1 rounded-full border border-white/[0.06] bg-white/[0.02] px-2.5 py-1 text-[11.5px] text-night-500 transition hover:border-white/[0.12] hover:text-night-300"
       >
-        <span className={cn('flex items-center gap-1', allPassed ? 'text-aurora-400' : 'text-ember-400')}>
+        <span className={cn('flex items-center gap-1 font-medium', allPassed ? 'text-aurora-400' : 'text-ember-400')}>
           {allPassed ? <CheckCircle2 className="size-3.5" /> : <XCircle className="size-3.5" />}
           {passed}/{verification.checks.length} checks
         </span>

@@ -53,7 +53,18 @@ export function Eyebrow({ className, ...props }: HTMLAttributes<HTMLDivElement>)
 }
 
 export function Skeleton({ className }: { className?: string }) {
-  return <div className={cn('animate-pulse rounded-lg bg-white/[0.05]', className)} />;
+  return <div aria-hidden className={cn('skeleton rounded-lg', className)} />;
+}
+
+/** Paragraph-shaped skeleton; the last line is short so it reads as text, not a block. */
+export function SkeletonText({ lines = 3, className }: { lines?: number; className?: string }) {
+  return (
+    <div className={cn('space-y-2.5', className)} aria-hidden>
+      {Array.from({ length: lines }, (_, i) => (
+        <Skeleton key={i} className={cn('h-3', i === lines - 1 ? 'w-3/5' : i % 2 ? 'w-[92%]' : 'w-full')} />
+      ))}
+    </div>
+  );
 }
 
 export function EmptyState({ icon, title, body, action }: { icon: ReactNode; title: string; body: string; action?: ReactNode }) {

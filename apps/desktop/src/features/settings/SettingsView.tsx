@@ -4,7 +4,8 @@ import { CheckCircle2, Cpu, Eye, KeyRound, Plus, Server, Trash2, XCircle } from 
 import { useEffect, useState } from 'react';
 import { Button } from '@/components/ui/button';
 import { Switch } from '@/components/ui/overlays';
-import { Badge, Eyebrow, Input, Label, PageHeader, Panel, Skeleton } from '@/components/ui/primitives';
+import { Badge, Eyebrow, Input, Label, PageHeader, Panel } from '@/components/ui/primitives';
+import { FormSkeleton } from '@/components/ui/skeletons';
 import { api, type StoredSettings } from '@/lib/api';
 import { useHealth, useSaveSettings, useSettings } from '@/lib/queries';
 import { ProfilePanel } from './ProfilePanel';
@@ -32,7 +33,7 @@ export function SettingsView() {
     if (settings.data) setForm(structuredClone(settings.data));
   }, [settings.data]);
 
-  if (!form) return <Skeleton className="m-8 h-96 rounded-2xl" />;
+  if (!form) return <FormSkeleton />;
 
   const set = <K extends keyof StoredSettings>(key: K, value: StoredSettings[K]) => setForm({ ...form, [key]: value });
   const setProvider = (id: string, patch: Partial<ProviderConfig>) => set('providers', form.providers.map((p) => (p.id === id ? { ...p, ...patch } : p)));

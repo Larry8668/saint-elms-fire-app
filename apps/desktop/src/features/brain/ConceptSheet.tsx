@@ -4,7 +4,8 @@ import { useMemo, useState } from 'react';
 import { Markdown } from '@/components/Markdown';
 import { Button } from '@/components/ui/button';
 import { Sheet, SheetClose } from '@/components/ui/overlays';
-import { Badge, Eyebrow, Skeleton } from '@/components/ui/primitives';
+import { Badge, Eyebrow } from '@/components/ui/primitives';
+import { SectionsSkeleton } from '@/components/ui/skeletons';
 import { LESSON_HEX, ORIGIN_STYLE, STATUS_STYLE } from '@/lib/brain-style';
 import { useNav } from '@/lib/nav';
 import { usePage } from '@/lib/queries';
@@ -63,7 +64,7 @@ export function ConceptSheet({ node, graph, onSelect }: { node: GraphNode | null
             </p>
           )}
 
-          {page.isLoading && <Skeleton className="h-32" />}
+          {page.isLoading && <SectionsSkeleton />}
           {page.data && (
             <div className="space-y-5">
               {PAGE_SECTIONS.map((section) =>
