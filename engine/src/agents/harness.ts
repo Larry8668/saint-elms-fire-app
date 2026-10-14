@@ -1,4 +1,4 @@
-import { conceptKey, TEACHERS, type ChatRequest, type ChatStreamEvent, type Verification, type VerificationCheck } from '@sef/shared';
+import { conceptKey, TEACHERS, type ChatRequest, type ChatStreamEvent, type SourceRef, type Verification, type VerificationCheck } from '@sef/shared';
 import type { BrainService } from '../brain/service';
 import { errorFields, log } from '../config';
 import { searchLessons, type LessonHit } from '../content/search';
@@ -7,6 +7,7 @@ import { resolveModel, type ResolvedModel } from '../models/registry';
 import type { SessionStore } from '../sessions/store';
 import type { SettingsStore } from '../settings/store';
 import { webSearch, type WebResult } from '../web/searxng';
+import { attributeLessons } from './attribution';
 import { TurnContext } from './context';
 import { makeAgent } from './factory';
 import { ACADEMIC_REDIRECT, classifyFriendLane, PRIVACY_REFUSAL } from './lanes';
@@ -49,17 +50,17 @@ export async function runChatTurn(req: ChatRequest, deps: HarnessDeps, emit: (ev
   const question = latest.content.trim();
   const hasImage = Boolean(latest.attachments?.length);
 
-  const finish = async (text: string, resolved: ResolvedModel | null, checks: VerificationCheck[], lane?: Verification['lane']) => {
+  const finish = async (text: string, resolved: ResolvedModel | null, checks: VerificationCheck[], lane?: Verification['lane'], sources: SourceRef[] = [...ctx.sources.values()]) => {
     const verification: Verification = {
       model: resolved?.modelId ?? 'rules',
       provider: resolved?.provider.label ?? 'Deterministic lane check',
-      sources: [...ctx.sources.values()],
+      sources,
       checks,
       toolCalls: ctx.toolCalls,
       handoff: ctx.handoff,
       lane,
     };
-    await deps.sessions.appendTurn(req.sessionId, req.teacher, latest, text, verification.sources, [...ctx.lessonIds]);
+    await deps.sessions.appendTurn(req.sessionId, req.teacher, latest, text, verification, [...ctx.lessonIds]);
     emit({ type: 'done', text, verification });
     log.info('chat_turn_done', { teacher: req.teacher, ms: Date.now() - started, sources: verification.sources.length, tools: ctx.toolCalls.length, lane });
   };
@@ -122,6 +123,9 @@ export async function runChatTurn(req: ChatRequest, deps: HarnessDeps, emit: (ev
   }
   text = text.trim() || "I couldn't put an answer together just now. Could you rephrase that?";
 
+  const sources = await attributeSources(text, question, [...ctx.sources.values()], deps.content);
+  const citedLessons = sources.filter((s) => (s.kind === 'lesson' || s.kind === 'support') && s.cited).length;
+
   const checks: VerificationCheck[] = [];
   if (req.teacher === 'philosopher') {
     let format = checkPhilosopherFormat(text);
@@ -132,10 +136,32 @@ export async function runChatTurn(req: ChatRequest, deps: HarnessDeps, emit: (ev
     checks.push(...format);
     checks.push({ id: 'web', label: 'Web search reachable', passed: webResults !== null, detail: webResults ? `${webResults.length} results` : 'offline' });
   } else {
-    checks.push(checkGrounding(ctx.lessonIds.size, text));
+    checks.push(checkGrounding(citedLessons, text, ctx.lessonIds.size));
     checks.push({ id: 'released-only', label: 'Only released lessons were searched', passed: true, detail: 'Unreleased lessons are never on this device' });
   }
   if (hasImage) checks.push({ id: 'vision', label: 'Image read on-device', passed: resolved.provider.kind === 'ollama', detail: resolved.label });
 
-  await finish(text, resolved, checks, 'answered');
+  await finish(text, resolved, checks, 'answered', sources);
+}
+
+/**
+ * Re-scores retrieved lesson sources against the finished answer: which ones it actually drew on,
+ * and the section to deep-link to. Cited sources come first; other kinds pass through untouched.
+ */
+async function attributeSources(answer: string, question: string, sources: SourceRef[], content: ContentStore): Promise<SourceRef[]> {
+  const lessonRefs = sources.filter((s) => s.kind === 'lesson' || s.kind === 'support');
+  if (!lessonRefs.length) return sources;
+  try {
+    const lessons = (await Promise.all(lessonRefs.map((s) => content.lesson(s.id)))).filter((l): l is NonNullable<typeof l> => Boolean(l));
+    const attribution = attributeLessons(answer, question, lessons);
+    const enriched = sources.map((s) => {
+      const a = attribution.get(s.id);
+      return a && (s.kind === 'lesson' || s.kind === 'support') ? { ...s, ...a } : s;
+    });
+    log.debug('sources_attributed', { cited: enriched.filter((s) => s.cited).length, retrieved: lessonRefs.length });
+    return enriched.sort((a, b) => Number(Boolean(b.cited)) - Number(Boolean(a.cited)));
+  } catch (error) {
+    log.warn('source_attribution_failed', errorFields(error));
+    return sources;
+  }
 }

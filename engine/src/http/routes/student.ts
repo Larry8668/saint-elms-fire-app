@@ -1,6 +1,6 @@
 import { Hono } from 'hono';
 import { streamSSE } from 'hono/streaming';
-import { TEACHER_IDS, type ChatRequest, type ChatStreamEvent } from '@sef/shared';
+import { TEACHER_IDS, type ChatRequest, type ChatStreamEvent, type TeacherId } from '@sef/shared';
 import { z } from 'zod';
 import { runChatTurn } from '../../agents/harness';
 import { errorFields, log } from '../../config';
@@ -73,10 +73,24 @@ export function studentRoutes(deps: EngineDeps) {
     });
   });
 
-  app.get('/sessions', guard, async (c) => c.json(await c.get('ws').sessions.list()));
+  // Chat history (per student, on this device)
+  app.get('/sessions', guard, async (c) => {
+    const teacher = c.req.query('teacher');
+    if (teacher && !(TEACHER_IDS as readonly string[]).includes(teacher)) return c.json({ error: 'Unknown teacher' }, 400);
+    return c.json(await c.get('ws').sessions.list({ teacher: teacher as TeacherId | undefined, limit: Number(c.req.query('limit') ?? 30) }));
+  });
   app.get('/sessions/:id', guard, async (c) => {
     const session = await c.get('ws').sessions.get(c.req.param('id'));
-    return session ? c.json(session) : c.json({ error: 'Session not found' }, 404);
+    if (!session) return c.json({ error: 'Session not found' }, 404);
+    const { lessonIds: _l, sources: _s, ...detail } = session;
+    return c.json(detail);
+  });
+  app.delete('/sessions/:id', guard, async (c) => {
+    const ws = c.get('ws');
+    const removed = await ws.sessions.remove(c.req.param('id'));
+    if (!removed) return c.json({ error: 'Session not found' }, 404);
+    log.info('session_deleted', { profileId: ws.profile.id, sessionId: c.req.param('id') });
+    return c.json({ ok: true });
   });
 
   // Brain

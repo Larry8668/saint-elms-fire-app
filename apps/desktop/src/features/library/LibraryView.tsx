@@ -1,7 +1,7 @@
 import { conceptKey, type LessonMeta, type SyncStatus } from '@sef/shared';
 import { ArrowLeft, BookOpen, CheckCircle2, Clock, CloudDownload, KeyRound, LifeBuoy, MessageCircleQuestion, RefreshCw, ShieldCheck, WifiOff } from 'lucide-react';
 import { motion } from 'motion/react';
-import { useMemo } from 'react';
+import { useMemo, useRef } from 'react';
 import { Markdown } from '@/components/Markdown';
 import { Button } from '@/components/ui/button';
 import { Badge, EmptyState, Eyebrow, PageHeader, Panel } from '@/components/ui/primitives';
@@ -9,6 +9,7 @@ import { ArticleSkeleton, CardGridSkeleton } from '@/components/ui/skeletons';
 import { cn } from '@/lib/cn';
 import { useNav } from '@/lib/nav';
 import { useInstallCourses, useLesson, useLibrary, useSyncStatus } from '@/lib/queries';
+import { useScrollToSection } from './use-scroll-to-section';
 
 type CourseRow = SyncStatus['courses'][number];
 
@@ -44,6 +45,8 @@ export function LibraryView() {
         title={course?.title ?? openCourse}
         lessons={lessons}
         lessonId={openLesson?.id ?? null}
+        section={nav.section}
+        sectionHeading={nav.sectionHeading}
         onLesson={(id) => nav.go('library', { lessonId: id })}
         onBack={() => nav.go('library')}
       />
@@ -155,9 +158,21 @@ function CourseCard({ course, index, installing, onInstall, onOpen }: { course: 
   );
 }
 
-function CourseReader({ title, lessons, lessonId, onLesson, onBack }: { title: string; lessons: LessonMeta[]; lessonId: string | null; onLesson: (id: string) => void; onBack: () => void }) {
+interface CourseReaderProps {
+  title: string;
+  lessons: LessonMeta[];
+  lessonId: string | null;
+  section?: number;
+  sectionHeading?: string;
+  onLesson: (id: string) => void;
+  onBack: () => void;
+}
+
+function CourseReader({ title, lessons, lessonId, section, sectionHeading, onLesson, onBack }: CourseReaderProps) {
   const { go } = useNav();
   const lesson = useLesson(lessonId);
+  const articleRef = useRef<HTMLElement>(null);
+  useScrollToSection(articleRef, lesson.data ? lessonId : null, section, sectionHeading);
   const modules = useMemo(() => {
     const map = new Map<string, { name: string; lessons: LessonMeta[] }>();
     for (const l of lessons) {
@@ -202,7 +217,7 @@ function CourseReader({ title, lessons, lessonId, onLesson, onBack }: { title: s
       <div className="flex-1 overflow-y-auto">
         {lesson.isLoading && <ArticleSkeleton />}
         {lesson.data && (
-          <article className="mx-auto max-w-3xl px-8 py-10 animate-rise">
+          <article ref={articleRef} className="mx-auto max-w-3xl px-8 py-10 animate-rise">
             <Eyebrow>{lesson.data.moduleName}</Eyebrow>
             <div className="mt-3 mb-6 flex flex-wrap items-center gap-2">
               {lesson.data.estimatedStudyMinutes && (

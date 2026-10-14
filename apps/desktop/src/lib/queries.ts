@@ -1,4 +1,5 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
+import type { TeacherId } from '@sef/shared';
 import { toast } from 'sonner';
 import { api, type StoredSettings } from './api';
 
@@ -38,7 +39,7 @@ export const usePage = (key: string | null) =>
   useQuery({ queryKey: keys.page(key ?? ''), queryFn: () => api.page(key!), enabled: Boolean(key), retry: false });
 export const useBrainLog = () => useQuery({ queryKey: keys.brainLog, queryFn: api.brainLog });
 export const useLint = () => useQuery({ queryKey: keys.lint, queryFn: api.lint });
-export const useSessions = () => useQuery({ queryKey: keys.sessions, queryFn: api.sessions });
+export const useSessions = (teacher?: TeacherId) => useQuery({ queryKey: [...keys.sessions, teacher ?? 'all'], queryFn: () => api.sessions(teacher) });
 
 export function useSaveSettings() {
   const client = useQueryClient();

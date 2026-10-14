@@ -28,6 +28,17 @@ export interface SourceRef {
   id: string;
   title: string;
   url?: string;
+  /** Lesson sources: course the lesson belongs to. */
+  courseName?: string;
+  /** Lesson sources: the heading of the section that best matches the answer, and its position among the lesson's headings. */
+  section?: { heading: string; index: number };
+  /** Short passage from the source that the answer most overlaps with. */
+  excerpt?: string;
+  /**
+   * Whether the answer measurably drew on this source (deterministic term overlap), as opposed to it
+   * merely being retrieved. Undefined for sources that are not attributed (brain, web).
+   */
+  cited?: boolean;
 }
 
 export interface VerificationCheck {
@@ -45,6 +56,36 @@ export interface Verification {
   toolCalls: Array<{ tool: string; summary: string }>;
   handoff?: { to: TeacherId; reason: string };
   lane?: 'answered' | 'redirected' | 'refused';
+}
+
+/** A persisted chat turn. Assistant turns keep the verification they were served with. */
+export interface StoredTurn {
+  role: ChatTurn['role'];
+  content: string;
+  /** Number of images sent with a user turn; the images themselves are never stored. */
+  images?: number;
+  at: string;
+  verification?: Verification;
+}
+
+export interface SessionSummary {
+  id: string;
+  teacher: TeacherId;
+  startedAt: string;
+  updatedAt: string;
+  turns: number;
+  /** Turns not yet reflected into the brain. */
+  pending: number;
+  preview: string;
+}
+
+export interface SessionDetail {
+  id: string;
+  teacher: TeacherId;
+  startedAt: string;
+  updatedAt: string;
+  turns: StoredTurn[];
+  ingestedTurns: number;
 }
 
 /** Server-sent events emitted by POST /api/chat. */

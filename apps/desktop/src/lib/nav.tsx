@@ -9,6 +9,10 @@ export interface NavState {
   view: View;
   /** Lesson open in the library reader. */
   lessonId?: string;
+  /** Heading to scroll to in that lesson: its position among the lesson's h1–h4 headings. */
+  section?: number;
+  /** Text of that heading, used to find it if the index drifts. History state only. */
+  sectionHeading?: string;
   /** Concept focused in the sky or brain. */
   conceptKey?: string;
   teacher?: TeacherId;
@@ -32,6 +36,7 @@ function toHash(state: NavState): string {
     const value = state[key as keyof typeof URL_PARAMS];
     if (value) params.set(name, value);
   }
+  if (state.lessonId && state.section !== undefined) params.set('section', String(state.section));
   const query = params.toString();
   return `#/${state.view}${query ? `?${query}` : ''}`;
 }
@@ -41,9 +46,12 @@ function fromHash(hash: string): NavState {
   const view = (VIEWS as readonly string[]).includes(path) ? (path as View) : 'sky';
   const params = new URLSearchParams(query);
   const teacher = params.get('teacher');
+  const lessonId = params.get('lesson') ?? undefined;
+  const rawSection = params.get('section') ?? '';
   return {
     view,
-    lessonId: params.get('lesson') ?? undefined,
+    lessonId,
+    section: lessonId && /^\d+$/.test(rawSection) ? Number(rawSection) : undefined,
     conceptKey: params.get('concept') ?? undefined,
     teacher: teacher && (TEACHER_IDS as readonly string[]).includes(teacher) ? (teacher as TeacherId) : undefined,
   };

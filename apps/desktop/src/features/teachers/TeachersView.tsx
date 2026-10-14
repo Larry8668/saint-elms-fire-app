@@ -15,7 +15,8 @@ import { useInvalidateBrain } from '@/lib/queries';
 import { useStickToBottom } from '@/lib/use-stick-to-bottom';
 import { useChat } from './chat-store';
 import { Composer, type Attachments, type ComposerHandle } from './Composer';
-import { AssistantMessage, UserMessage } from './MessageRow';
+import { HistoryButton } from './ConversationHistory';
+import { AssistantMessage, ThreadSkeleton, UserMessage } from './MessageRow';
 import { ReflectDialog } from './ReflectDialog';
 import { TeacherIntro } from './TeacherIntro';
 import { TEACHER_LOOK } from './teacher-meta';
@@ -112,6 +113,7 @@ export function TeachersView() {
           })}
         </div>
         <div className="flex items-center gap-2">
+          <HistoryButton teacher={teacher} />
           <Tooltip content="Start a fresh conversation with this teacher">
             <Button variant="ghost" size="sm" onClick={() => reset(teacher)} disabled={!thread.messages.length}>
               <RotateCcw /> New
@@ -130,7 +132,9 @@ export function TeachersView() {
       <div className="relative min-h-0 flex-1">
         <div ref={scroll.ref} onScroll={scroll.onScroll} className="h-full overflow-y-auto">
           <div className="mx-auto w-full max-w-3xl px-6 py-8">
-            {thread.messages.length === 0 ? (
+            {thread.loading ? (
+              <ThreadSkeleton />
+            ) : thread.messages.length === 0 ? (
               <TeacherIntro teacher={teacher} onPick={(p) => submit(p)} />
             ) : (
               <div className="space-y-7">

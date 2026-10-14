@@ -44,12 +44,21 @@ export function repairPhilosopherFormat(text: string, webAvailable: boolean): st
   return `${repaired.join('\n').trimEnd()}\n\n${question.replace(/^\**trailhead:?\**\s*/i, 'Trailhead: ')}`;
 }
 
-export function checkGrounding(sourceCount: number, text: string): VerificationCheck {
+/** Passes when the answer measurably draws on a released lesson, or honestly says the topic isn't covered. */
+export function checkGrounding(citedCount: number, text: string, retrievedCount = citedCount): VerificationCheck {
   const admitsGap = /not (in|covered|part of) (your|the) (released )?(lessons|courseware|syllabus)|isn't covered|outside (your|the) (released )?(lessons|syllabus)/i.test(text);
+  const plural = (n: number) => `${n} lesson${n === 1 ? '' : 's'}`;
   return {
     id: 'grounded',
     label: 'Answer grounded in released lessons',
-    passed: sourceCount > 0 || admitsGap,
-    detail: sourceCount > 0 ? `${sourceCount} lesson source${sourceCount > 1 ? 's' : ''}` : admitsGap ? 'Said it is not covered' : 'No lesson matched',
+    passed: citedCount > 0 || admitsGap,
+    detail:
+      citedCount > 0
+        ? `draws on ${plural(citedCount)} of ${retrievedCount} retrieved`
+        : admitsGap
+          ? 'Said it is not covered'
+          : retrievedCount > 0
+            ? `${plural(retrievedCount)} retrieved, but the answer doesn't draw on them`
+            : 'No lesson matched',
   };
 }

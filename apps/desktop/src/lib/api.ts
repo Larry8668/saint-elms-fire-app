@@ -14,7 +14,10 @@ import type {
   Lesson,
   LessonMeta,
   LintFinding,
+  SessionDetail,
+  SessionSummary,
   SyncStatus,
+  TeacherId,
 } from '@sef/shared';
 import { log } from './log';
 
@@ -87,15 +90,7 @@ export interface QuizResult {
 export interface CaptureResult extends IngestResult {
   reading: { topic: string; transcription: string; concepts: string[] };
 }
-export interface SessionSummary {
-  id: string;
-  teacher: ChatRequest['teacher'];
-  startedAt: string;
-  updatedAt: string;
-  turns: number;
-  pending: number;
-  preview: string;
-}
+export type { SessionDetail, SessionSummary };
 
 export const api = {
   health: () => request<HealthResponse>('/api/health'),
@@ -122,7 +117,9 @@ export const api = {
   lint: () => request<LintFinding[]>('/api/brain/lint'),
   ingest: (sessionId: string) => post<IngestResult>(`/api/brain/ingest/${encodeURIComponent(sessionId)}`),
   capture: (image: { mimeType: string; data: string }, note?: string) => post<CaptureResult>('/api/brain/capture', { image: { kind: 'image', ...image }, note }),
-  sessions: () => request<SessionSummary[]>('/api/sessions'),
+  sessions: (teacher?: TeacherId) => request<SessionSummary[]>(`/api/sessions${teacher ? `?teacher=${teacher}` : ''}`),
+  session: (id: string) => request<SessionDetail>(`/api/sessions/${encodeURIComponent(id)}`),
+  deleteSession: (id: string) => request<{ ok: true }>(`/api/sessions/${encodeURIComponent(id)}`, { method: 'DELETE' }),
 
   createQuiz: (key: string) => post<QuizPayload>(`/api/quiz/${encodeURIComponent(key)}`),
   submitQuiz: (id: string, answers: number[]) => post<QuizResult>(`/api/quiz/${encodeURIComponent(id)}/submit`, { answers }),
