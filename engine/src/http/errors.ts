@@ -1,6 +1,6 @@
 import { SyncAuthError } from '../content/sync';
 import { ModelConfigError } from '../models/registry';
-import { UniUnreachableError } from '../uni/client';
+import { UniHttpError, UniUnreachableError } from '../uni/client';
 
 /** Turns known error types into friendly messages the UI can show as-is. */
 export function friendlyError(error: unknown): string {
@@ -12,9 +12,11 @@ export function friendlyError(error: unknown): string {
   return message;
 }
 
-export function errorStatus(error: unknown): 400 | 401 | 503 | 500 {
+/** A university error is reported as 502 (bad upstream), never 401, so it can't sign the student out of the engine. */
+export function errorStatus(error: unknown): 400 | 401 | 502 | 503 | 500 {
   if (error instanceof ModelConfigError) return 400;
   if (error instanceof SyncAuthError) return 401;
   if (error instanceof UniUnreachableError) return 503;
+  if (error instanceof UniHttpError) return 502;
   return 500;
 }

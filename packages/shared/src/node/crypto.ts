@@ -1,6 +1,6 @@
 import { createPublicKey, randomBytes, scrypt as scryptCb, sign, timingSafeEqual, verify, type KeyObject } from 'node:crypto';
 import { promisify } from 'node:util';
-import { TOKEN_PREFIX, type TokenClaims } from '../auth';
+import { ROLES, TOKEN_PREFIX, type TokenClaims } from '../auth';
 
 const scrypt = promisify(scryptCb) as (password: string, salt: Buffer, keylen: number) => Promise<Buffer>;
 const KEY_LENGTH = 32;
@@ -34,7 +34,12 @@ export class TokenError extends Error {}
 export function verifyToken(token: string, publicKeyPem: string, now = Date.now()): TokenClaims {
   const [prefix, payload, signature] = token.split('.');
   if (prefix !== TOKEN_PREFIX || !payload || !signature) throw new TokenError('malformed token');
-  const ok = verify(null, Buffer.from(payload), createPublicKey(publicKeyPem), Buffer.from(signature, 'base64url'));
+  let ok = false;
+  try {
+    ok = verify(null, Buffer.from(payload), createPublicKey(publicKeyPem), Buffer.from(signature, 'base64url'));
+  } catch {
+    ok = false;
+  }
   if (!ok) throw new TokenError('bad signature');
   let claims: TokenClaims;
   try {
@@ -42,7 +47,9 @@ export function verifyToken(token: string, publicKeyPem: string, now = Date.now(
   } catch {
     throw new TokenError('malformed claims');
   }
-  if (typeof claims?.sub !== 'string' || typeof claims.exp !== 'number' || !Number.isFinite(claims.exp)) throw new TokenError('malformed claims');
+  const validShape =
+    typeof claims?.sub === 'string' && typeof claims.exp === 'number' && Number.isFinite(claims.exp) && (ROLES as readonly string[]).includes(claims.role);
+  if (!validShape) throw new TokenError('malformed claims');
   if (claims.exp * 1000 < now) throw new TokenError('expired');
   return claims;
 }
