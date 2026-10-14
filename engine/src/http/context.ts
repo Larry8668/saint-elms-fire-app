@@ -17,7 +17,7 @@ export const bearer = (header: string | undefined) => header?.match(/^Bearer\s+(
 /** Resolves the engine session to a profile workspace. Every student route sits behind this. */
 export function requireProfile(deps: EngineDeps): MiddlewareHandler<EngineEnv> {
   return async (c, next) => {
-    const token = bearer(c.req.header('authorization')) ?? c.req.query('token');
+    const token = bearer(c.req.header('authorization'));
     const me = token ? await deps.auth.resolve(token) : null;
     if (!token || !me) return c.json({ error: 'Sign in to continue', code: 'unauthenticated' }, 401);
     c.set('me', me);

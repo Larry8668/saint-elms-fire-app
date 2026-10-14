@@ -33,6 +33,9 @@ export interface TokenClaims {
 
 export const TOKEN_PREFIX = 'sef1';
 
+/** Emails are compared and stored case-insensitively, so one mailbox can never hold two accounts. */
+export const normalizeEmail = (email: string) => email.trim().toLowerCase();
+
 export const LoginRequestSchema = z.object({
   email: z.string().trim().toLowerCase().email(),
   password: z.string().min(1).max(200),
