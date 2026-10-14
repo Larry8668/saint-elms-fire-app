@@ -1,0 +1,27 @@
+node_modules/
+dist/
+build/
+.turbo/
+*.tsbuildinfo
+.DS_Store
+
+# Local runtime data: student brain, downloaded courseware, settings, keys
+.data/
+server/uni/keys/
+
+# Env
+.env
+.env.*
+!.env.example
+
+# Tauri
+apps/desktop/src-tauri/target/
+apps/desktop/src-tauri/gen/
+
+# Private planning docs
+docs/internal/
+
+# Editors
+.vscode/*
+!.vscode/extensions.json
+.idea/

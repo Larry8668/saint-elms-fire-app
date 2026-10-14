@@ -1,0 +1,8 @@
+packages:
+  - apps/*
+  - engine
+  - server/*
+  - packages/*
+
+onlyBuiltDependencies:
+  - esbuild
