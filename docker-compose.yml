@@ -1,0 +1,81 @@
+# Self-hostable stack.
+#   docker compose up -d --build                  → uni server + web search + engine (uses Ollama on the host)
+#   docker compose --profile ollama up -d --build → also runs Ollama in a container
+#   docker compose up -d searxng                  → just web search, for `pnpm dev` (same as `pnpm search:up`)
+name: saint-elms-fire
+
+x-node-service: &node-service
+  build:
+    context: .
+    dockerfile: infra/docker/node-service.Dockerfile
+  restart: unless-stopped
+  env_file:
+    - path: .env
+      required: false
+
+services:
+  uni:
+    <<: *node-service
+    build:
+      context: .
+      dockerfile: infra/docker/node-service.Dockerfile
+      args: { SERVICE: "@sef/uni-server" }
+    environment:
+      UNI_PORT: "4200"
+      UNI_HOST: 0.0.0.0
+      COURSEWARE_DIR: /courseware
+      KEYS_DIR: /data/keys
+      UNI_DATA_DIR: /data
+    volumes:
+      - ./courseware:/courseware:ro
+      - uni-data:/data
+    ports: ["4200:4200"]
+    healthcheck:
+      test: ["CMD", "node", "-e", "fetch('http://127.0.0.1:4200/health').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"]
+      interval: 15s
+      timeout: 5s
+      retries: 5
+
+  searxng:
+    image: searxng/searxng:latest
+    restart: unless-stopped
+    environment:
+      SEARXNG_BASE_URL: http://localhost:8888/
+      SEARXNG_SECRET: ${SEARXNG_SECRET:-change-me-for-public-deployments}
+    volumes:
+      - ./infra/searxng/settings.yml:/etc/searxng/settings.yml:ro
+    ports: ["8888:8080"]
+
+  engine:
+    <<: *node-service
+    build:
+      context: .
+      dockerfile: infra/docker/node-service.Dockerfile
+      args: { SERVICE: "@sef/engine" }
+    environment:
+      ENGINE_PORT: "4100"
+      ENGINE_HOST: 0.0.0.0
+      ENGINE_DATA_DIR: /data
+      UNI_SERVER_URL: http://uni:4200
+      SEARXNG_URL: http://searxng:8080
+      OLLAMA_URL: ${OLLAMA_URL:-http://host.docker.internal:11434}
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    volumes:
+      - engine-data:/data
+    ports: ["4100:4100"]
+    depends_on:
+      uni: { condition: service_healthy }
+
+  ollama:
+    image: ollama/ollama:latest
+    profiles: ["ollama"]
+    restart: unless-stopped
+    volumes:
+      - ollama-models:/root/.ollama
+    ports: ["11434:11434"]
+
+volumes:
+  uni-data:
+  engine-data:
+  ollama-models:
