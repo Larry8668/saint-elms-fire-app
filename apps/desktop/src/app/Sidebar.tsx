@@ -5,6 +5,7 @@ import { StatusDot } from '@/components/ui/primitives';
 import { cn } from '@/lib/cn';
 import { useNav, type View } from '@/lib/nav';
 import { useHealth, useLint } from '@/lib/queries';
+import { ProfileMenu } from './ProfileMenu';
 
 const ITEMS: Array<{ view: View; label: string; Icon: LucideIcon }> = [
   { view: 'sky', label: 'Sky', Icon: Sparkles },
@@ -22,7 +23,7 @@ export function Sidebar() {
   const modelsOk = health.data ? health.data.models.every((m) => m.reachable) : undefined;
 
   return (
-    <aside className="flex h-full w-[76px] shrink-0 flex-col items-center border-r border-white/[0.06] bg-night-950/70 py-4 backdrop-blur-xl">
+    <aside className="relative z-30 flex h-full w-[76px] shrink-0 flex-col items-center border-r border-white/[0.06] bg-night-950/70 py-4 backdrop-blur-xl">
       <img src="/logo.svg" alt="Saint Elms Fire" className="mb-6 size-9" />
       <nav className="flex flex-1 flex-col gap-1.5">
         {ITEMS.map(({ view: v, label, Icon }) => (
@@ -50,6 +51,7 @@ export function Sidebar() {
         <NavButton label="Settings" active={view === 'settings'} onClick={() => go('settings')}>
           <Settings className="size-[19px]" />
         </NavButton>
+        <ProfileMenu />
       </div>
     </aside>
   );

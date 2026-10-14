@@ -6,10 +6,9 @@ import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { StrictMode } from 'react';
 import { createRoot } from 'react-dom/client';
 import { Toaster } from 'sonner';
-import { App } from './app/App';
+import { Root } from './app/Root';
 import { TooltipProvider } from './components/ui/overlays';
-import { ChatProvider } from './features/teachers/chat-store';
-import { NavProvider } from './lib/nav';
+import { SessionProvider } from './lib/session';
 
 const queryClient = new QueryClient({
   defaultOptions: { queries: { staleTime: 10_000, refetchOnWindowFocus: false } },
@@ -18,14 +17,12 @@ const queryClient = new QueryClient({
 createRoot(document.getElementById('root')!).render(
   <StrictMode>
     <QueryClientProvider client={queryClient}>
-      <NavProvider>
-        <ChatProvider>
-          <TooltipProvider delayDuration={200}>
-            <App />
-            <Toaster theme="dark" position="bottom-right" richColors />
-          </TooltipProvider>
-        </ChatProvider>
-      </NavProvider>
+      <SessionProvider>
+        <TooltipProvider delayDuration={200}>
+          <Root />
+          <Toaster theme="dark" position="bottom-right" richColors />
+        </TooltipProvider>
+      </SessionProvider>
     </QueryClientProvider>
   </StrictMode>,
 );

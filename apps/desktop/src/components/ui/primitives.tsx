@@ -1,5 +1,5 @@
 import { cva, type VariantProps } from 'class-variance-authority';
-import { forwardRef, type HTMLAttributes, type InputHTMLAttributes, type ReactNode, type TextareaHTMLAttributes } from 'react';
+import { forwardRef, type HTMLAttributes, type InputHTMLAttributes, type LabelHTMLAttributes, type ReactNode, type SelectHTMLAttributes, type TextareaHTMLAttributes } from 'react';
 import { cn } from '@/lib/cn';
 
 export function Panel({ className, ...props }: HTMLAttributes<HTMLDivElement>) {
@@ -37,7 +37,14 @@ export const Textarea = forwardRef<HTMLTextAreaElement, TextareaHTMLAttributes<H
 ));
 Textarea.displayName = 'Textarea';
 
-export function Label({ className, ...props }: HTMLAttributes<HTMLLabelElement>) {
+export const Select = forwardRef<HTMLSelectElement, SelectHTMLAttributes<HTMLSelectElement>>(({ className, ...props }, ref) => (
+  <select ref={ref} className={cn(fieldClass, 'h-10 appearance-none bg-[length:12px] bg-[right_0.9rem_center] bg-no-repeat pr-9', className)} style={{ backgroundImage: SELECT_CHEVRON }} {...props} />
+));
+Select.displayName = 'Select';
+
+const SELECT_CHEVRON = `url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 12 12'%3E%3Cpath d='M3 4.5l3 3 3-3' fill='none' stroke='%239aa3b8' stroke-width='1.5'/%3E%3C/svg%3E")`;
+
+export function Label({ className, ...props }: LabelHTMLAttributes<HTMLLabelElement>) {
   return <label className={cn('mb-1.5 block text-[12.5px] font-medium text-night-300', className)} {...props} />;
 }
 

@@ -4,6 +4,9 @@ import type {
   ChatStreamEvent,
   ConceptPage,
   CourseSummary,
+  DeviceProfile,
+  EngineLoginResponse,
+  EngineMe,
   EngineSettings,
   GraphResponse,
   HealthResponse,
@@ -26,20 +29,33 @@ export class EngineError extends Error {
   }
 }
 
+let sessionToken: string | null = null;
+let onUnauthenticated: (() => void) | null = null;
+
+/** Set by the session provider. Every engine call after sign-in carries this token. */
+export function setEngineSession(token: string | null, onExpired?: () => void) {
+  sessionToken = token;
+  onUnauthenticated = onExpired ?? null;
+}
+
+const authHeaders = (): Record<string, string> => (sessionToken ? { authorization: `Bearer ${sessionToken}` } : {});
+
 async function request<T>(path: string, init?: RequestInit): Promise<T> {
   let res: Response;
   try {
     res = await fetch(`${ENGINE_URL}${path}`, {
       ...init,
-      headers: { 'content-type': 'application/json', ...init?.headers },
+      headers: { 'content-type': 'application/json', ...authHeaders(), ...init?.headers },
     });
   } catch (error) {
     log.error('engine_unreachable', { path, error: String(error) });
     throw new EngineError('The local engine is not running. Start it with "pnpm dev".', 0);
   }
-  const body = (await res.json().catch(() => ({}))) as T & { error?: string };
+  if (res.status === 204) return undefined as T;
+  const body = (await res.json().catch(() => ({}))) as T & { error?: string; code?: string };
   if (!res.ok) {
     log.warn('engine_request_failed', { path, status: res.status, error: body.error });
+    if (res.status === 401 && body.code === 'unauthenticated' && sessionToken) onUnauthenticated?.();
     throw new EngineError(body.error ?? `Request failed (${res.status})`, res.status);
   }
   return body;
@@ -54,9 +70,7 @@ export interface Library {
   courses: InstalledCourse[];
   lessons: LessonMeta[];
 }
-export interface StoredSettings extends EngineSettings {
-  cohortId: string;
-}
+export type StoredSettings = EngineSettings;
 export interface QuizPayload {
   id: string;
   key: string;
@@ -85,6 +99,11 @@ export interface SessionSummary {
 
 export const api = {
   health: () => request<HealthResponse>('/api/health'),
+  profiles: () => request<DeviceProfile[]>('/api/auth/profiles'),
+  login: (email: string, password: string) => post<EngineLoginResponse>('/api/auth/login', { email, password }),
+  me: () => request<EngineMe>('/api/auth/me'),
+  logout: () => post<void>('/api/auth/logout'),
+
   settings: () => request<StoredSettings>('/api/settings'),
   saveSettings: (patch: Partial<StoredSettings>) => request<StoredSettings>('/api/settings', { method: 'PUT', body: JSON.stringify(patch) }),
   providerModels: (id: string) => request<{ models: string[]; error?: string }>(`/api/providers/${encodeURIComponent(id)}/models`),
@@ -115,7 +134,7 @@ export async function streamChat(req: ChatRequest, onEvent: (event: ChatStreamEv
   try {
     res = await fetch(`${ENGINE_URL}/api/chat`, {
       method: 'POST',
-      headers: { 'content-type': 'application/json' },
+      headers: { 'content-type': 'application/json', ...authHeaders() },
       body: JSON.stringify(req),
       signal,
     });
