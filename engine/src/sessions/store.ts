@@ -15,6 +15,7 @@ export interface Session {
 }
 
 const PREVIEW_CHARS = 90;
+const MAX_LIST = 100;
 
 /** Chat transcripts, one JSON file per conversation in the student's workspace. Images are not stored — only that one was sent. */
 export class SessionStore {
@@ -53,20 +54,24 @@ export class SessionStore {
 
   /** Returns false when there was nothing to delete. */
   async remove(id: string): Promise<boolean> {
-    const file = this.fileFor(id);
-    const exists = await readJson<Session | null>(file, null);
-    if (!exists) return false;
-    await rm(file, { force: true });
-    return true;
+    try {
+      await rm(this.fileFor(id));
+      return true;
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code === 'ENOENT') return false;
+      throw error;
+    }
   }
 
+  /** Newest first. `limit` is clamped to 1–MAX_LIST; non-numeric input falls back to 30. */
   async list({ teacher, limit = 30 }: { teacher?: TeacherId; limit?: number } = {}): Promise<SessionSummary[]> {
+    const take = Number.isFinite(limit) ? Math.min(MAX_LIST, Math.max(1, Math.floor(limit))) : 30;
     const names = await readdir(this.dir).catch(() => [] as string[]);
     const sessions = await Promise.all(names.filter((n) => n.endsWith('.json')).map((n) => readJson<Session | null>(path.join(this.dir, n), null)));
     return sessions
       .filter((s): s is Session => Boolean(s) && (!teacher || s!.teacher === teacher))
       .sort((a, b) => b.updatedAt.localeCompare(a.updatedAt))
-      .slice(0, limit)
+      .slice(0, take)
       .map((s) => ({
         id: s.id,
         teacher: s.teacher,

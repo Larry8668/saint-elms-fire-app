@@ -46,11 +46,12 @@ function fromHash(hash: string): NavState {
   const view = (VIEWS as readonly string[]).includes(path) ? (path as View) : 'sky';
   const params = new URLSearchParams(query);
   const teacher = params.get('teacher');
-  const section = Number.parseInt(params.get('section') ?? '', 10);
+  const lessonId = params.get('lesson') ?? undefined;
+  const rawSection = params.get('section') ?? '';
   return {
     view,
-    lessonId: params.get('lesson') ?? undefined,
-    section: Number.isInteger(section) && section >= 0 ? section : undefined,
+    lessonId,
+    section: lessonId && /^\d+$/.test(rawSection) ? Number(rawSection) : undefined,
     conceptKey: params.get('concept') ?? undefined,
     teacher: teacher && (TEACHER_IDS as readonly string[]).includes(teacher) ? (teacher as TeacherId) : undefined,
   };
