@@ -35,6 +35,7 @@ export function DispersalTab() {
                 const rows = byStudent.get(a.id) ?? [];
                 const released = cohorts.data?.find((c) => c.id === a.cohortId)?.courses.length ?? 0;
                 const outdated = rows.filter((r) => !r.current);
+                const lastSync = rows.reduce<string | undefined>((latest, r) => (!latest || r.at > latest ? r.at : latest), undefined);
                 const pct = released ? Math.min(100, Math.round((rows.length / released) * 100)) : 0;
                 return (
                   <Panel key={a.id} className="p-5">
@@ -43,7 +44,7 @@ export function DispersalTab() {
                       <div className="min-w-0 flex-1">
                         <div className="text-night-100">{a.name}</div>
                         <div className="text-[12px] text-night-500">
-                          {a.cohortId} · last sync {rows[0] ? timeAgo(rows[0].at) : 'never'}
+                          {a.cohortId} · last sync {lastSync ? timeAgo(lastSync) : 'never'}
                         </div>
                       </div>
                       <div className="w-56">
