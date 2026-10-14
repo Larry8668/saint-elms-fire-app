@@ -1,0 +1,122 @@
+# The agentic layer
+
+How the AI parts of Saint Elms Fire work: the teachers, the harness that wraps every turn, the tools, how sources are attributed, how chats are saved, and how models are plugged in. The brain and the sky are covered in [knowledge-graph.md](knowledge-graph.md).
+
+The guiding principle: **models propose, code decides.** A small local model (Gemma 4 E4B by default) is good at language and decent at following a schema. It is not reliable at enforcing rules. So every rule that matters (privacy, grounding, citation format, which sources count, what enters the brain, mastery) is enforced by deterministic code around the model, and the student can see the result of every check.
+
+---
+
+## 1. Stack
+
+| Piece | Used for | Where |
+| --- | --- | --- |
+| **Mastra** (`@mastra/core`) | `Agent` with tools, multi-step tool calling, streaming, structured output | `engine/src/agents/factory.ts` |
+| **Vercel AI SDK providers** | Ollama (`ollama-ai-provider-v2`), OpenAI, Anthropic, any OpenAI-compatible server | `engine/src/models/registry.ts` |
+| **Ollama + Gemma 4** | Default model for every role (`gemma4:e4b`), including vision | runs locally on :11434 |
+| **SearXNG** | Open-source metasearch for the Philosopher | `infra/searxng`, :8888 |
+| **Zod** | Tool input schemas, structured-output schemas, request validation | throughout |
+| **Hono + SSE** | `/api/chat` streams status, tool, delta, done and error events to the UI | `engine/src/http/routes/student.ts` |
+
+## 2. The cast
+
+There are three **teachers** (conversational agents with tools) and three **workers** (single-shot structured-output agents).
+
+| Agent | Kind | Model role | Tools | Contract |
+| --- | --- | --- | --- | --- |
+| **Friend** (Socrates my Friend) | teacher | `tutor` | `search_lessons` (support corpus only), `handoff` | Campus life only, from university support notes. Never shares another student's details. Academic questions go to the Guide. |
+| **Guide** (Socrates my Guide) | teacher | `tutor` (`vision` when an image is attached) | `search_lessons`, `read_lesson`, `brain_lookup`, `weakest_concepts`, `handoff` | Teaches only from released lessons, Socratically: explain, then ask one checking question. Probes the student's open misconceptions instead of just correcting them. |
+| **Philosopher** (Socratest my Philosopher) | teacher | `tutor` | `search_lessons`, `web_search`, `brain_lookup`, `handoff` | Every substantive line is tagged `[course]` or `[web]`; `[web]` only for things in the web results. Ends with exactly one `Trailhead:` question. |
+| **Brain keeper** | worker | `brain` (thinking on) | none (structured output) | Reads a session or capture and proposes page updates, misconceptions, resolutions and links, using only allowed concept names. |
+| **Notes reader** | worker | `vision` | none (structured output) | Transcribes a photo of notes into topic, transcription (with LaTeX) and concepts. Feeds the brain keeper. |
+| **Quiz master** | worker | `tutor` | none (structured output) | Writes 3 multiple-choice questions from lesson text, at least one targeting an open misconception. |
+
+Briefs are in `engine/src/agents/prompts.ts`, tools in `engine/src/agents/tools.ts`, and the per-teacher tool sets at the bottom of that file.
+
+### Tools
+
+| Tool | Reads | Returns | Recorded as |
+| --- | --- | --- | --- |
+| `search_lessons` | Installed lessons (support corpus for the Friend, academic courses otherwise) | Top 3 hits: id, title, course, excerpt | tool call and lesson/support sources |
+| `read_lesson` | One installed lesson by id | Up to 6,000 characters of the lesson | tool call and a lesson source |
+| `brain_lookup` | The student's concept page | Status, "in my words", where stuck, open misconceptions | tool call and a brain source |
+| `weakest_concepts` | The student's vault | Shakiest concepts | tool call |
+| `web_search` | SearXNG | 4 results: title, url, snippet | tool call and web sources |
+| `handoff` | nothing | Sets a suggested handoff to another teacher | tool call; the UI shows a "Continue with…" button |
+
+Tools are built **per turn** around a `TurnContext` (`context.ts`), so every call a model makes is recorded and shown in the verification panel.
+
+## 3. One chat turn, end to end
+
+`engine/src/agents/harness.ts → runChatTurn()`. Each step is deterministic unless marked *model*.
+
+1. **Lane check (Friend only).** `lanes.ts` classifies the message with regexes *before* any model call:
+   - `privacy` (for example, a classmate's phone number) returns a fixed refusal;
+   - `academic` returns a fixed redirect and a handoff to the Guide;
+   - anything else goes to the model.
+
+   This holds even if the model is weak or jailbroken, because the model never sees the request.
+2. **Retrieval up front.** Lessons are searched from the right pool (`content/search.ts`). The search is weighted keyword scoring over title, concepts, headings and body, keeping hits within 40% of the best score, top 3. Only installed lessons exist on the device, and only released lessons can be installed, so "released lessons only" holds by construction. Retrieval happens before the model runs, so even a model that is weak at tool use stays grounded; the teacher can still call `search_lessons` or `read_lesson` for more.
+3. **Brain context (Guide and Philosopher).** Concept keys from the hits are looked up in the student's vault. Their status, "in my words", and up to five open misconceptions go into a `STUDENT BRAIN` block. This is why the Guide says things like "given that you're shaky on the second law…".
+4. **Web search (Philosopher).** SearXNG is queried and results are passed in a `WEB RESULTS` block. If search is down, the block says so, and the model is told to use `[course]` lines only.
+5. ***Model.*** The teacher runs with its tools for up to 4 steps at temperature 0.4, streaming text to the UI.
+6. **Source attribution.** See section 4.
+7. **Validation and repair.**
+   - Philosopher: `checkPhilosopherFormat` checks the tags and the single trailhead. If it fails, `repairPhilosopherFormat` rewrites the answer deterministically instead of re-prompting a slow model, and the check is marked "Repaired by validator".
+   - Guide and Friend: `checkGrounding` passes if the answer **measurably draws on** at least one retrieved lesson, or honestly says the topic isn't covered.
+   - Image turns record whether the image was read on-device.
+8. **Persist.** The turn is appended to the student's session file, with the full `Verification` (section 5).
+9. **Done event.** The UI gets the final text and the `Verification` object (model, provider, sources, checks, tool calls, handoff, lane) and renders source chips plus the verification panel.
+
+## 4. Sources: what they are and how they're attributed
+
+There are four kinds of source (`SourceRef` in `packages/shared/src/api.ts`):
+
+| Kind | Comes from | Correctness guarantee |
+| --- | --- | --- |
+| `lesson` / `support` | Retrieval and the `search_lessons` / `read_lesson` tools | Always a real installed lesson. Whether the answer **used** it is checked by attribution (below). |
+| `brain` | `brain_lookup` | The student's own page, exactly as read. |
+| `web` | SearXNG results | The real URL and title returned by search. The `[web]` tag rule keeps claims tied to these results; the tool can't check every claim against each page. |
+
+**Attribution** (`engine/src/agents/attribution.ts`) runs after the answer is complete:
+
+1. Each retrieved lesson is split into sections at its h1–h4 headings, skipping fenced code.
+2. It takes the **answer-specific terms**: words in the answer that weren't in the question. Question words are excluded because every retrieved lesson matches those by construction.
+3. For each lesson, the best section is the one sharing the most answer-specific terms.
+4. A lesson is **cited** if it shares at least 4 of those terms **and** at least half as many as the best lesson, or if the answer names the lesson by title.
+5. Each lesson source gets `cited`, `courseName`, `section: { heading, index }` and an `excerpt` (the best-matching paragraph, trimmed without breaking inline maths).
+
+Cited sources are listed first. In the UI, cited lessons are shown as chips, and retrieved-but-unused lessons sit behind a "+N also retrieved" toggle. Clicking a lesson chip shows the passage and an **Open at this section** button. That opens the Library reader at that heading (`section` index, with the heading text as a fallback) and briefly highlights it (`features/library/use-scroll-to-section.ts`).
+
+Attribution is lexical, not semantic. It reliably separates "the answer used this lesson" from "this lesson happened to share a keyword with the question". A heavily paraphrased answer could still be under-credited. Tests: `engine/src/agents/attribution.test.ts`.
+
+## 5. Chat history
+
+- Every conversation is a JSON file in the student's workspace: `.data/engine/profiles/<id>/sessions/<sessionId>.json` (`engine/src/sessions/store.ts`).
+- Each assistant turn stores its `Verification`, so a reopened chat still shows its sources, checks and model. Images are never stored, only how many were sent.
+- API: `GET /api/sessions?teacher=guide`, `GET /api/sessions/:id`, `DELETE /api/sessions/:id`.
+- UI (`features/teachers/chat-store.tsx`):
+  - which conversation is open per teacher is remembered in `localStorage` per profile, so a reload picks up where you left off;
+  - **History** lists saved conversations, marking any not yet reflected into the brain;
+  - the empty teacher screen offers "Pick up where you left off".
+- **Reflect into brain** uses the same session file: `POST /api/brain/ingest/:sessionId` reads only the turns after `ingestedTurns`.
+
+## 6. Model plumbing
+
+- `models/registry.ts` resolves each **role** (`tutor`, `brain`, `vision`) to a provider and model from Settings. The provider kinds are `ollama`, `openai-compatible` (vLLM, LM Studio, a university server), `openai` and `anthropic`. API keys stay inside the engine; the UI only sees `hasApiKey`.
+- Ollama runs with a fixed context window and output budget (`OLLAMA_NUM_CTX`, `OLLAMA_NUM_PREDICT`), so switching roles never triggers a model reload. Thinking mode is used only by the brain keeper, and only if Settings → *Thinking* is on.
+- `generateStructured` (`factory.ts`) parses partial JSON tolerantly (`lib/partial-json.ts`), because small models sometimes stop mid-object.
+
+## 7. Data boundaries
+
+- Each signed-in student gets a **workspace** (`profiles/workspace.ts`) with their own content store, vault, sessions and quizzes. Agents receive only that workspace, so one student's brain can't leak into another's prompt on a shared device.
+- The student's name in a teacher prompt comes from the verified profile, not from editable settings.
+- Course content arrives only as ed25519-signed packages, hash-checked file by file, from a key pinned on first sync.
+
+## 8. Changing or adding an agent
+
+1. **Brief:** edit or add it in `prompts.ts`. Keep rules short and checkable.
+2. **Tools:** define them in `tools.ts` and add them to the teacher's set. Record sources with `ctx.addSource` and calls with `ctx.recordTool`.
+3. **Contract:** if the agent has a format or safety rule, write a check in `validators.ts` returning `VerificationCheck[]`. Prefer a deterministic **repair** over a retry.
+4. **Structured output:** keep schemas flat, cap arrays, and use enums for values that must come from a known set.
+5. **Tests:** add a `*.test.ts` next to the code (`pnpm --filter @sef/engine test`).
+6. **UI:** a new teacher also needs `TEACHER_IDS` in `packages/shared/src/teachers.ts` and an entry in `apps/desktop/src/features/teachers/teacher-meta.ts`.

@@ -56,7 +56,10 @@ Compare the three students on the same **Mechanics** course to see how one curri
 
 **Offline test:** stop the uni server (or point Settings → University server at a dead URL), sign out, and sign back in as any student. You land in the app with the badge *Signed in offline* and every lesson, chat and brain page still works.
 
-Full setup, demo script and troubleshooting are in **[HANDOVER.md](HANDOVER.md)**. The AI design (teachers, harness, validator) is in **[AGENTS.md](AGENTS.md)**.
+Full setup, demo script and troubleshooting are in **[HANDOVER.md](HANDOVER.md)**. Coding agents start at **[AGENTS.md](AGENTS.md)**. Deep dives:
+
+- **[docs/agentic-layer.md](docs/agentic-layer.md)**: the teachers and workers, their tools, the chat-turn harness, source attribution, chat history and model providers.
+- **[docs/knowledge-graph.md](docs/knowledge-graph.md)**: the course sky, the second brain, mastery rules, the brain-update pipeline and the Sky view.
 
 ## Architecture
 
