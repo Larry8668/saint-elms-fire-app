@@ -5,6 +5,7 @@ import { toast } from 'sonner';
 import { Tooltip } from '@/components/ui/overlays';
 import { cn } from '@/lib/cn';
 import { log } from '@/lib/log';
+import { safeHref } from '@/lib/url';
 
 const SOURCE_STYLE: Record<SourceRef['kind'], { Icon: typeof BookOpen; tone: string }> = {
   lesson: { Icon: BookOpen, tone: 'text-beacon-300' },
@@ -29,16 +30,17 @@ export function SourceChips({ sources, max = 5 }: { sources: SourceRef[]; max?: 
     <div className="mt-3 flex flex-wrap gap-1.5">
       {shown.map((s) => {
         const { Icon, tone } = SOURCE_STYLE[s.kind];
+        const href = safeHref(s.url);
         const body = (
           <>
             <Icon className={cn('size-3 shrink-0', tone)} />
             <span className="max-w-52 truncate">{s.title}</span>
-            {s.url && <span className="text-night-500">{hostOf(s.url)}</span>}
+            {href && <span className="text-night-500">{hostOf(href)}</span>}
           </>
         );
         const cls = 'inline-flex items-center gap-1.5 rounded-full border border-white/[0.07] bg-white/[0.03] px-2.5 py-1 text-[11.5px] text-night-300 transition';
-        return s.url ? (
-          <a key={`${s.kind}:${s.id}`} href={s.url} target="_blank" rel="noreferrer" className={cn(cls, 'hover:border-white/[0.16] hover:text-night-100')}>
+        return href ? (
+          <a key={`${s.kind}:${s.id}`} href={href} target="_blank" rel="noreferrer" className={cn(cls, 'hover:border-white/[0.16] hover:text-night-100')}>
             {body}
           </a>
         ) : (

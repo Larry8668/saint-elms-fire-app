@@ -87,7 +87,7 @@ export const Composer = forwardRef<ComposerHandle, ComposerProps>(function Compo
           onKeyDown={(e) => {
             if (e.key === 'Enter' && !e.shiftKey && !e.nativeEvent.isComposing) {
               e.preventDefault();
-              if (!busy) onSubmit();
+              if (!busy && canSend) onSubmit();
             }
           }}
           onPaste={(e) => {
