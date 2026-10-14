@@ -1,3 +1,4 @@
+import { randomUUID } from 'node:crypto';
 import { mkdir, readFile, rename, writeFile } from 'node:fs/promises';
 import path from 'node:path';
 
@@ -13,7 +14,7 @@ export async function readJson<T>(file: string, fallback: T): Promise<T> {
 /** Write via a temp file and rename, so a crash never leaves half a file behind. */
 export async function writeFileAtomic(file: string, content: string): Promise<void> {
   await mkdir(path.dirname(file), { recursive: true });
-  const temp = `${file}.${process.pid}.tmp`;
+  const temp = `${file}.${process.pid}.${randomUUID()}.tmp`;
   await writeFile(temp, content);
   await rename(temp, file);
 }

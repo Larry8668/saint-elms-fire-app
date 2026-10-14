@@ -58,12 +58,17 @@ export class ReleaseStore {
     if (!cohort) throw new UnknownCohortError(cohortId);
     const set = new Set(cohort.courses);
     for (const id of courseIds) released ? set.add(id) : set.delete(id);
-    cohort.courses = [...set];
-    await writeJson(this.runtimeFile, this.state);
+    await this.commit({ ...this.state.cohorts, [cohortId]: { ...cohort, courses: [...set] } });
   }
 
   async createCohort(id: string, name: string, courses: string[] = []): Promise<void> {
-    this.state.cohorts[id] = { name, courses };
-    await writeJson(this.runtimeFile, this.state);
+    await this.commit({ ...this.state.cohorts, [id]: { name, courses } });
+  }
+
+  /** Persists first, then swaps in memory, so a failed write never leaves memory ahead of disk. */
+  private async commit(cohorts: Releases['cohorts']): Promise<void> {
+    const next = { ...this.state, cohorts };
+    await writeJson(this.runtimeFile, next);
+    this.state = next;
   }
 }

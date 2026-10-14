@@ -8,7 +8,7 @@ export function friendlyError(error: unknown): string {
   if (error instanceof ModelConfigError || error instanceof SyncAuthError) return message;
   if (error instanceof UniUnreachableError) return 'The university server is unreachable. You can keep studying offline with what is already on this device.';
   if (/ECONNREFUSED|fetch failed|connect/i.test(message)) return 'Could not reach the model. Is Ollama running? Check Settings → Models.';
-  if (/not found|pull/i.test(message)) return `Model not available: ${message}. Try "ollama pull" or pick another model in Settings.`;
+  if (/model\b.*\bnot found|try pulling/i.test(message)) return `Model not available: ${message}. Try "ollama pull" or pick another model in Settings.`;
   return message;
 }
 

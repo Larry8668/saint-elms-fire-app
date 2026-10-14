@@ -1,4 +1,4 @@
-import type { Account, DeviceProfile } from '@sef/shared';
+import { normalizeEmail, type Account, type DeviceProfile } from '@sef/shared';
 import { hashPassword, verifyPassword } from '@sef/shared/node';
 import { config, log } from '../config';
 import { readJson, writeJson } from '../lib/fs';
@@ -71,7 +71,8 @@ export class ProfileRegistry {
 
   /** Offline sign-in: only possible for profiles that have a verifier on this device. */
   async verifyOffline(email: string, password: string): Promise<DeviceProfile | null> {
-    const profile = [...(await this.load()).values()].find((p) => p.email === email);
+    const wanted = normalizeEmail(email);
+    const profile = [...(await this.load()).values()].find((p) => normalizeEmail(p.email) === wanted);
     if (!profile?.verifier) return null;
     return (await verifyPassword(password, profile.verifier)) ? toPublic(profile) : null;
   }
