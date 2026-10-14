@@ -59,6 +59,7 @@ export function VerificationPanel({ verification }: { verification: Verification
                       ) : (
                         <span className="truncate">{s.title}</span>
                       )}
+                      {s.cited === false && <span className="shrink-0 text-[11px] text-night-500">retrieved, not used</span>}
                     </li>
                   );
                 })}

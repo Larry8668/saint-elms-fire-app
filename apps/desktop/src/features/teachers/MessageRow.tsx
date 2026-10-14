@@ -2,7 +2,7 @@ import { TEACHERS, type TeacherId } from '@sef/shared';
 import { AlertCircle, ArrowRight, CircleSlash, ImageIcon } from 'lucide-react';
 import { motion } from 'motion/react';
 import { Markdown } from '@/components/Markdown';
-import { SkeletonText } from '@/components/ui/primitives';
+import { Skeleton, SkeletonText } from '@/components/ui/primitives';
 import { cn } from '@/lib/cn';
 import { AnswerActions, SourceChips, TrailheadCard } from './AnswerFooter';
 import { QUICK_REPLIES, splitTrailhead, uniqueSources } from './answer-parts';
@@ -12,6 +12,25 @@ import { ThoughtTrace } from './ThoughtTrace';
 import { VerificationPanel } from './VerificationPanel';
 
 const enter = { initial: { opacity: 0, y: 6 }, animate: { opacity: 1, y: 0 }, transition: { duration: 0.22, ease: 'easeOut' } } as const;
+
+/** Placeholder while a saved conversation is read from the engine. */
+export function ThreadSkeleton() {
+  return (
+    <div className="space-y-7" aria-busy>
+      {[0, 1].map((i) => (
+        <div key={i} className="space-y-7">
+          <div className="flex justify-end">
+            <Skeleton className={cn('h-10 rounded-2xl rounded-br-md', i ? 'w-1/3' : 'w-1/2')} />
+          </div>
+          <div className="flex gap-3">
+            <Skeleton className="size-8 shrink-0 rounded-xl" />
+            <SkeletonText lines={i ? 3 : 4} className="flex-1 pt-1.5" />
+          </div>
+        </div>
+      ))}
+    </div>
+  );
+}
 
 export function UserMessage({ message }: { message: ChatMessage }) {
   return (
@@ -25,6 +44,11 @@ export function UserMessage({ message }: { message: ChatMessage }) {
             </figcaption>
           </figure>
         ))}
+        {!message.attachments?.length && Boolean(message.images) && (
+          <span className="inline-flex items-center gap-1.5 rounded-full border border-white/[0.07] px-2.5 py-1 text-[11px] text-night-500">
+            <ImageIcon className="size-3" /> {message.images === 1 ? 'An image was' : `${message.images} images were`} sent (not stored)
+          </span>
+        )}
         {message.content && (
           <div className="rounded-2xl rounded-br-md border border-beacon-400/15 bg-beacon-500/[0.14] px-4 py-2.5 text-[14.5px] leading-6 whitespace-pre-wrap text-night-100">{message.content}</div>
         )}

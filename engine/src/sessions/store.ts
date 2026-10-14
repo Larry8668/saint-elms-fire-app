@@ -1,14 +1,7 @@
-import { readdir } from 'node:fs/promises';
+import { readdir, rm } from 'node:fs/promises';
 import path from 'node:path';
-import type { ChatTurn, SourceRef, TeacherId } from '@sef/shared';
+import type { ChatTurn, SessionSummary, SourceRef, StoredTurn, TeacherId, Verification } from '@sef/shared';
 import { readJson, writeJson } from '../lib/fs';
-
-export interface StoredTurn {
-  role: ChatTurn['role'];
-  content: string;
-  images?: number;
-  at: string;
-}
 
 export interface Session {
   id: string;
@@ -21,7 +14,9 @@ export interface Session {
   ingestedTurns: number;
 }
 
-/** Chat transcripts, kept on the device. Images are not stored — only that one was sent. */
+const PREVIEW_CHARS = 90;
+
+/** Chat transcripts, one JSON file per conversation in the student's workspace. Images are not stored — only that one was sent. */
 export class SessionStore {
   constructor(private readonly dir: string) {}
 
@@ -38,14 +33,14 @@ export class SessionStore {
     return readJson<Session | null>(this.fileFor(id), null);
   }
 
-  async appendTurn(id: string, teacher: TeacherId, user: ChatTurn, assistant: string, sources: SourceRef[], lessonIds: string[]): Promise<Session> {
+  async appendTurn(id: string, teacher: TeacherId, user: ChatTurn, assistant: string, verification: Verification, lessonIds: string[]): Promise<Session> {
     const now = new Date().toISOString();
     const session = (await this.get(id)) ?? { id, teacher, startedAt: now, updatedAt: now, turns: [], lessonIds: [], sources: [], ingestedTurns: 0 };
     session.turns.push({ role: 'user', content: user.content, images: user.attachments?.length || undefined, at: now });
-    session.turns.push({ role: 'assistant', content: assistant, at: now });
+    session.turns.push({ role: 'assistant', content: assistant, at: now, verification });
     session.lessonIds = [...new Set([...session.lessonIds, ...lessonIds])];
     const known = new Set(session.sources.map((s) => `${s.kind}:${s.id}`));
-    for (const s of sources) if (!known.has(`${s.kind}:${s.id}`)) session.sources.push(s);
+    for (const s of verification.sources) if (!known.has(`${s.kind}:${s.id}`)) session.sources.push(s);
     session.updatedAt = now;
     await writeJson(this.fileFor(id), session);
     return session;
@@ -56,11 +51,20 @@ export class SessionStore {
     await writeJson(this.fileFor(session.id), session);
   }
 
-  async list(limit = 30): Promise<Array<Pick<Session, 'id' | 'teacher' | 'startedAt' | 'updatedAt'> & { turns: number; pending: number; preview: string }>> {
+  /** Returns false when there was nothing to delete. */
+  async remove(id: string): Promise<boolean> {
+    const file = this.fileFor(id);
+    const exists = await readJson<Session | null>(file, null);
+    if (!exists) return false;
+    await rm(file, { force: true });
+    return true;
+  }
+
+  async list({ teacher, limit = 30 }: { teacher?: TeacherId; limit?: number } = {}): Promise<SessionSummary[]> {
     const names = await readdir(this.dir).catch(() => [] as string[]);
     const sessions = await Promise.all(names.filter((n) => n.endsWith('.json')).map((n) => readJson<Session | null>(path.join(this.dir, n), null)));
     return sessions
-      .filter((s): s is Session => Boolean(s))
+      .filter((s): s is Session => Boolean(s) && (!teacher || s!.teacher === teacher))
       .sort((a, b) => b.updatedAt.localeCompare(a.updatedAt))
       .slice(0, limit)
       .map((s) => ({
@@ -70,7 +74,7 @@ export class SessionStore {
         updatedAt: s.updatedAt,
         turns: s.turns.length,
         pending: s.turns.length - s.ingestedTurns,
-        preview: s.turns.find((t) => t.role === 'user')?.content.slice(0, 80) ?? '',
+        preview: s.turns.find((t) => t.role === 'user')?.content.slice(0, PREVIEW_CHARS) ?? '',
       }));
   }
 }

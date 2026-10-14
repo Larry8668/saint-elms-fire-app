@@ -1,7 +1,10 @@
 import { TEACHERS, type TeacherId } from '@sef/shared';
 import { ArrowUpRight } from 'lucide-react';
 import { motion } from 'motion/react';
+import { Eyebrow } from '@/components/ui/primitives';
 import { cn } from '@/lib/cn';
+import { useSessions } from '@/lib/queries';
+import { SessionList } from './ConversationHistory';
 import { TEACHER_LOOK } from './teacher-meta';
 
 /** Empty-thread state: who this teacher is and three ways to start. */
@@ -31,6 +34,18 @@ export function TeacherIntro({ teacher, onPick }: { teacher: TeacherId; onPick: 
           </motion.button>
         ))}
       </div>
+      <RecentConversations teacher={teacher} />
     </motion.div>
+  );
+}
+
+function RecentConversations({ teacher }: { teacher: TeacherId }) {
+  const sessions = useSessions(teacher);
+  if (!sessions.data?.length) return null;
+  return (
+    <div className="relative mt-10 text-left">
+      <Eyebrow className="mb-2.5">Pick up where you left off</Eyebrow>
+      <SessionList teacher={teacher} limit={3} />
+    </div>
   );
 }

@@ -1,62 +1,49 @@
-import { useQuery } from '@tanstack/react-query';
-import { DEMO_ADMIN, DEMO_PASSWORD_DEFAULT, type DeviceProfile } from '@sef/shared';
-import { ArrowRight, KeyRound, Landmark, ServerCrash, UserRound, WifiOff } from 'lucide-react';
+import { DEMO_ADMIN, DEMO_PASSWORD_DEFAULT, DEMO_PERSONAS, TEACHER_IDS, TEACHERS } from '@sef/shared';
+import { ChevronDown, GraduationCap, HardDrive, Landmark, ServerCrash, ShieldCheck, Sparkles, WifiOff } from 'lucide-react';
 import { AnimatePresence, motion } from 'motion/react';
 import { useRef, useState, type FormEvent } from 'react';
 import { Button } from '@/components/ui/button';
-import { Badge, EmptyState, Eyebrow, Input, Label, Skeleton, StatusDot } from '@/components/ui/primitives';
-import { api, EngineError } from '@/lib/api';
+import { EmptyState, Input, Label } from '@/components/ui/primitives';
+import { TEACHER_LOOK } from '@/features/teachers/teacher-meta';
+import { EngineError } from '@/lib/api';
 import { cn } from '@/lib/cn';
 import { useHealth } from '@/lib/queries';
 import { useSession } from '@/lib/session';
-import { ProfileAvatar } from './ProfileAvatar';
 
-type Target = { kind: 'profile'; profile: DeviceProfile } | { kind: 'admin' } | { kind: 'other' };
+const YEAR_LABEL = ['First-year', 'Second-year', 'Third-year'];
+
+/** Demo accounts described by where they are in the programme, not by who they are. */
+const DEMO_ACCOUNTS = [
+  ...DEMO_PERSONAS.map((p) => ({ email: p.email, label: `${YEAR_LABEL[Math.ceil(p.throughSemester / 2) - 1] ?? 'Final-year'} student`, detail: p.stage, Icon: GraduationCap })),
+  { email: DEMO_ADMIN.email, label: 'Registrar', detail: 'Releases, dispersal, moderation', Icon: Landmark },
+];
+
+const PROMISES = [
+  { Icon: HardDrive, text: 'Your brain stays on this device' },
+  { Icon: ShieldCheck, text: 'Open-weight models, built to GDPR/DPDP' },
+  { Icon: WifiOff, text: 'Keeps working offline' },
+];
 
 export function SignInView() {
   const health = useHealth();
-  const profiles = useQuery({ queryKey: ['device-profiles'], queryFn: api.profiles, retry: 1 });
-  const [target, setTarget] = useState<Target | null>(null);
-  const online = health.data?.uni.reachable;
+  const engineDown = health.isError;
+  const uniOffline = health.data ? !health.data.uni.reachable : false;
 
   return (
     <div className="sky-backdrop relative flex min-h-screen items-center justify-center overflow-y-auto px-6 py-12">
       <StarField />
-      <div className="relative grid w-full max-w-5xl gap-10 lg:grid-cols-[1fr_440px] lg:items-center">
-        <section className="animate-rise">
-          <img src="/logo.svg" alt="" className="mb-6 size-12" />
-          <h1 className="font-display text-5xl leading-[1.05] text-night-100 md:text-6xl">
-            Saint Elms <span className="text-gradient italic">Fire</span>
-          </h1>
-          <p className="mt-4 max-w-md text-[15px] leading-7 text-night-300">
-            Three AI teachers, a second brain that grows with you, and your whole course on this device. Works offline once you have signed in.
-          </p>
-          <div className="mt-6 inline-flex items-center gap-2.5 rounded-full border border-white/[0.08] bg-black/30 px-3.5 py-1.5 text-[12.5px] text-night-300">
-            <StatusDot ok={health.isError ? false : online} pulse />
-            {health.isError ? 'Local engine not running' : online === undefined ? 'Checking the university…' : online ? 'University online' : 'Offline: saved profiles only'}
-          </div>
-        </section>
-
-        <section className="glass-strong rounded-3xl p-6 animate-rise [animation-delay:80ms]">
-          {health.isError && profiles.isError ? (
+      <div className="relative grid w-full max-w-5xl gap-12 lg:grid-cols-[1fr_420px] lg:items-center">
+        <Pitch />
+        <section className="glass-strong rounded-3xl p-7 animate-rise [animation-delay:80ms]">
+          {engineDown ? (
             <EmptyState
               icon={<ServerCrash />}
               title="The engine isn't running"
-              body='Start everything with "pnpm dev" (or "pnpm dev:engine"), then this screen will pick it up.'
-              action={<Button onClick={() => void profiles.refetch()}>Try again</Button>}
+              body='Start everything with "pnpm dev" (or "pnpm dev:engine"); this screen picks it up automatically.'
+              action={<Button onClick={() => void health.refetch()}>Try again</Button>}
             />
           ) : (
-            <AnimatePresence mode="wait" initial={false}>
-              {target ? (
-                <motion.div key="form" initial={{ opacity: 0, x: 12 }} animate={{ opacity: 1, x: 0 }} exit={{ opacity: 0, x: -12 }} transition={{ duration: 0.18 }}>
-                  <SignInForm target={target} online={online} onBack={() => setTarget(null)} />
-                </motion.div>
-              ) : (
-                <motion.div key="picker" initial={{ opacity: 0, x: -12 }} animate={{ opacity: 1, x: 0 }} exit={{ opacity: 0, x: 12 }} transition={{ duration: 0.18 }}>
-                  <ProfilePicker profiles={profiles.data} loading={profiles.isLoading} onPick={setTarget} />
-                </motion.div>
-              )}
-            </AnimatePresence>
+            <SignInForm uniOffline={uniOffline} />
           )}
         </section>
       </div>
@@ -64,53 +51,46 @@ export function SignInView() {
   );
 }
 
-function ProfilePicker({ profiles, loading, onPick }: { profiles?: DeviceProfile[]; loading: boolean; onPick: (t: Target) => void }) {
+function Pitch() {
   return (
-    <div>
-      <Eyebrow className="mb-3">Students on this device</Eyebrow>
-      <div className="space-y-2">
-        {loading && [0, 1, 2].map((i) => <ProfileCardSkeleton key={i} />)}
-        {profiles?.map((profile) => (
-          <button
-            key={profile.id}
-            onClick={() => onPick({ kind: 'profile', profile })}
-            className="group flex w-full items-center gap-3.5 rounded-2xl border border-white/[0.06] bg-white/[0.025] p-3 text-left transition hover:border-beacon-400/40 hover:bg-beacon-500/[0.07]"
-          >
-            <ProfileAvatar id={profile.id} name={profile.name} />
-            <div className="min-w-0 flex-1">
-              <div className="flex items-center gap-2">
-                <span className="font-medium text-night-100">{profile.name}</span>
-                {profile.stage && <span className="truncate text-[12px] text-night-400">{profile.stage}</span>}
-              </div>
-              {profile.persona && <p className="mt-0.5 line-clamp-1 text-[12.5px] text-night-400">{profile.persona}</p>}
-            </div>
-            {profile.offlineReady && (
-              <Badge tone="aurora" className="shrink-0">
-                <WifiOff className="size-3" /> offline-ready
-              </Badge>
-            )}
-            <ArrowRight className="size-4 shrink-0 text-night-600 transition group-hover:translate-x-0.5 group-hover:text-beacon-300" />
-          </button>
-        ))}
-        {!loading && !profiles?.length && <p className="rounded-2xl border border-dashed border-white/10 p-4 text-sm text-night-400">No one has signed in on this device yet.</p>}
-      </div>
+    <section className="animate-rise">
+      <img src="/logo.svg" alt="" className="mb-6 size-12" />
+      <h1 className="font-display text-5xl leading-[1.05] text-night-100 md:text-6xl">
+        Saint Elms <span className="text-gradient italic">Fire</span>
+      </h1>
+      <p className="mt-4 max-w-md text-[15.5px] leading-7 text-night-300">A personal teacher with three minds, teaching from a living map of everything you have learned.</p>
 
-      <div className="mt-5 grid grid-cols-2 gap-2">
-        <Button variant="ghost" onClick={() => onPick({ kind: 'other' })}>
-          <UserRound /> Another account
-        </Button>
-        <Button variant="ghost" onClick={() => onPick({ kind: 'admin' })}>
-          <Landmark /> Registrar
-        </Button>
+      <ul className="mt-8 max-w-md space-y-3">
+        {TEACHER_IDS.map((id, i) => {
+          const look = TEACHER_LOOK[id];
+          return (
+            <motion.li key={id} initial={{ opacity: 0, x: -8 }} animate={{ opacity: 1, x: 0 }} transition={{ delay: 0.15 + i * 0.07 }} className="flex items-center gap-3.5">
+              <span className={cn('grid size-9 shrink-0 place-items-center rounded-xl border bg-white/[0.04]', look.ring, look.accent)}>
+                <look.Icon className="size-4" />
+              </span>
+              <span className="min-w-0">
+                <span className="block text-[14px] font-medium text-night-100">{TEACHERS[id].voice}</span>
+                <span className="block text-[12.5px] text-night-400">{TEACHERS[id].role}</span>
+              </span>
+            </motion.li>
+          );
+        })}
+      </ul>
+
+      <div className="mt-8 flex flex-wrap gap-x-5 gap-y-2 text-[12px] text-night-400">
+        {PROMISES.map(({ Icon, text }) => (
+          <span key={text} className="inline-flex items-center gap-1.5">
+            <Icon className="size-3.5 text-night-500" /> {text}
+          </span>
+        ))}
       </div>
-    </div>
+    </section>
   );
 }
 
-function SignInForm({ target, online, onBack }: { target: Target; online: boolean | undefined; onBack: () => void }) {
+function SignInForm({ uniOffline }: { uniOffline: boolean }) {
   const { signIn } = useSession();
-  const presetEmail = target.kind === 'profile' ? target.profile.email : target.kind === 'admin' ? DEMO_ADMIN.email : '';
-  const [email, setEmail] = useState(presetEmail);
+  const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   const [error, setError] = useState<string | null>(null);
   const [pending, setPending] = useState(false);
@@ -128,80 +108,86 @@ function SignInForm({ target, online, onBack }: { target: Target; online: boolea
     }
   };
 
-  const adminOffline = target.kind === 'admin' && online === false;
+  const fillDemo = (demoEmail: string) => {
+    setEmail(demoEmail);
+    setPassword(DEMO_PASSWORD_DEFAULT);
+    setError(null);
+    passwordRef.current?.focus();
+  };
+
   return (
     <form onSubmit={submit} className="space-y-4">
-      <button type="button" onClick={onBack} className="text-[12.5px] text-night-400 hover:text-night-200">
-        ← All profiles
-      </button>
-
-      {target.kind === 'profile' ? (
-        <div className="flex items-center gap-3.5">
-          <ProfileAvatar id={target.profile.id} name={target.profile.name} size="lg" />
-          <div>
-            <h2 className="font-display text-3xl text-night-100">{target.profile.name}</h2>
-            <p className="text-[13px] text-night-400">{target.profile.email}</p>
-          </div>
-        </div>
-      ) : (
-        <h2 className="font-display text-3xl text-night-100">{target.kind === 'admin' ? 'Registrar sign-in' : 'Sign in'}</h2>
-      )}
-
-      {target.kind !== 'profile' && (
-        <div>
-          <Label htmlFor="email">Email</Label>
-          <Input id="email" type="email" autoComplete="username" value={email} onChange={(e) => setEmail(e.target.value)} autoFocus={!presetEmail} required />
-        </div>
-      )}
       <div>
-        <Label htmlFor="password">Password</Label>
-        <Input
-          ref={passwordRef}
-          id="password"
-          type="password"
-          autoComplete="current-password"
-          value={password}
-          onChange={(e) => setPassword(e.target.value)}
-          autoFocus={Boolean(presetEmail)}
-          required
-        />
-        <button
-          type="button"
-          className="mt-2 inline-flex items-center gap-1.5 text-[12px] text-night-400 hover:text-beacon-300"
-          onClick={() => {
-            setPassword(DEMO_PASSWORD_DEFAULT);
-            passwordRef.current?.focus();
-          }}
-        >
-          <KeyRound className="size-3" /> Use demo password
-        </button>
+        <h2 className="font-display text-3xl text-night-100">Sign in</h2>
+        <p className="mt-1 text-[13px] text-night-400">Use your university account. Students and the registrar sign in here.</p>
       </div>
 
-      {adminOffline && <p className="rounded-xl border border-ember-400/25 bg-ember-500/10 p-3 text-[13px] text-ember-300">The registrar desk lives on the university server, which is unreachable right now.</p>}
-      {target.kind === 'profile' && online === false && target.profile.offlineReady && (
-        <p className="rounded-xl border border-aurora-400/20 bg-aurora-500/10 p-3 text-[13px] text-aurora-300">Offline: you'll sign in with the copy saved on this device.</p>
+      {uniOffline && (
+        <div className="flex gap-2.5 rounded-xl border border-ember-400/25 bg-ember-500/[0.08] p-3 text-[12.5px] leading-5 text-ember-300">
+          <WifiOff className="mt-0.5 size-3.5 shrink-0" />
+          <span>You're offline. Students who have signed in on this device before can still sign in; the registrar desk needs the university.</span>
+        </div>
       )}
+
+      <div>
+        <Label htmlFor="email">Email</Label>
+        <Input id="email" type="email" autoComplete="username" placeholder="you@saintelms.local" value={email} onChange={(e) => setEmail(e.target.value)} autoFocus required />
+      </div>
+      <div>
+        <Label htmlFor="password">Password</Label>
+        <Input ref={passwordRef} id="password" type="password" autoComplete="current-password" value={password} onChange={(e) => setPassword(e.target.value)} required />
+      </div>
+
       {error && (
         <p role="alert" className="rounded-xl border border-rose-400/25 bg-rose-400/10 p-3 text-[13px] text-rose-400">
           {error}
         </p>
       )}
 
-      <Button type="submit" variant="primary" size="lg" className="w-full" loading={pending} disabled={adminOffline}>
+      <Button type="submit" variant="primary" size="lg" className="w-full" loading={pending}>
         Sign in
       </Button>
+
+      <DemoAccounts onPick={fillDemo} selected={email} />
     </form>
   );
 }
 
-function ProfileCardSkeleton() {
+function DemoAccounts({ onPick, selected }: { onPick: (email: string) => void; selected: string }) {
+  const [open, setOpen] = useState(false);
   return (
-    <div className="flex items-center gap-3.5 rounded-2xl border border-white/[0.04] p-3">
-      <Skeleton className="size-10 rounded-full" />
-      <div className="flex-1 space-y-2">
-        <Skeleton className="h-3.5 w-32" />
-        <Skeleton className="h-3 w-56" />
-      </div>
+    <div className="border-t border-white/[0.06] pt-4">
+      <button type="button" onClick={() => setOpen((o) => !o)} aria-expanded={open} className="flex w-full cursor-pointer items-center gap-2 text-[12.5px] text-night-400 hover:text-night-200">
+        <Sparkles className="size-3.5 text-beacon-300" />
+        Exploring the demo?
+        <ChevronDown className={cn('ml-auto size-3.5 transition', open && 'rotate-180')} />
+      </button>
+      <AnimatePresence initial={false}>
+        {open && (
+          <motion.div initial={{ height: 0, opacity: 0 }} animate={{ height: 'auto', opacity: 1 }} exit={{ height: 0, opacity: 0 }} transition={{ duration: 0.18 }} className="overflow-hidden">
+            <div className="grid gap-1.5 pt-3">
+              {DEMO_ACCOUNTS.map(({ email, label, detail, Icon }) => (
+                <button
+                  key={email}
+                  type="button"
+                  onClick={() => onPick(email)}
+                  className={cn(
+                    'flex cursor-pointer items-center gap-3 rounded-xl border px-3 py-2 text-left transition',
+                    selected === email ? 'border-beacon-400/40 bg-beacon-500/10' : 'border-white/[0.05] bg-white/[0.02] hover:border-white/[0.12]',
+                  )}
+                >
+                  <Icon className="size-4 shrink-0 text-night-400" />
+                  <span className="min-w-0">
+                    <span className="block text-[13px] text-night-100">{label}</span>
+                    <span className="block truncate text-[11.5px] text-night-500">{detail}</span>
+                  </span>
+                </button>
+              ))}
+            </div>
+            <p className="pt-2.5 text-[11.5px] text-night-500">Picking one fills in the form with the shared demo password.</p>
+          </motion.div>
+        )}
+      </AnimatePresence>
     </div>
   );
 }

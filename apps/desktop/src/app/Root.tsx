@@ -24,7 +24,7 @@ export function Root() {
   }
   return (
     <NavProvider key={session.profile.id}>
-      <ChatProvider>
+      <ChatProvider profileId={session.profile.id}>
         <App />
       </ChatProvider>
     </NavProvider>

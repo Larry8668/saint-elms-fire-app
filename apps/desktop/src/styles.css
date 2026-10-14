@@ -64,6 +64,10 @@
     0%, 100% { opacity: 0.12; transform: scale(0.82); }
     40% { opacity: 1; transform: scale(1); }
   }
+  @keyframes section-flash {
+    0%, 60% { background-color: oklch(0.6 0.19 258 / 0.22); }
+    100% { background-color: transparent; }
+  }
   @keyframes caret {
     0%, 45% { opacity: 1; }
     55%, 100% { opacity: 0; }
@@ -133,6 +137,12 @@
     border-radius: 2px;
     background: var(--color-beacon-300);
     animation: caret 1s steps(1) infinite;
+  }
+  .section-flash {
+    scroll-margin-top: 1.5rem;
+    border-radius: 0.5rem;
+    box-shadow: -10px 0 0 0 oklch(0.6 0.19 258 / 0.22), 10px 0 0 0 oklch(0.6 0.19 258 / 0.22);
+    animation: section-flash 2.2s ease-out both;
   }
   .sky-backdrop {
     background:
