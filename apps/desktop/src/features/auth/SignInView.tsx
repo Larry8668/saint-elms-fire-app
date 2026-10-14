@@ -7,6 +7,7 @@ import { Button } from '@/components/ui/button';
 import { Badge, EmptyState, Eyebrow, Input, Label, Skeleton, StatusDot } from '@/components/ui/primitives';
 import { api, EngineError } from '@/lib/api';
 import { cn } from '@/lib/cn';
+import { DEMO_MODE, isDemoEmail } from '@/lib/demo';
 import { useHealth } from '@/lib/queries';
 import { useSession } from '@/lib/session';
 import { ProfileAvatar } from './ProfileAvatar';
@@ -124,6 +125,7 @@ function SignInForm({ target, online, onBack }: { target: Target; online: boolea
       await signIn(email.trim(), password);
     } catch (err) {
       setError(err instanceof EngineError ? err.message : 'Sign-in failed. Try again.');
+    } finally {
       setPending(false);
     }
   };
@@ -165,16 +167,18 @@ function SignInForm({ target, online, onBack }: { target: Target; online: boolea
           autoFocus={Boolean(presetEmail)}
           required
         />
-        <button
-          type="button"
-          className="mt-2 inline-flex items-center gap-1.5 text-[12px] text-night-400 hover:text-beacon-300"
-          onClick={() => {
-            setPassword(DEMO_PASSWORD_DEFAULT);
-            passwordRef.current?.focus();
-          }}
-        >
-          <KeyRound className="size-3" /> Use demo password
-        </button>
+        {DEMO_MODE && isDemoEmail(email) && (
+          <button
+            type="button"
+            className="mt-2 inline-flex items-center gap-1.5 text-[12px] text-night-400 hover:text-beacon-300"
+            onClick={() => {
+              setPassword(DEMO_PASSWORD_DEFAULT);
+              passwordRef.current?.focus();
+            }}
+          >
+            <KeyRound className="size-3" /> Use demo password
+          </button>
+        )}
       </div>
 
       {adminOffline && <p className="rounded-xl border border-ember-400/25 bg-ember-500/10 p-3 text-[13px] text-ember-300">The registrar desk lives on the university server, which is unreachable right now.</p>}
