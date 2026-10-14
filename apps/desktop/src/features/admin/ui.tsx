@@ -41,7 +41,7 @@ export function TableSkeleton({ rows = 6, cols = 4 }: { rows?: number; cols?: nu
 
 /** Renders loading / error / data for a query so every tab handles all three states the same way. */
 export function QueryState<T>({ query, skeleton, children }: { query: UseQueryResult<T>; skeleton: ReactNode; children: (data: T) => ReactNode }) {
-  if (query.isPending) return <>{skeleton}</>;
+  if (query.isPending || (query.isSuccess && query.data === undefined)) return <>{skeleton}</>;
   if (query.isError) {
     return (
       <div className="flex flex-col items-center gap-3 px-6 py-12 text-center">

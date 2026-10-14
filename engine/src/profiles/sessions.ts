@@ -25,8 +25,12 @@ export class AuthSessions {
     return this.sessions;
   }
 
+  /** Prunes expired sessions on every write, not just at first load, so the file can't grow without bound. */
   private async persist(): Promise<void> {
-    await writeJson(config.paths.authSessions, Object.fromEntries(await this.load()));
+    const sessions = await this.load();
+    const now = Date.now();
+    for (const [token, s] of sessions) if (Date.parse(s.expiresAt) <= now) sessions.delete(token);
+    await writeJson(config.paths.authSessions, Object.fromEntries(sessions));
   }
 
   async create(profileId: string, mode: SessionMode): Promise<string> {

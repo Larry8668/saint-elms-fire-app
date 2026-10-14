@@ -1,6 +1,7 @@
 import type { Account, CohortSummary } from '@sef/shared';
 import { KeyRound, Plus, UserCheck, UserX } from 'lucide-react';
 import { useMemo, useState, type FormEvent } from 'react';
+import { toast } from 'sonner';
 import { Button } from '@/components/ui/button';
 import { Dialog } from '@/components/ui/overlays';
 import { Badge, Input, Label, Panel, Select } from '@/components/ui/primitives';
@@ -140,10 +141,13 @@ function NewStudentDialog({ open, onOpenChange, cohorts }: { open: boolean; onOp
   const [form, setForm] = useState(blank);
   const set = (k: keyof typeof blank) => (e: { target: { value: string } }) => setForm({ ...form, [k]: e.target.value });
 
+  const cohortId = form.cohortId || cohorts[0]?.id;
+
   const submit = (e: FormEvent) => {
     e.preventDefault();
+    if (!cohortId) return toast.error('Create a cohort first: every student belongs to one.');
     create.mutate(
-      { ...form, role: 'student', cohortId: form.cohortId || cohorts[0]?.id, stage: form.stage || undefined },
+      { ...form, role: 'student', cohortId, stage: form.stage || undefined },
       {
         onSuccess: () => {
           setForm(blank);
@@ -180,7 +184,7 @@ function NewStudentDialog({ open, onOpenChange, cohorts }: { open: boolean; onOp
         </div>
         <div className="md:col-span-2">
           <Label htmlFor="s-password">Initial password</Label>
-          <Input id="s-password" type="text" minLength={8} value={form.password} onChange={set('password')} required />
+          <Input id="s-password" type="password" autoComplete="new-password" minLength={8} value={form.password} onChange={set('password')} required />
         </div>
         <div className="flex justify-end gap-2 md:col-span-2">
           <Button type="button" variant="ghost" onClick={() => onOpenChange(false)}>
@@ -221,7 +225,7 @@ function ResetPasswordDialog({ account, onClose }: { account: Account | null; on
       <form onSubmit={submit} className="space-y-4">
         <div>
           <Label htmlFor="new-password">New password</Label>
-          <Input id="new-password" type="text" minLength={8} value={password} onChange={(e) => setPassword(e.target.value)} required autoFocus />
+          <Input id="new-password" type="password" autoComplete="new-password" minLength={8} value={password} onChange={(e) => setPassword(e.target.value)} required autoFocus />
         </div>
         <div className="flex justify-end gap-2">
           <Button type="button" variant="ghost" onClick={onClose}>
