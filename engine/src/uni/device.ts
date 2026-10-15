@@ -62,7 +62,7 @@ export async function pollDeviceGrant(uniUrl: string, deviceCode: string): Promi
   try {
     const raw = await uniFetch<unknown>(uniUrl, '/v1/auth/device/token', {
       method: 'POST',
-      body: { grant_type: DEVICE_GRANT, device_code: deviceCode },
+      body: { grant_type: DEVICE_GRANT, device_code: deviceCode, client_id: CLIENT_ID },
     });
     const parsed = DeviceTokenResponseSchema.safeParse(raw);
     if (!parsed.success) throw new UniHttpError(200, { error: 'device_token_malformed' }, `${uniUrl}/v1/auth/device/token`);

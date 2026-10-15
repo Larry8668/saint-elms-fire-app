@@ -13,6 +13,7 @@ import { CONTRACT_VERSION, type Enrolment } from '@sef/shared';
 import type { AccountAuth } from './account-auth';
 import type { UniDeps } from './deps';
 import { meRoutes } from './routes/me';
+import { adminRoutes } from './routes/admin';
 import { staffRoutes } from './routes/staff';
 import { studentRoutes } from './routes/student';
 import { grantStaffMembership } from './staff';
@@ -82,8 +83,11 @@ function deps(context: AuthContext, extra: { keys: UniDeps['keys']; releases: Re
 }
 
 function mount(app: Hono, deps: UniDeps) {
-  app.route('/v1', meRoutes(deps));
+  // Production order (app.ts): adminRoutes mounts first — its per-route guard
+  // claims admin paths, and session requests fall through to staffRoutes.
+  app.route('/v1/admin', adminRoutes(deps));
   app.route('/v1/admin', staffRoutes(deps));
+  app.route('/v1', meRoutes(deps));
   app.route('/v1', studentRoutes(deps));
 }
 

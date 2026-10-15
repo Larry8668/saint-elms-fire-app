@@ -13,7 +13,8 @@ import type { CredentialStore } from '../credentials/store';
 import type { SettingsStore } from '../settings/store';
 import { uniFetch, UniHttpError, UniUnreachableError } from '../uni/client';
 import { pollDeviceGrant, requestDeviceGrant } from '../uni/device';
-import { fetchEntitlement, verifyEntitlementOffline } from '../uni/entitlement';
+import { fetchEntitlement, verifyEntitlement, verifyEntitlementOffline } from '../uni/entitlement';
+import { trustedUniKey } from '../uni/trust';
 import { deviceId as defaultDeviceId } from './device';
 import type { ProfileRegistry } from './registry';
 import type { AuthSessions } from './sessions';
@@ -136,9 +137,10 @@ export class AuthService {
     const me = await uniFetch<AdmissionMe>(uniServerUrl, '/v1/me', { token: sessionToken });
     const admission: NonNullable<DeviceProfile['admission']> = me.enrolment?.status ?? 'none';
     const cohortId = me.enrolment?.cohortId ?? '';
-    const profile = await this.registry.recordDeviceSignIn(me.user, sessionToken, sessionExpiresAt, admission, cohortId);
+    let profile = await this.registry.recordDeviceSignIn(me.user, sessionToken, sessionExpiresAt, admission, cohortId);
     if (admission === 'approved') {
       await this.refreshEntitlement(uniServerUrl, sessionToken, profile.id);
+      profile = (await this.registry.get(profile.id)) ?? profile;
     } else {
       log.info('device_signin_unapproved', { profileId: profile.id, admission });
     }
@@ -151,7 +153,10 @@ export class AuthService {
     try {
       const dev = await this.deviceId();
       const entitlement = await fetchEntitlement(uniUrl, sessionToken, dev);
-      const verified = await verifyEntitlementOffline(entitlement.token, { profileId, deviceId: dev });
+      // First sign-in is the trust-on-first-use moment: pin the uni key before
+      // verifying, same rule ContentSync applies to course packages.
+      const key = await trustedUniKey(uniUrl);
+      const verified = verifyEntitlement(entitlement.token, key, { profileId, deviceId: dev });
       if (!verified.ok) {
         log.warn('entitlement_refused', { profileId, reason: verified.reason });
         return;

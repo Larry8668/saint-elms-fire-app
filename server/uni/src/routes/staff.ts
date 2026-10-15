@@ -60,7 +60,13 @@ function admissionError(error: unknown, c: { json: (body: unknown, status?: numb
  */
 export function staffRoutes(deps: UniDeps) {
   const app = new Hono<AppEnv>();
-  app.use('*', requireAdmission(deps, { staff: 'any' }));
+  // adminRoutes shares this prefix and claims sef1 bearer tokens; session
+  // requests (cookie or better-auth bearer) are the admission domain.
+  app.use('*', async (c, next) => {
+    const token = c.req.header('authorization')?.match(/^Bearer\s+(.+)$/i)?.[1];
+    if (token?.startsWith('sef1')) return next();
+    return requireAdmission(deps, { staff: 'any' })(c, next);
+  });
   const actor = (c: { get: (k: 'principal') => { userId: string } }) => c.get('principal').userId;
 
   app.get('/students', async (c) => {
