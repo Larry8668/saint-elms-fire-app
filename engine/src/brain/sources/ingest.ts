@@ -194,7 +194,10 @@ export class SourceIngestor {
       limits,
     );
     if (job.stage === 'queued') {
-      await advanceJob(this.jobs, job.id, 'extracting', { progress: { completed: 1, total: 1 } });
+      // A reused job is only ever queued if the first attempt died between create and
+      // advance; the extraction above is this attempt's, so the resume is honest. The
+      // total is the job's own source count, not a hard-coded one.
+      await advanceJob(this.jobs, job.id, 'extracting', { progress: { completed: 1, total: job.sourceIds.length } });
     }
     return { id: job.id, reused };
   }

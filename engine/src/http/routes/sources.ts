@@ -52,7 +52,7 @@ const identityOf = (ws: Workspace, uniServerUrl: string): ProfileIdentity => {
 export function decodeSourceBytes(data: string): Uint8Array | null {
   try {
     const canonical = data.replace(/\s+/g, '').replace(/-/g, '+').replace(/_/g, '/');
-    const buffer = Buffer.from(data, 'base64');
+    const buffer = Buffer.from(canonical, 'base64');
     if (buffer.toString('base64').replace(/=+$/, '') !== canonical.replace(/=+$/, '')) return null;
     return new Uint8Array(buffer);
   } catch {
