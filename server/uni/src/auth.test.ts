@@ -229,6 +229,8 @@ const stubAccountAuth: AccountAuth = {
     }),
   storage: {} as AccountAuth['storage'],
   trustedOrigins: ['http://localhost:4200'],
+  getSession: async () => null,
+  revokeUserSessions: async () => {},
 };
 
 test('account routes delegate to the wrapped account handler without disturbing login routes', async () => {

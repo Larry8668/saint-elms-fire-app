@@ -1,5 +1,6 @@
 import type { CoursewareIndex, ProgrammeManifestResult } from './courseware';
 import type { CourseAvailability } from '@sef/shared';
+import type { Pool } from 'pg';
 import type { AccountAuth } from './account-auth';
 import type { SigningKeys } from './signing';
 import type { AccountStore } from './store/accounts';
@@ -22,4 +23,6 @@ export interface UniDeps {
   availability?: Record<string, CourseAvailability>;
   /** better-auth account endpoints; absent when the deployment has no database configured. */
   accountAuth?: AccountAuth | null;
+  /** Admission/staff persistence; absent without UNI_DATABASE_URL (routes fail closed). */
+  pool?: Pool;
 }
