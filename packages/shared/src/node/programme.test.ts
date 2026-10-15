@@ -13,6 +13,7 @@ async function fixture(overrides: {
   optionGroups?: unknown[];
   counts?: Record<string, unknown>;
   programmeId?: string;
+  sectionKey?: string;
 }) {
   const dir = await mkdtemp(path.join(tmpdir(), 'sef-manifest-'));
   await mkdir(path.join(dir, 'semester-1', 'physics', 'mechanics'), { recursive: true });
@@ -25,7 +26,7 @@ async function fixture(overrides: {
     manifestVersion: 'test-1',
     optionGroups: overrides.optionGroups ?? [],
     counts: overrides.counts ?? { bySemester: { 'sem-1': 1 }, byStatus: { released: 1 }, total: 1 },
-    'semester-1': {
+    [overrides.sectionKey ?? 'semester-1']: {
       semesterId: 'sem-1',
       rows: overrides.rows ?? [
         {
@@ -71,6 +72,18 @@ test('fixture manifest round-trips into the Programme contract', async () => {
     degreeCredits: { min: 4, max: 4 },
   });
   assert.equal(result.diagnostics.length, 0);
+});
+
+test('sem-N section keys are normalized into programme rows', async () => {
+  const dir = await fixture({ sectionKey: 'sem-1' });
+  const result = await loadProgrammeManifest(dir);
+
+  assert.deepEqual(result.programme.rows.map(({ rowId, semesterNumber }) => ({ rowId, semesterNumber })), [
+    { rowId: 'r-1', semesterNumber: 1 },
+  ]);
+  assert.equal(result.semesters.length, 1);
+  assert.equal(result.semesters[0]!.number, 1);
+  assert.deepEqual(result.semesters[0]!.rowIds, ['r-1']);
 });
 
 test('null hoursPerWeek, zero credits and support rows survive normalization', async () => {
