@@ -1,7 +1,7 @@
 import { serve } from '@hono/node-server';
 import { createApp } from './app';
 import { config } from './config';
-import { loadCourseware } from './courseware';
+import { loadCourseware, loadProgramme, programmeAvailability } from './courseware';
 import { seedUniDemo } from './demo-seed';
 import type { UniDeps } from './deps';
 import { errorFields, log } from './logger';
@@ -18,15 +18,17 @@ async function main() {
   const accounts = new AccountStore();
   const audit = new AuditLog();
   const dispersal = new DispersalStore();
-  const [courseware, keys] = await Promise.all([
+  const [courseware, programme, keys] = await Promise.all([
     loadCourseware(),
+    loadProgramme(),
     loadSigningKeys(),
     releases.load(),
     shares.load(),
     audit.load(),
     dispersal.load(),
   ]);
-  const deps: UniDeps = { courseware, keys, releases, shares, accounts, audit, dispersal };
+  const availability = programme ? await programmeAvailability(programme) : undefined;
+  const deps: UniDeps = { courseware, programme, availability, keys, releases, shares, accounts, audit, dispersal };
   const firstBoot = await accounts.load();
   if (firstBoot) await seedUniDemo(deps);
 

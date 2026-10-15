@@ -1,4 +1,5 @@
-import type { CoursewareIndex } from './courseware';
+import type { CoursewareIndex, ProgrammeManifestResult } from './courseware';
+import type { CourseAvailability } from '@sef/shared';
 import type { SigningKeys } from './signing';
 import type { AccountStore } from './store/accounts';
 import type { AuditLog } from './store/audit';
@@ -14,4 +15,8 @@ export interface UniDeps {
   accounts: AccountStore;
   audit: AuditLog;
   dispersal: DispersalStore;
+  /** Normalized programme manifest; null only when the manifest is absent or invalid. */
+  programme?: ProgrammeManifestResult | null;
+  /** Content/release/selection per row, derived from the content tree at boot. */
+  availability?: Record<string, CourseAvailability>;
 }

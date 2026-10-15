@@ -3,10 +3,11 @@ import { mkdtemp, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { test } from 'node:test';
+import { CONTRACT_VERSION, ProgrammeSchema, type CourseAvailability, type Programme } from '@sef/shared';
 import { hashPassword, signToken, TokenError, verifyPassword, verifyToken } from '@sef/shared/node';
 import { createApp } from './app';
 import { config } from './config';
-import type { CoursewareIndex } from './courseware';
+import type { CoursewareIndex, ProgrammeManifestResult } from './courseware';
 import { loadSigningKeys } from './signing';
 import { AccountStore } from './store/accounts';
 import { AuditLog } from './store/audit';
@@ -39,6 +40,50 @@ async function harness() {
     ]),
     skipped: [],
   };
+  const programme: Programme = ProgrammeSchema.parse({
+    schemaVersion: CONTRACT_VERSION,
+    id: 'p',
+    name: 'P',
+    institution: 'Test University',
+    manifestVersion: 'v1',
+    sourceDocuments: ['syllabus.pdf'],
+    rows: [
+      {
+        schemaVersion: CONTRACT_VERSION,
+        rowId: 'row-mechanics',
+        courseId: 'mechanics',
+        courseCode: 'PHY-101',
+        courseName: 'Mechanics',
+        subjectId: 'physics',
+        semesterNumber: 1,
+        courseType: 'Major Core',
+        hoursPerWeek: 4,
+        credits: 4,
+        optionGroup: null,
+        deliveryMode: 'authored-courseware',
+        prerequisites: [],
+        status: 'released',
+      },
+    ],
+    optionGroups: [],
+  });
+  const programmeResult: ProgrammeManifestResult = {
+    programme,
+    semesters: [{ id: 'sem-1', name: 'Semester 1', number: 1, rowIds: ['row-mechanics'] }],
+    declaredCounts: { total: 1, bySemester: { 'sem-1': 1 }, byStatus: { released: 1 } },
+    derivedCounts: {
+      rows: 1,
+      bySemester: { 1: 1 },
+      byStatus: { released: 1 },
+      degreeRows: 1,
+      degreeCredits: { min: 4, max: 4 },
+    },
+    diagnostics: [],
+    resolveContentDir: () => null,
+  };
+  const availability: Record<string, CourseAvailability> = {
+    'row-mechanics': { content: 'authored', release: 'released', selection: 'required' },
+  };
   const releases = new ReleaseStore(seed, dir);
   const accounts = new AccountStore(dir);
   const audit = new AuditLog(dir);
@@ -46,7 +91,7 @@ async function harness() {
   const shares = new ShareStore(dir);
   const keys = await loadSigningKeys(path.join(dir, 'keys'));
   await Promise.all([releases.load(), accounts.load(), audit.load(), dispersal.load(), shares.load()]);
-  const app = createApp({ courseware, releases, accounts, audit, dispersal, shares, keys });
+  const app = createApp({ courseware, programme: programmeResult, availability, releases, accounts, audit, dispersal, shares, keys });
 
   const login = async (email: string) => {
     const res = await app.request('/v1/auth/login', {
@@ -116,6 +161,21 @@ test('students only see their own cohort and cannot reach admin routes', async (
   assert.deepEqual(catalogue.courses.map((c) => c.id), ['mechanics']);
   assert.equal((await get('/v1/courses/real-analysis/package', ananya)).status, 403);
   assert.equal((await get('/v1/admin/overview', ananya)).status, 403);
+});
+
+test('the programme endpoint requires auth and exposes the normalized manifest', async () => {
+  const { login, get } = await harness();
+  assert.equal((await get('/v1/programme')).status, 401);
+  const ananya = await login('ananya@saintelms.local');
+  const body = (await (await get('/v1/programme', ananya)).json()) as {
+    programme: { id: string; rows: Array<{ rowId: string }> };
+    derivedCounts: { rows: number };
+    availability: Record<string, { content: string }>;
+  };
+  assert.equal(body.programme.id, 'p');
+  assert.equal(body.programme.rows[0]!.rowId, 'row-mechanics');
+  assert.equal(body.derivedCounts.rows, 1);
+  assert.equal(body.availability['row-mechanics']!.content, 'authored');
 });
 
 test('admin release toggles change what a cohort can download', async () => {
