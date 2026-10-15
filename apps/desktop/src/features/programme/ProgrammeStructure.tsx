@@ -98,7 +98,7 @@ function SupportSection({ group, onOpenCourse }: { group: SemesterGroup; onOpenC
       <div className="mb-3 flex flex-wrap items-baseline justify-between gap-2">
         <Eyebrow id="support-corpus">University support</Eyebrow>
         <span className="text-[12px] text-night-500">
-          {group.degreeCount} {group.degreeCount === 1 ? 'course' : 'courses'} · not degree credit
+          {group.courses.length} {group.courses.length === 1 ? 'course' : 'courses'} · not degree credit
         </span>
       </div>
       <Panel className="border-dashed p-4">
