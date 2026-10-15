@@ -72,16 +72,11 @@ export async function listStudents(query: StudentQuery): Promise<AdminStudentPag
 
 export interface StudentDetail {
   row: AdminStudentRow;
-  /**
-   * The profile's optimistic-lock version, which `PATCH /students/:id` compares against —
-   * the row's `version` field, surfaced separately so the view cannot drop it by accident.
-   */
-  profileVersion: number | null;
 }
 
 export async function getStudent(profileId: string): Promise<StudentDetail> {
   const row = incoming(AdminStudentRowSchema, await getJson(`${ADMIN}/students/${encodeURIComponent(profileId)}`), 'a student record');
-  return { row, profileVersion: row.version };
+  return { row };
 }
 
 /** Profile maintenance: names and account status. `expectedVersion` is the optimistic guard. */

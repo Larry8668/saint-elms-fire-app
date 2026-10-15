@@ -1,5 +1,5 @@
 import { useState, type ReactNode } from 'react';
-import { ArrowLeft, Check, Download, KeyRound, TriangleAlert, UserRound } from 'lucide-react';
+import { ArrowLeft, Check, Download, KeyRound, UserRound } from 'lucide-react';
 import type { AdminStudentRow, EnrolmentStatus } from '@sef/shared';
 import { decideEnrolment, patchStudent, sendRecoveryEmail } from '@/api/admin-api';
 import { keys, useCohorts, useStudent } from '@/api/queries';
@@ -78,7 +78,6 @@ export function StudentDetailView({ profileId }: { profileId: string }) {
 
   const row = student.data?.row;
   const enrolment = row?.enrolment ?? null;
-  const profileVersion = student.data?.profileVersion ?? null;
 
   const decide = useStaffMutation(
     ({ enrolmentId, action, reason, cohortId, expectedVersion }: {
@@ -278,7 +277,7 @@ export function StudentDetailView({ profileId }: { profileId: string }) {
         )}
       </Panel>
 
-      <ProfilePanel row={row} profileVersion={profileVersion} editing={editing} onEdit={startEditing}>
+      <ProfilePanel row={row} editing={editing} onEdit={startEditing}>
         {editing && (
           <ReasonForm
             title="Update this profile"
@@ -328,7 +327,7 @@ export function StudentDetailView({ profileId }: { profileId: string }) {
               profile.reset();
               profile.mutate({
                 reason,
-                expectedVersion: profileVersion as number,
+                expectedVersion: row.version,
                 legalName: form.legalName.trim(),
                 preferredName: form.preferredName.trim() === '' ? null : form.preferredName.trim(),
                 status: form.status,
@@ -379,13 +378,11 @@ export function StudentDetailView({ profileId }: { profileId: string }) {
 
 function ProfilePanel({
   row,
-  profileVersion,
   editing,
   onEdit,
   children,
 }: {
   row: AdminStudentRow;
-  profileVersion?: number | null;
   editing?: boolean;
   onEdit?: () => void;
   children?: ReactNode;
@@ -412,17 +409,9 @@ function ProfilePanel({
           <span className="font-mono text-[12.5px]">{row.accountUserId ?? 'unlinked'}</span>
         </Fact>
         <Fact label="Registered">{formatTimestamp(row.createdAt)}</Fact>
-        <Fact label="Profile version">{profileVersion ?? 'not published'}</Fact>
+        {/* `version` is the optimistic-lock token `PATCH /students/:id` compares against. */}
+        <Fact label="Profile version">{row.version}</Fact>
       </dl>
-
-      {/* Fail closed: without the server's current profile version a patch cannot be made safely. */}
-      {!profileVersion && !editing && (
-        <p className="mt-4 flex items-start gap-2 rounded-xl border border-ember-400/25 bg-ember-500/10 p-3 text-[12.5px] leading-5 text-ember-300">
-          <TriangleAlert className="mt-0.5 size-3.5 shrink-0" aria-hidden />
-          Profile maintenance needs the profile&rsquo;s current version so a concurrent edit cannot be overwritten. The student
-          record does not publish it yet, so this app will not send a profile change rather than guess a version.
-        </p>
-      )}
 
       {children && <div className="mt-4 space-y-3">{children}</div>}
     </Panel>
