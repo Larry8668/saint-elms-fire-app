@@ -30,6 +30,11 @@ const migrations: MigrationSource[] = [
     name: 'better_auth',
     url: new URL('./migrations/002_better_auth.sql', import.meta.url),
   },
+  {
+    version: 3,
+    name: 'admission',
+    url: new URL('./migrations/003_admission.sql', import.meta.url),
+  },
 ];
 
 export interface MigrationResult {

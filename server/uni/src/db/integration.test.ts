@@ -53,8 +53,8 @@ async function expectSqlState(operation: Promise<unknown>, code: string): Promis
 test('migrates an empty schema and creates the five persistence tables', testOptions, async () => {
   await withTestSchema(async (pool) => {
     const result = await migrateDatabase(pool);
-    assert.deepEqual(result.appliedVersions, [1, 2]);
-    assert.equal(result.currentVersion, 2);
+    assert.deepEqual(result.appliedVersions, [1, 2, 3]);
+    assert.equal(result.currentVersion, 3);
 
     const tables = await pool.query<{ table_name: string }>(
       `SELECT table_name FROM information_schema.tables
@@ -67,6 +67,7 @@ test('migrates an empty schema and creates the five persistence tables', testOpt
       'course_selections',
       'deviceCode',
       'enrolments',
+      'erasure_requests',
       'schema_migrations',
       'session',
       'staff_memberships',
@@ -81,9 +82,9 @@ test('migration runs are repeatable and preserve the applied checksum', testOpti
   await withTestSchema(async (pool) => {
     const first = await migrateDatabase(pool);
     const second = await migrateDatabase(pool);
-    assert.deepEqual(first.appliedVersions, [1, 2]);
+    assert.deepEqual(first.appliedVersions, [1, 2, 3]);
     assert.deepEqual(second.appliedVersions, []);
-    assert.equal(second.currentVersion, 2);
+    assert.equal(second.currentVersion, 3);
   });
 });
 
@@ -107,8 +108,8 @@ test('upgrades a version-1 database, preserving its rows and the recorded checks
     );
 
     const result = await migrateDatabase(pool);
-    assert.deepEqual(result.appliedVersions, [2]);
-    assert.equal(result.currentVersion, 2);
+    assert.deepEqual(result.appliedVersions, [2, 3]);
+    assert.equal(result.currentVersion, 3);
 
     const retained = await pool.query<{ legal_name: string }>(
       'SELECT legal_name FROM student_profiles WHERE id = $1',
@@ -143,8 +144,8 @@ test('enforces primary, unique, foreign-key, check, and optimistic-version const
     );
     const profileId = profile.rows[0]!.id;
     const enrolment = await pool.query<{ id: string }>(
-      `INSERT INTO enrolments (student_profile_id, programme_code, cohort_code, starts_on)
-       VALUES ($1, 'BSC', '2026-A', '2026-01-01') RETURNING id`,
+      `INSERT INTO enrolments (student_profile_id, programme_code, curriculum_version)
+       VALUES ($1, 'bsc-test', '2026.1') RETURNING id`,
       [profileId],
     );
     const enrolmentId = enrolment.rows[0]!.id;
@@ -164,10 +165,29 @@ test('enforces primary, unique, foreign-key, check, and optimistic-version const
       ),
       '23503',
     );
+    // One enrolment row per student and programme.
     await expectSqlState(
       pool.query(
-        `INSERT INTO enrolments (student_profile_id, programme_code, cohort_code, starts_on, ends_on)
-         VALUES ($1, 'BSC', '2026-B', '2026-02-01', '2026-01-01')`,
+        `INSERT INTO enrolments (student_profile_id, programme_code, curriculum_version)
+         VALUES ($1, 'bsc-test', '2026.1')`,
+        [profileId],
+      ),
+      '23505',
+    );
+    // A decided enrolment must carry decision provenance.
+    await expectSqlState(
+      pool.query(
+        `INSERT INTO enrolments (student_profile_id, programme_code, curriculum_version, status)
+         VALUES ($1, 'bsc-other', '2026.1', 'rejected')`,
+        [profileId],
+      ),
+      '23514',
+    );
+    // An approved enrolment must carry a cohort.
+    await expectSqlState(
+      pool.query(
+        `INSERT INTO enrolments (student_profile_id, programme_code, curriculum_version, status, decision_at, decision_reason, decision_actor_subject)
+         VALUES ($1, 'bsc-third', '2026.1', 'approved', now(), 'r', 'actor')`,
         [profileId],
       ),
       '23514',

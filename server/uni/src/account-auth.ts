@@ -15,10 +15,23 @@ export interface AccountAuthOptions {
   trustedOrigins?: string[];
 }
 
+export interface SessionInfo {
+  user: { id: string; email: string; name: string; emailVerified: boolean };
+  session: { id: string; createdAt: Date } | null;
+}
+
 export interface AccountAuth {
   handler: (request: Request) => Promise<Response>;
   storage: SecondaryStorage;
   trustedOrigins: readonly string[];
+  /** Resolves the caller's session (cookie or bearer plugin token); null when absent. */
+  getSession: (headers: Headers) => Promise<SessionInfo | null>;
+  /**
+   * Destroys every session for the account. Sessions live in secondary storage
+   * (`auth_kv`) with `session` rows as the DB mirror, so this must go through the
+   * auth adapter — deleting `session` rows alone leaves the cached copies alive.
+   */
+  revokeUserSessions: (userId: string) => Promise<void>;
 }
 
 /** The task scope pins 15-minute magic tokens. */
@@ -170,5 +183,15 @@ export function createAccountAuth(options: AccountAuthOptions): AccountAuth {
     handler: withMagicLinkConfirmation((request: Request) => auth.handler(request), origins[0]),
     storage,
     trustedOrigins: origins,
+    getSession: async (headers) => {
+      const session = await auth.api.getSession({ headers });
+      return session ? { user: session.user, session: session.session } : null;
+    },
+    revokeUserSessions: async (userId) => {
+      const context = await (auth as unknown as {
+        $context: Promise<{ internalAdapter: { deleteUserSessions: (id: string) => Promise<unknown> } }>;
+      }).$context;
+      await context.internalAdapter.deleteUserSessions(userId);
+    },
   };
 }

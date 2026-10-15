@@ -52,7 +52,7 @@ async function main() {
   }
 
   const availability = programme ? await programmeAvailability(programme) : undefined;
-  const deps: UniDeps = { courseware, programme, availability, keys, releases, shares, accounts, audit, dispersal, accountAuth };
+  const deps: UniDeps = { courseware, programme, availability, keys, releases, shares, accounts, audit, dispersal, accountAuth, pool };
   const firstBoot = await accounts.load();
   if (firstBoot) await seedUniDemo(deps);
 

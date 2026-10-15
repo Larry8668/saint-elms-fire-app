@@ -6,6 +6,8 @@ import type { UniDeps } from './deps';
 import { errorFields, log } from './logger';
 import { adminRoutes } from './routes/admin';
 import { authRoutes } from './routes/auth';
+import { meRoutes } from './routes/me';
+import { staffRoutes } from './routes/staff';
 import { studentRoutes } from './routes/student';
 
 export type { UniDeps } from './deps';
@@ -64,6 +66,8 @@ export function createApp(deps: UniDeps) {
     app.all('/v1/auth/*', (c) => c.json({ error: 'account_auth_unavailable' }, 503));
   }
   app.route('/v1/admin', adminRoutes(deps));
+  app.route('/v1/admin', staffRoutes(deps));
+  app.route('/v1', meRoutes(deps));
   app.route('/v1', studentRoutes(deps));
 
   return app;
