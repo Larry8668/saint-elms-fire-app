@@ -24,6 +24,8 @@ export const config = {
   demoPassword: env('DEMO_PASSWORD', DEMO_PASSWORD_DEFAULT),
   /** Student tokens are long-lived so devices can keep working offline between syncs. */
   studentTokenHours: Number(env('STUDENT_TOKEN_HOURS', String(24 * 30))),
+  /** Offline entitlements renew daily so a suspension stops verified access within ~a day. */
+  entitlementHours: Number(env('ENTITLEMENT_HOURS', '24')),
   adminTokenHours: Number(env('ADMIN_TOKEN_HOURS', '12')),
   /** Public origin of this server, used for account links and trusted-origin checks. */
   publicUrl: env('UNI_PUBLIC_URL', 'http://localhost:4200'),

@@ -107,7 +107,7 @@ export function meRoutes(deps: UniDeps) {
     if (!cohortId) return c.json({ error: 'unapproved', message: 'Enrolment has no cohort' }, 403);
     const principal = c.get('principal');
     const iat = Math.floor(Date.now() / 1000);
-    const exp = iat + config.studentTokenHours * 3600;
+    const exp = iat + config.entitlementHours * 3600;
     const claims: TokenClaims = {
       iss: config.issuer,
       sub: principal.userId,
