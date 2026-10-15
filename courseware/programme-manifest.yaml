@@ -4,6 +4,8 @@
 #
 # 71 PDF rows transcribed. 58 rows currently have authored courseware under content/.
 # 14 rows remain (external, or the supervised Internship) as of 2026-10-08; the 15 planned theory courses were authored on 2026-10-07/08 and carry status: in-review in lesson frontmatter.
+# optionGroups below encode the selection policy implied by the per-semester optionGroupNote fields:
+# one complete bundle (a theory course plus its matching lab, where applicable) is selected per group.
 #
 # Status legend:
 #   released       — Authored courseware present in content/ and QA-approved.
@@ -1210,6 +1212,62 @@ support:
       packageTemplate: two-modules-three-lessons
       contentPath: content/university-support/student-life-and-university-navigation/
       notes: 6 lessons already released. Powers Socrates-my-Friend.
+
+# ===========================================================================
+# Option groups — evidenced elective bundles
+# ===========================================================================
+# Rows carry optionGroup ids; this section defines the selection policy.
+# A learner selects one complete bundle per group (a theory course and its
+# matching lab where the option is a theory/lab pair), so alternatives are
+# never counted twice. Derived from the per-semester optionGroupNote fields.
+optionGroups:
+  - id: sem5-physics-option
+    select: 1
+    bundles:
+      - id: bundle-astro-theory-lab
+        rowIds: [sem5-row-03, sem5-row-06]
+      - id: bundle-micro-theory-lab
+        rowIds: [sem5-row-04, sem5-row-07]
+      - id: bundle-lowdim-theory-lab
+        rowIds: [sem5-row-05, sem5-row-08]
+
+  - id: sem5-mathematics-elective
+    select: 1
+    bundles:
+      - id: bundle-integral-transforms
+        rowIds: [sem5-row-10]
+      - id: bundle-calculus-several-variables
+        rowIds: [sem5-row-11]
+
+  - id: sem6-physics-option
+    select: 1
+    bundles:
+      - id: bundle-renewable-energy-theory-lab
+        rowIds: [sem6-row-05, sem6-row-08]
+      - id: bundle-instrumentation-theory-lab
+        rowIds: [sem6-row-06, sem6-row-09]
+      - id: bundle-advanced-quantum-theory-lab
+        rowIds: [sem6-row-07, sem6-row-10]
+
+  - id: sem6-mathematics-elective-i
+    select: 1
+    bundles:
+      - id: bundle-advanced-numerical-methods
+        rowIds: [sem6-row-12]
+      - id: bundle-number-theory
+        rowIds: [sem6-row-13]
+      - id: bundle-operations-research
+        rowIds: [sem6-row-14]
+
+  - id: sem6-mathematics-elective-ii
+    select: 1
+    bundles:
+      - id: bundle-computational-linear-algebra
+        rowIds: [sem6-row-15]
+      - id: bundle-financial-mathematics
+        rowIds: [sem6-row-16]
+      - id: bundle-mathematical-modelling
+        rowIds: [sem6-row-17]
 
 # ===========================================================================
 # Aggregate counts (must equal sum of status fields)

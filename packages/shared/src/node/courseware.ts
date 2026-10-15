@@ -1,9 +1,9 @@
 import { createHash } from 'node:crypto';
 import { readdir, readFile } from 'node:fs/promises';
 import path from 'node:path';
-import { parse } from 'yaml';
 import type { CourseSummary, LessonMeta } from '../content';
 import { lessonFromMarkdown } from '../frontmatter';
+import { loadProgrammeManifest, type ProgrammeManifestResult } from './programme';
 
 export interface CoursewareFile {
   /** Path relative to the courseware root, POSIX separators. */
@@ -25,14 +25,8 @@ export interface CoursewareIndex {
   courses: Map<string, CoursewareCourse>;
   /** Markdown files without lesson frontmatter, so callers can log them. */
   skipped: string[];
-}
-
-interface ManifestRow {
-  courseId: string;
-  courseName?: string;
-  courseCode?: string;
-  subjectId?: string;
-  notes?: string;
+  /** Normalized programme manifest, when the root has a valid one. */
+  programme?: ProgrammeManifestResult;
 }
 
 const sha256 = (text: string) => createHash('sha256').update(text).digest('hex');
@@ -47,25 +41,22 @@ async function walkMarkdown(dir: string): Promise<string[]> {
   return out;
 }
 
-async function readManifest(root: string) {
-  const raw = parse(await readFile(path.join(root, 'programme-manifest.yaml'), 'utf8')) as Record<string, unknown>;
-  const rows = new Map<string, ManifestRow>();
-  for (const [key, value] of Object.entries(raw)) {
-    if (!/^semester-\d+$/.test(key) || !value || typeof value !== 'object') continue;
-    const list = (value as { rows?: unknown }).rows;
-    if (!Array.isArray(list)) continue;
-    for (const row of list as ManifestRow[]) if (row?.courseId) rows.set(row.courseId, row);
+/** Best-effort manifest load; a missing file is not an error for demo seeding. */
+async function loadManifest(root: string): Promise<ProgrammeManifestResult | undefined> {
+  try {
+    return await loadProgrammeManifest(root);
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error;
+    return undefined;
   }
-  return {
-    programmeId: String(raw.programmeId ?? 'programme'),
-    programmeName: String(raw.programmeName ?? 'Programme'),
-    rows,
-  };
 }
 
 /** Reads every lesson under the courseware root and groups files by course. Used by the uni server and the demo seeder. */
 export async function loadCourseware(root: string): Promise<CoursewareIndex> {
-  const manifest = await readManifest(root);
+  const manifest = await loadManifest(root);
+  const rowFor = new Map<string, NonNullable<ProgrammeManifestResult['programme']>['rows'][number]>();
+  for (const row of manifest?.programme.rows ?? []) rowFor.set(row.courseId, row);
+
   const skipped: string[] = [];
   const grouped = new Map<string, { files: CoursewareFile[]; lessons: NonNullable<ReturnType<typeof lessonFromMarkdown>>[] }>();
 
@@ -92,8 +83,8 @@ export async function loadCourseware(root: string): Promise<CoursewareIndex> {
     files.sort((a, b) => a.path.localeCompare(b.path));
     lessons.sort((a, b) => a.moduleId.localeCompare(b.moduleId) || a.order - b.order);
     const first = lessons[0]!;
-    const row = manifest.rows.get(courseId);
-    const support = first.subjectId === 'university-support';
+    const row = rowFor.get(courseId);
+    const support = row?.courseType === 'Administrative Support';
     courses.set(courseId, {
       files,
       lessons: lessons.map(({ markdown: _body, ...meta }) => meta),
@@ -101,8 +92,16 @@ export async function loadCourseware(root: string): Promise<CoursewareIndex> {
         id: courseId,
         title: row?.courseName ?? first.courseName,
         subjectId: row?.subjectId ?? first.subjectId,
-        semesterNumber: support ? 0 : first.semesterNumber,
+        semesterNumber: row ? row.semesterNumber : support ? 0 : first.semesterNumber,
         code: row?.courseCode,
+        courseCode: row?.courseCode,
+        courseType: row?.courseType,
+        credits: row?.credits,
+        hoursPerWeek: row?.hoursPerWeek,
+        deliveryMode: row?.deliveryMode,
+        status: row?.status,
+        optionGroup: row?.optionGroup,
+        prerequisites: row?.prerequisites,
         description: row?.notes,
         lessonCount: files.length,
         version: sha256(files.map((f) => `${f.path}:${f.sha256}`).join('\n')).slice(0, 16),
@@ -111,5 +110,11 @@ export async function loadCourseware(root: string): Promise<CoursewareIndex> {
     });
   }
 
-  return { programmeId: manifest.programmeId, programmeName: manifest.programmeName, courses, skipped };
+  return {
+    programmeId: manifest?.programme.id ?? 'programme',
+    programmeName: manifest?.programme.name ?? 'Programme',
+    courses,
+    skipped,
+    programme: manifest,
+  };
 }

@@ -3,7 +3,17 @@ import assert from 'node:assert/strict';
 import * as shared from './index';
 
 test('root export stays browser-safe: no node-only helpers leak', () => {
-  for (const name of ['hashPassword', 'verifyPassword', 'signToken', 'verifyToken', 'TokenError', 'loadCourseware']) {
+  for (const name of [
+    'hashPassword',
+    'verifyPassword',
+    'signToken',
+    'verifyToken',
+    'TokenError',
+    'loadCourseware',
+    'loadProgrammeManifest',
+    'ProgrammeManifestError',
+    'resolveContentDir',
+  ]) {
     assert.equal(name in shared, false, `${name} must stay behind @sef/shared/node`);
   }
 });

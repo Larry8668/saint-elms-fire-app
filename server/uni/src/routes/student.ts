@@ -33,6 +33,19 @@ export function studentRoutes(deps: UniDeps) {
     return c.json(body);
   });
 
+  // Full validated programme structure. Listing a row does not grant download
+  // permission; packages are still gated by cohort release.
+  app.get('/programme', guard, (c) => {
+    const programme = deps.programme;
+    if (!programme) return c.json({ error: 'programme_unavailable' }, 503);
+    return c.json({
+      programme: programme.programme,
+      semesters: programme.semesters,
+      derivedCounts: programme.derivedCounts,
+      availability: deps.availability ?? {},
+    });
+  });
+
   app.get('/courses/:courseId/package', guard, async (c) => {
     const cohortId = cohortFor(c);
     const courseId = c.req.param('courseId');
