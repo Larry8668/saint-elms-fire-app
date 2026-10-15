@@ -51,4 +51,14 @@ const COPY: Record<AdmissionState, AdmissionCopy> = {
   },
 };
 
-export const admissionCopy = (state: AdmissionState): AdmissionCopy => COPY[state];
+/**
+ * The value arrives over the network from the engine, so a version skew could in principle
+ * carry a state this build predates. `mayEnterDashboard` already fails closed for anything
+ * unrecognised; this keeps the copy total instead of returning undefined and crashing.
+ */
+const UNKNOWN: AdmissionCopy = {
+  title: 'Signed in, but not approved here',
+  body: 'The university server reported an enrolment state this app does not recognise. Nothing is unlocked until it does.',
+};
+
+export const admissionCopy = (state: AdmissionState): AdmissionCopy => COPY[state] ?? UNKNOWN;

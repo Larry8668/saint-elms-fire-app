@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
 import type { DeviceProfile } from '@sef/shared';
-import { admissionCopy, admissionOf, mayEnterDashboard } from './admission';
+import { admissionCopy, admissionOf, mayEnterDashboard, type AdmissionState } from './admission';
 
 const profile = (admission: DeviceProfile['admission']): DeviceProfile => ({
   id: 'p1',
@@ -49,4 +49,19 @@ test('withdrawn and suspended tell the student their own files are still theirs'
   for (const status of ['withdrawn', 'suspended'] as const) {
     assert.match(admissionCopy(status).body, /stay on this device/i, status);
   }
+});
+
+test('an enrolment state this build predates still fails closed with usable copy', () => {
+  // The value crosses the network from the engine, so a version skew can supply one.
+  const unknown = 'archived' as AdmissionState;
+  assert.equal(mayEnterDashboard(unknown), false, 'an unrecognised state must never unlock the dashboard');
+  const copy = admissionCopy(unknown);
+  assert.ok(copy.title.length > 0);
+  assert.ok(copy.body.length > 0);
+});
+
+test('every known state has its own copy rather than falling through', () => {
+  const states: AdmissionState[] = ['approved', 'legacy', 'none', 'pending', 'rejected', 'suspended', 'withdrawn'];
+  const titles = states.map((s) => admissionCopy(s).title);
+  assert.equal(new Set(titles).size, states.length, 'no two states share the same fallback text');
 });
