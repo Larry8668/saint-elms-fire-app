@@ -3,7 +3,7 @@ import path from 'node:path';
 import { canonicalJson, CatalogueSchema, CoursePackageSchema, type Catalogue, type SyncStatus } from '@sef/shared';
 import { config, log } from '../config';
 import { readText, writeFileAtomic } from '../lib/fs';
-import type { SettingsStore } from '../settings/store';
+import type { SettingsReader } from '../settings/store';
 import { uniFetch, UniHttpError } from '../uni/client';
 import type { ContentStore } from './store';
 
@@ -23,7 +23,7 @@ export class ContentSync {
   private authRejected = false;
 
   constructor(
-    private readonly settings: SettingsStore,
+    private readonly settings: SettingsReader,
     private readonly store: ContentStore,
     private readonly identity: () => Promise<SyncIdentity>,
   ) {}

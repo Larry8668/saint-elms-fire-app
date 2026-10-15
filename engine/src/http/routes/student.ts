@@ -28,6 +28,16 @@ export function studentRoutes(deps: EngineDeps) {
   const app = new Hono<EngineEnv>();
   const guard = requireProfile(deps);
 
+  // Legacy, identity-free data is only copied after an explicit backup and claim.
+  app.get('/anonymous-data', guard, async (c) => c.json(await deps.anonymousData.preview()));
+  app.post('/anonymous-data/backup', guard, async (c) => c.json(await deps.anonymousData.backup()));
+  app.post('/anonymous-data/claim', guard, async (c) => {
+    const body = z.strictObject({ backupId: z.string().uuid() }).safeParse(await c.req.json().catch(() => null));
+    if (!body.success) return c.json({ error: 'Create a backup and send its backupId to claim anonymous data.' }, 400);
+    const ws = c.get('ws');
+    return c.json(await deps.anonymousData.claim(c.get('me').profile, ws.paths, body.data.backupId));
+  });
+
   // Courseware sync
   app.get('/sync/status', guard, async (c) => c.json(await c.get('ws').sync.status()));
   app.post('/sync/install/:courseId', guard, async (c) => c.json(await c.get('ws').sync.install(c.req.param('courseId'))));
@@ -61,7 +71,7 @@ export function studentRoutes(deps: EngineDeps) {
     if (!parsed.success) return c.json({ error: 'Invalid chat request', issues: parsed.error.issues }, 400);
     const req = parsed.data as ChatRequest;
     const ws = c.get('ws');
-    const harness = { settings: deps.settings, content: ws.content, brain: ws.brain, sessions: ws.sessions, studentName: ws.profile.name };
+    const harness = { settings: ws.settings, content: ws.content, brain: ws.brain, sessions: ws.sessions, studentName: ws.profile.name };
     return streamSSE(c, async (stream) => {
       const emit = (event: ChatStreamEvent) => void stream.writeSSE({ data: JSON.stringify(event) });
       try {

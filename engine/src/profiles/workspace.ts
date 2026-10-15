@@ -3,6 +3,7 @@ import type { DeviceProfile } from '@sef/shared';
 import { BrainService } from '../brain/service';
 import { BrainVault } from '../brain/vault';
 import { log, profilePaths, type ProfilePaths } from '../config';
+import { ProfileSettingsStore } from '../settings/store';
 import { ContentStore } from '../content/store';
 import { ContentSync } from '../content/sync';
 import { SessionStore } from '../sessions/store';
@@ -13,6 +14,7 @@ import type { ProfileRegistry } from './registry';
 export interface Workspace {
   profile: DeviceProfile;
   paths: ProfilePaths;
+  settings: ProfileSettingsStore;
   content: ContentStore;
   vault: BrainVault;
   brain: BrainService;
@@ -26,39 +28,47 @@ export class WorkspaceManager {
   constructor(
     private readonly settings: SettingsStore,
     private readonly registry: ProfileRegistry,
+    private readonly pathsForProfile: (profileId: string) => ProfilePaths = profilePaths,
   ) {}
 
   get(profile: DeviceProfile): Promise<Workspace> {
-    let ws = this.cache.get(profile.id);
-    if (!ws) {
-      ws = this.open(profile).catch((error) => {
-        this.cache.delete(profile.id);
+    const context = { ...profile };
+    let cached = this.cache.get(context.id);
+    if (!cached) {
+      cached = this.open(context).catch((error) => {
+        this.cache.delete(context.id);
         throw error;
       });
-      this.cache.set(profile.id, ws);
+      this.cache.set(context.id, cached);
     }
-    return ws.then((w) => Object.assign(w, { profile }));
+    return cached.then((workspace) => ({ ...workspace, profile: { ...context } }));
   }
 
   private async open(profile: DeviceProfile): Promise<Workspace> {
-    const paths = profilePaths(profile.id);
+    const profileId = profile.id;
+    const paths = this.pathsForProfile(profileId);
     await Promise.all([paths.content, paths.sessions, paths.quizzes].map((dir) => mkdir(dir, { recursive: true })));
+    const settings = new ProfileSettingsStore(this.settings, paths.privateSettings);
     const content = new ContentStore(paths.content);
     const vault = new BrainVault(paths.brain);
     await vault.init();
     const workspace: Workspace = {
-      profile,
+      profile: { ...profile },
       paths,
+      settings,
       content,
       vault,
-      brain: new BrainService(content, vault, this.settings, paths.quizzes),
+      brain: new BrainService(content, vault, settings, paths.quizzes),
       sessions: new SessionStore(paths.sessions),
-      sync: new ContentSync(this.settings, content, async () => ({
-        cohortId: workspace.profile.cohortId,
-        uniToken: await this.registry.uniToken(profile.id),
-      })),
+      sync: new ContentSync(settings, content, async () => {
+        const currentProfile = await this.registry.get(profileId);
+        return {
+          cohortId: currentProfile?.cohortId ?? profile.cohortId,
+          uniToken: await this.registry.uniToken(profileId),
+        };
+      }),
     };
-    log.info('workspace_opened', { profileId: profile.id, root: paths.root });
+    log.info('workspace_opened', { profileId, root: paths.root });
     return workspace;
   }
 }

@@ -19,7 +19,7 @@ import type { ContentStore } from '../content/store';
 import { readJson, writeJson } from '../lib/fs';
 import { resolveModel } from '../models/registry';
 import type { Session } from '../sessions/store';
-import type { SettingsStore } from '../settings/store';
+import type { SettingsReader } from '../settings/store';
 import { applyOps } from './applier';
 import { buildCourseGraph, type CourseGraph } from './course-graph';
 import { buildGraphView } from './graph';
@@ -87,7 +87,7 @@ export class BrainService {
   constructor(
     private readonly content: ContentStore,
     private readonly vault: BrainVault,
-    private readonly settings: SettingsStore,
+    private readonly settings: SettingsReader,
     private readonly quizzesDir: string,
   ) {}
 

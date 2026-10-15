@@ -5,7 +5,7 @@ import { searchLessons, type LessonHit } from '../content/search';
 import type { ContentStore } from '../content/store';
 import { resolveModel, type ResolvedModel } from '../models/registry';
 import type { SessionStore } from '../sessions/store';
-import type { SettingsStore } from '../settings/store';
+import type { SettingsReader } from '../settings/store';
 import { webSearch, type WebResult } from '../web/searxng';
 import { attributeLessons } from './attribution';
 import { TurnContext } from './context';
@@ -17,7 +17,7 @@ import { buildTools } from './tools';
 import { checkGrounding, checkPhilosopherFormat, repairPhilosopherFormat } from './validators';
 
 export interface HarnessDeps {
-  settings: SettingsStore;
+  settings: SettingsReader;
   content: ContentStore;
   brain: BrainService;
   sessions: SessionStore;
