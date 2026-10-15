@@ -1,10 +1,9 @@
 import { createHash, createPublicKey, verify } from 'node:crypto';
-import path from 'node:path';
 import { canonicalJson, CatalogueSchema, CoursePackageSchema, type Catalogue, type SyncStatus } from '@sef/shared';
-import { config, log } from '../config';
-import { readText, writeFileAtomic } from '../lib/fs';
+import { log } from '../config';
 import type { SettingsReader } from '../settings/store';
 import { uniFetch, UniHttpError } from '../uni/client';
+import { trustedUniKey } from '../uni/trust';
 import type { ContentStore } from './store';
 
 export class PackageVerificationError extends Error {}
@@ -15,8 +14,6 @@ export interface SyncIdentity {
   cohortId: string;
   uniToken?: string;
 }
-
-const TRUSTED_KEY_FILE = path.join(config.paths.trust, 'uni-public.pem');
 
 /** Pulls catalogue + signed course packages from the university server for one profile. */
 export class ContentSync {
@@ -93,20 +90,9 @@ export class ContentSync {
     };
   }
 
-  /** Trust on first use, per device: the first key seen is pinned; a different key later is refused. */
   private async trustedKey(): Promise<string> {
     const { uniServerUrl } = await this.settings.get();
-    const remote = await uniFetch<{ publicKeyPem: string }>(uniServerUrl, '/v1/keys');
-    const pinned = await readText(TRUSTED_KEY_FILE);
-    if (!pinned) {
-      await writeFileAtomic(TRUSTED_KEY_FILE, remote.publicKeyPem);
-      log.info('uni_key_pinned', { url: uniServerUrl });
-      return remote.publicKeyPem;
-    }
-    if (pinned.trim() !== remote.publicKeyPem.trim()) {
-      throw new PackageVerificationError('University signing key changed since first sync. Refusing packages.');
-    }
-    return pinned;
+    return trustedUniKey(uniServerUrl);
   }
 
   async install(courseId: string): Promise<{ courseId: string; version: string; files: number }> {

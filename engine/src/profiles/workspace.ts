@@ -46,6 +46,11 @@ export class WorkspaceManager {
     return cached.then((workspace) => ({ ...workspace, profile: { ...context } }));
   }
 
+  /** Drops the cached workspace so logout leaves no profile state held in memory. */
+  drop(profileId: string): void {
+    this.cache.delete(profileId);
+  }
+
   private async open(profile: DeviceProfile): Promise<Workspace> {
     const profileId = profile.id;
     const paths = this.pathsForProfile(profileId);

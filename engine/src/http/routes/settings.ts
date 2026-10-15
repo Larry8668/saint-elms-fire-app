@@ -5,10 +5,10 @@ import { SettingsStore } from '../../settings/store';
 import { requireProfile, type EngineDeps, type EngineEnv } from '../context';
 import { friendlyError } from '../errors';
 
-/** Device-wide settings (servers, model providers). Any signed-in student on this device can edit them. */
+/** Device-wide settings (servers, model providers). Only approved students may edit them. */
 export function settingsRoutes(deps: EngineDeps) {
   const app = new Hono<EngineEnv>();
-  const guard = requireProfile(deps);
+  const guard = requireProfile(deps, { approved: true });
 
   app.get('/settings', guard, async (c) => c.json(SettingsStore.redact(await c.get('ws').settings.get())));
   app.put('/settings', guard, async (c) => {

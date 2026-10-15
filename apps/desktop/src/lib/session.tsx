@@ -21,9 +21,11 @@ interface SessionContextValue {
 const STORAGE_KEY = 'sef.session';
 const SessionContext = createContext<SessionContextValue | null>(null);
 
+// Tokens live in sessionStorage, never localStorage: the engine session dies with the
+// window, which is the intended lifetime — relaunching the app means signing in again.
 const readStored = (): Session | null => {
   try {
-    const raw = localStorage.getItem(STORAGE_KEY);
+    const raw = sessionStorage.getItem(STORAGE_KEY);
     return raw ? (JSON.parse(raw) as Session) : null;
   } catch {
     return null;
@@ -31,8 +33,8 @@ const readStored = (): Session | null => {
 };
 
 const store = (session: Session | null) => {
-  if (session) localStorage.setItem(STORAGE_KEY, JSON.stringify(session));
-  else localStorage.removeItem(STORAGE_KEY);
+  if (session) sessionStorage.setItem(STORAGE_KEY, JSON.stringify(session));
+  else sessionStorage.removeItem(STORAGE_KEY);
 };
 
 const adminTokenValid = (token: string) => {

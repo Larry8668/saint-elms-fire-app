@@ -1,6 +1,7 @@
 import { mkdir } from 'node:fs/promises';
 import { serve } from '@hono/node-server';
 import { config, errorFields, log } from './config';
+import { createCredentialStore } from './credentials/store';
 import { bootstrapDemo } from './demo/bootstrap';
 import { createApp } from './http/app';
 import { AuthService } from './profiles/auth';
@@ -14,9 +15,10 @@ async function main() {
   await mkdir(config.paths.trust, { recursive: true });
 
   const settings = new SettingsStore();
-  const registry = new ProfileRegistry();
+  const credentials = createCredentialStore();
+  const registry = new ProfileRegistry(credentials);
   const workspaces = new WorkspaceManager(settings, registry);
-  const auth = new AuthService(settings, registry, new AuthSessions());
+  const auth = new AuthService(settings, registry, new AuthSessions(), credentials);
 
   if (config.seedDemo) await bootstrapDemo(registry, workspaces);
 

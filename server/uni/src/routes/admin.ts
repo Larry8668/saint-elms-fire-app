@@ -29,7 +29,9 @@ const NewCohortSchema = z.object({
 
 export function adminRoutes(deps: UniDeps) {
   const app = new Hono<AppEnv>();
-  app.use('*', requireRole(deps.keys, 'admin'));
+  // Session-authenticated requests share this prefix and fall through to staffRoutes;
+  // the guard is per-route so only sef1 admin bearers reach these handlers.
+  const admin = requireRole(deps.keys, 'admin');
   const actor = (c: { get: (k: 'claims') => { sub: string } }) => c.get('claims').sub;
 
   const currentVersion = (courseId: string) => deps.courseware.courses.get(courseId)?.summary.version;
@@ -45,7 +47,7 @@ export function adminRoutes(deps: UniDeps) {
     }));
   };
 
-  app.get('/overview', (c) => {
+  app.get('/overview', admin, (c) => {
     const dispersal = deps.dispersal.all();
     const cohorts = cohortSummaries();
     const body: AdminOverview = {
@@ -63,9 +65,9 @@ export function adminRoutes(deps: UniDeps) {
     return c.json(body);
   });
 
-  app.get('/cohorts', (c) => c.json(cohortSummaries()));
+  app.get('/cohorts', admin, (c) => c.json(cohortSummaries()));
 
-  app.post('/cohorts', async (c) => {
+  app.post('/cohorts', admin, async (c) => {
     const parsed = NewCohortSchema.safeParse(await c.req.json().catch(() => null));
     if (!parsed.success) return c.json({ error: 'invalid_request', issues: parsed.error.issues }, 400);
     if (deps.releases.has(parsed.data.id)) return c.json({ error: 'cohort_exists' }, 409);
@@ -77,7 +79,7 @@ export function adminRoutes(deps: UniDeps) {
     return c.json(cohortSummaries().find((x) => x.id === parsed.data.id), 201);
   });
 
-  app.put('/cohorts/:cohortId/releases', async (c) => {
+  app.put('/cohorts/:cohortId/releases', admin, async (c) => {
     const cohortId = c.req.param('cohortId');
     if (!deps.releases.has(cohortId)) return c.json({ error: 'not_found' }, 404);
     const parsed = ReleaseToggleSchema.safeParse(await c.req.json().catch(() => null));
@@ -90,7 +92,7 @@ export function adminRoutes(deps: UniDeps) {
     return c.json(cohortSummaries().find((x) => x.id === cohortId));
   });
 
-  app.get('/courses', (c) => {
+  app.get('/courses', admin, (c) => {
     const cohorts = deps.releases.cohorts();
     const body: AdminCourse[] = [...deps.courseware.courses.values()]
       .map(({ summary }) => ({
@@ -108,7 +110,7 @@ export function adminRoutes(deps: UniDeps) {
     return c.json(body);
   });
 
-  app.get('/courses/:courseId/lessons', (c) => {
+  app.get('/courses/:courseId/lessons', admin, (c) => {
     const course = deps.courseware.courses.get(c.req.param('courseId'));
     if (!course) return c.json({ error: 'not_found' }, 404);
     const body: AdminLesson[] = course.lessons.map((l) => ({
@@ -122,9 +124,9 @@ export function adminRoutes(deps: UniDeps) {
     return c.json(body);
   });
 
-  app.get('/accounts', (c) => c.json(deps.accounts.list()));
+  app.get('/accounts', admin, (c) => c.json(deps.accounts.list()));
 
-  app.post('/accounts', async (c) => {
+  app.post('/accounts', admin, async (c) => {
     const parsed = NewAccountSchema.safeParse(await c.req.json().catch(() => null));
     if (!parsed.success) return c.json({ error: 'invalid_request', issues: parsed.error.issues }, 400);
     if (parsed.data.cohortId && !deps.releases.has(parsed.data.cohortId)) return c.json({ error: 'unknown_cohort' }, 400);
@@ -138,7 +140,7 @@ export function adminRoutes(deps: UniDeps) {
     }
   });
 
-  app.patch('/accounts/:id', async (c) => {
+  app.patch('/accounts/:id', admin, async (c) => {
     const parsed = AccountPatchSchema.safeParse(await c.req.json().catch(() => null));
     if (!parsed.success) return c.json({ error: 'invalid_request', issues: parsed.error.issues }, 400);
     if (parsed.data.cohortId && !deps.releases.has(parsed.data.cohortId)) return c.json({ error: 'unknown_cohort' }, 400);
@@ -151,20 +153,20 @@ export function adminRoutes(deps: UniDeps) {
     return c.json(account);
   });
 
-  app.get('/dispersal', (c) =>
+  app.get('/dispersal', admin, (c) =>
     c.json(
       deps.dispersal.all().map((d) => ({ ...d, current: d.version === currentVersion(d.courseId) })),
     ),
   );
 
-  app.get('/audit', (c) => c.json(deps.audit.recent(Number(c.req.query('limit') ?? 200))));
+  app.get('/audit', admin, (c) => c.json(deps.audit.recent(Number(c.req.query('limit') ?? 200))));
 
-  app.get('/shares', (c) => {
+  app.get('/shares', admin, (c) => {
     const body: AdminShare[] = deps.shares.all().map(({ image: _image, fromAccountId: _id, ...share }) => share);
     return c.json(body);
   });
 
-  app.delete('/shares/:id', async (c) => {
+  app.delete('/shares/:id', admin, async (c) => {
     const removed = await deps.shares.remove(c.req.param('id'));
     if (!removed) return c.json({ error: 'not_found' }, 404);
     await deps.audit.record(actor(c), 'share_removed', `"${removed.title}" by ${removed.fromStudent}`);
