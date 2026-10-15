@@ -1,6 +1,6 @@
 import { Hono, type Context } from 'hono';
-import type { Catalogue, CoursePackage, PackageManifest } from '@sef/shared';
-import { requireCourseAccess, requireProgrammeAccess, type AppEnv } from '../authorization';
+import { CONTRACT_VERSION, type Catalogue, type CoursePackage, type PackageManifest, type ProgrammeCatalogue } from '@sef/shared';
+import { requireCourseAccess, requireProgrammeAccess, requireSession, type AppEnv } from '../authorization';
 import { config } from '../config';
 import type { UniDeps } from '../deps';
 import { log } from '../logger';
@@ -16,6 +16,7 @@ import { signManifest } from '../signing';
 export function studentRoutes(deps: UniDeps) {
   const app = new Hono<AppEnv>();
   const guard = requireCourseAccess(deps);
+  const session = requireSession(deps);
 
   const cohortFor = (c: Context<AppEnv>): string | null => {
     const accessor = c.get('accessor');
@@ -48,6 +49,23 @@ export function studentRoutes(deps: UniDeps) {
       cohortId,
       generatedAt: new Date().toISOString(),
       courses,
+    };
+    return c.json(body);
+  });
+
+  /**
+   * What a verified applicant may see before being approved: the programme's identity only,
+   * enough to apply and nothing more. The academic rows, semesters and release state stay
+   * behind `requireProgrammeAccess`, so this cannot become a way to read the curriculum
+   * before admission.
+   */
+  app.get('/programmes', session, (c) => {
+    if (!c.get('principal').emailVerified) return c.json({ error: 'verification_required' }, 403);
+    const programme = deps.programme?.programme;
+    if (!programme) return c.json({ error: 'programme_unavailable' }, 503);
+    const body: ProgrammeCatalogue = {
+      schemaVersion: CONTRACT_VERSION,
+      programmes: [{ id: programme.id, name: programme.name, institution: programme.institution }],
     };
     return c.json(body);
   });

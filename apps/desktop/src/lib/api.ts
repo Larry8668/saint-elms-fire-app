@@ -5,6 +5,8 @@ import type {
   ConceptPage,
   CourseSummary,
   DeviceProfile,
+  DevicePollResult,
+  DeviceSignInStart,
   EngineLoginResponse,
   EngineMe,
   EngineSettings,
@@ -98,6 +100,13 @@ export const api = {
   login: (email: string, password: string) => post<EngineLoginResponse>('/api/auth/login', { email, password }),
   me: () => request<EngineMe>('/api/auth/me'),
   logout: () => post<void>('/api/auth/logout'),
+
+  /** First-time sign-in: the engine asks the university for a device grant to show. */
+  startDeviceSignIn: () => post<DeviceSignInStart>('/api/auth/device/start'),
+  /** One poll of the in-flight grant; repeat on the interval the server returned. */
+  pollDeviceSignIn: () => post<DevicePollResult>('/api/auth/device/poll'),
+  /** Offline entry for a profile that has already signed in online on this device. */
+  offlineLogin: (profileId: string) => post<Extract<EngineLoginResponse, { role: 'student' }>>('/api/auth/offline-login', { profileId }),
 
   settings: () => request<StoredSettings>('/api/settings'),
   saveSettings: (patch: Partial<StoredSettings>) => request<StoredSettings>('/api/settings', { method: 'PUT', body: JSON.stringify(patch) }),

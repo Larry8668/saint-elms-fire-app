@@ -115,6 +115,35 @@ const decide = (context: AuthContext, staffCookie: string, enrolmentId: string, 
     body: JSON.stringify({ schemaVersion: CONTRACT_VERSION, ...body }),
   });
 
+test('a verified applicant can list programmes but still cannot read the curriculum', testOptions, async () => {
+  await withAuthSchema(async (context) => {
+    const extra = await staticDeps();
+    mount(context.app, deps(context, extra));
+    const cookie = await signUpVerified(context, 'applicant@example.test', 'Applicant');
+
+    const list = await authed(context, '/v1/programmes', cookie);
+    assert.equal(list.status, 200);
+    const body = (await list.json()) as { programmes: Array<{ id: string; name: string; institution: string }> };
+    assert.equal(body.programmes.length, 1);
+    assert.equal(body.programmes[0]!.id, PROGRAMME_ID);
+    assert.ok(body.programmes[0]!.name.length > 0);
+    // Identity only: no rows, no semesters, no release state may leak before approval.
+    assert.deepEqual(Object.keys(body.programmes[0]!).sort(), ['id', 'institution', 'name']);
+
+    // The full manifest stays behind the approval gate for the same applicant.
+    const full = await authed(context, '/v1/programme', cookie);
+    assert.equal(full.status, 403);
+  });
+});
+
+test('an unauthenticated caller cannot list programmes', testOptions, async () => {
+  await withAuthSchema(async (context) => {
+    const extra = await staticDeps();
+    mount(context.app, deps(context, extra));
+    assert.equal((await context.app.request(`${context.origin}/v1/programmes`)).status, 401);
+  });
+});
+
 test('unauthenticated callers get 401 on every admission surface', testOptions, async () => {
   await withAuthSchema(async (context) => {
     const extra = await staticDeps();

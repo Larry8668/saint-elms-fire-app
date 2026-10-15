@@ -4,6 +4,7 @@ import { createContext, useCallback, useContext, useEffect, useMemo, useRef, use
 import { toast } from 'sonner';
 import { api, EngineError, streamChat } from '@/lib/api';
 import { log } from '@/lib/log';
+import { keys } from '@/lib/queries';
 
 /** One visible step of a teacher's work: a status update from the harness or a tool call. */
 export interface TraceStep {
@@ -171,7 +172,7 @@ export function ChatProvider({ profileId, children }: { profileId: string; child
             case 'done':
               patchMessage(teacher, assistantId, (m) => ({ ...m, content: event.text, pending: false, finishedAt: Date.now(), verification: event.verification }));
               active.set(teacher, thread.sessionId);
-              void queryClient.invalidateQueries({ queryKey: ['sessions', teacher] });
+              void queryClient.invalidateQueries({ queryKey: keys.scoped.sessions(profileId, teacher) });
               break;
             case 'error':
               log.warn('chat_error', { teacher, message: event.message });
@@ -231,7 +232,7 @@ export function ChatProvider({ profileId, children }: { profileId: string; child
         await api.deleteSession(sessionId);
         log.info('chat_session_deleted', { teacher, sessionId });
         if (threadsRef.current[teacher].sessionId === sessionId) reset(teacher);
-        await queryClient.invalidateQueries({ queryKey: ['sessions', teacher] });
+        await queryClient.invalidateQueries({ queryKey: keys.scoped.sessions(profileId, teacher) });
       } catch (error) {
         toast.error(error instanceof Error ? error.message : 'Could not delete that conversation.');
       }
