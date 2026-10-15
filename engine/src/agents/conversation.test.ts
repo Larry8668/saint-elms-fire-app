@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict';
-import { mkdtemp, rm } from 'node:fs/promises';
+import { mkdtemp, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { test } from 'node:test';
@@ -150,6 +150,53 @@ test('sessions survive a restart and stay bound to the student who opened them',
     assert.equal(admitted.session.turnCount, 1, 'the record came back off disk');
   } finally {
     await rm(dir, { recursive: true, force: true });
+  }
+});
+
+test('a turn whose record cannot be persisted does not count as replayed', async () => {
+  const good = await mkdtemp(path.join(tmpdir(), 'sef-conversations-good-'));
+  const bad = path.join(good, 'not-a-dir');
+  await writeFile(bad, 'x'); // a file where a directory is expected: writes under it fail with ENOTDIR
+  let dir = good;
+  let counter = 0;
+  const conversations = new ConversationRegistry({
+    dirFor: (profileId) => path.join(dir, profileId),
+    newId: () => `s-${++counter}`,
+  });
+  try {
+    const session = await conversations.open({ profileId: STUDENT, teacher: 'guide' });
+    const admitted = await conversations.admit({ sessionId: session.id, profileId: STUDENT, teacher: 'guide', clientMessageId: 'm-1' });
+    dir = bad;
+    await assert.rejects(() => conversations.complete(admitted));
+    dir = good;
+    const again = await conversations.admit({ sessionId: session.id, profileId: STUDENT, teacher: 'guide', clientMessageId: 'm-1' });
+    await conversations.complete(again);
+    assert.equal(conversations.get(STUDENT, session.id)?.turnCount, 1);
+  } finally {
+    await rm(good, { recursive: true, force: true });
+  }
+});
+
+test('a hand-off that cannot issue its successor leaves the old thread open', async () => {
+  const good = await mkdtemp(path.join(tmpdir(), 'sef-conversations-good-'));
+  const bad = path.join(good, 'not-a-dir');
+  await writeFile(bad, 'x');
+  let dir = good;
+  let counter = 0;
+  const conversations = new ConversationRegistry({
+    dirFor: (profileId) => path.join(dir, profileId),
+    newId: () => `s-${++counter}`,
+  });
+  try {
+    const session = await conversations.open({ profileId: STUDENT, teacher: 'guide' });
+    dir = bad;
+    await assert.rejects(() => conversations.handoff({ sessionId: session.id, profileId: STUDENT, to: 'friend', reason: 'campus question' }));
+    dir = good;
+    const admitted = await conversations.admit({ sessionId: session.id, profileId: STUDENT, teacher: 'guide', clientMessageId: 'm-2' });
+    await conversations.complete(admitted);
+    assert.equal(conversations.get(STUDENT, session.id)?.turnCount, 1);
+  } finally {
+    await rm(good, { recursive: true, force: true });
   }
 });
 

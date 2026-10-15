@@ -177,7 +177,7 @@ export async function runChatTurn(req: ChatRequest, deps: HarnessDeps, emit: (ev
   let text = '';
   for await (const chunk of stream.textStream) {
     text += chunk;
-    emit({ type: 'delta', text });
+    emit({ type: 'delta', text: chunk });
   }
   text = text.trim() || "I couldn't put an answer together just now. Could you rephrase that?";
 

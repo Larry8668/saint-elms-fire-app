@@ -59,6 +59,17 @@ function harness(reply: string, claims?: ClaimReader): Harness {
   return { deps, events, agentCalls: () => agents, webCalls: () => web, instructions: () => instructions.join('\n') };
 }
 
+test('delta events carry each new chunk, not the running total', async () => {
+  const h = harness('unused');
+  h.deps.makeAgent = ((_id: string, _prompt: string) => ({
+    stream: async () => ({ textStream: (async function* () { yield 'one '; yield 'two '; yield 'three'; })() }),
+  })) as unknown as HarnessDeps['makeAgent'];
+  await runChatTurn(turn({ teacher: 'guide', messages: [{ role: 'user', content: 'explain resonance' }] }), h.deps, (e) => h.events.push(e));
+  const deltas = h.events.filter((e) => e.type === 'delta').map((e) => (e.type === 'delta' ? e.text : ''));
+  assert.deepEqual(deltas, ['one ', 'two ', 'three']);
+  assert.equal(done(h.events).text, 'one two three');
+});
+
 const turn = (over: Partial<ChatRequest> & Pick<ChatRequest, 'teacher'>): ChatRequest => ({
   sessionId: 's-1',
   messages: [{ role: 'user', content: 'fees?' }],

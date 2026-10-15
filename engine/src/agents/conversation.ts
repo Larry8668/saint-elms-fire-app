@@ -1,7 +1,7 @@
 import { randomUUID } from 'node:crypto';
 import path from 'node:path';
 import type { ChatTurn, TeacherId, TurnRejection } from '@sef/shared';
-import { profilePaths } from '../config';
+import { errorFields, log, profilePaths } from '../config';
 import { readJson, writeJson } from '../lib/fs';
 import type { Session } from '../sessions/store';
 import { MAX_HISTORY_TURNS } from './messages';
@@ -161,18 +161,23 @@ export class ConversationRegistry {
     return { session, clientMessageId: input.clientMessageId };
   }
 
-  /** Records the turn as taken. Only then does its id count as a replay. */
+  /**
+   * Records the turn as taken. Only then does its id count as a replay. If the record cannot be
+   * persisted the in-memory mutation is rolled back, so a failed write never wedges the client:
+   * the same clientMessageId can be admitted again instead of reading as a replay of a turn that
+   * was never durably recorded.
+   */
   async complete(admitted: AdmittedTurn): Promise<ConversationRecord> {
     const session = admitted.session;
-    const at = this.now().toISOString();
+    const prior = { turnCount: session.turnCount, lastTurnAt: session.lastTurnAt, recentTurnIds: session.recentTurnIds };
     session.turnCount += 1;
-    session.lastTurnAt = at;
+    session.lastTurnAt = this.now().toISOString();
     session.recentTurnIds = [...session.recentTurnIds, admitted.clientMessageId].slice(-REPLAY_MEMORY);
     this.inFlight.delete(session.id);
     try {
       await this.persist(session);
     } catch (error) {
-      this.inFlight.delete(session.id);
+      Object.assign(session, prior);
       throw error;
     }
     return session;
@@ -192,11 +197,22 @@ export class ConversationRegistry {
     if (!previous) throw new ConversationRefused('unknown_session', refusalCopy('unknown_session'));
     if (previous.profileId !== input.profileId) throw new ConversationRefused('session_owner_mismatch', refusalCopy('session_owner_mismatch'));
     if (previous.teacher === input.to) throw new ConversationRefused('teacher_mismatch', refusalCopy('teacher_mismatch'));
-    const next = await this.open({ profileId: input.profileId, teacher: input.to });
+    // Closed is set before the first await so no turn can be admitted mid-hand-off; admit() only
+    // checks this field. If issuing the successor fails the thread is reopened rather than left dead.
     previous.closed = true;
-    previous.handedOffTo = { teacher: input.to, sessionId: next.id, reason: input.reason };
-    await this.persist(previous);
-    return next;
+    try {
+      const next = await this.open({ profileId: input.profileId, teacher: input.to });
+      previous.handedOffTo = { teacher: input.to, sessionId: next.id, reason: input.reason };
+      await this.persist(previous);
+      return next;
+    } catch (error) {
+      previous.closed = false;
+      delete previous.handedOffTo;
+      await this.persist(previous).catch((persistError) => {
+        log.warn('handoff_rollback_persist_failed', { sessionId: previous.id, ...errorFields(persistError) });
+      });
+      throw error;
+    }
   }
 
   /** Test and shutdown seam. */

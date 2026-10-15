@@ -148,7 +148,7 @@ export function buildTools(teacher: TeacherId, deps: ToolDeps, ctx: TurnContext)
 
 /** The claim block a teacher is allowed to see, filtered claim by claim. */
 export async function claimBlock(teacher: TeacherId, deps: Pick<ToolDeps, 'claims'>, ctx: TurnContext): Promise<string> {
-  const capability: CapabilityId = can(teacher, 'claim:wiki_claims') ? 'claim:wiki_claims' : 'context:student_brain';
+  const capability: CapabilityId = 'claim:wiki_claims';
   if (!can(teacher, capability)) {
     ctx.recordRefusal(capability);
     return 'WIKI CLAIMS: not available to this teacher.';
