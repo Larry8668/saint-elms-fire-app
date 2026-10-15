@@ -1,7 +1,8 @@
-import { Hono } from 'hono';
+import { Hono, type Context } from 'hono';
 import { streamSSE } from 'hono/streaming';
-import { TEACHER_IDS, type ChatRequest, type ChatStreamEvent, type TeacherId } from '@sef/shared';
+import { ConversationHandoffSchema, ConversationTurnSchema, TEACHER_IDS, type ChatRequest, type ChatStreamEvent, type TeacherId } from '@sef/shared';
 import { z } from 'zod';
+import { ConversationRefused, ConversationRegistry, refusalCopy, serverTranscript } from '../../agents/conversation';
 import { runChatTurn } from '../../agents/harness';
 import { errorFields, log } from '../../config';
 import { requireProfile, type EngineDeps, type EngineEnv } from '../context';
@@ -12,6 +13,7 @@ const AttachmentSchema = z.object({
   mimeType: z.string().regex(/^image\//),
   data: z.string().max(12_000_000),
   name: z.string().optional(),
+  altText: z.string().max(500).optional(),
 });
 
 const ChatRequestSchema = z.object({
@@ -23,8 +25,26 @@ const ChatRequestSchema = z.object({
     .max(40),
 });
 
+/** Which refusal gets which status. Every one of them is a refusal, none of them is a crash. */
+const REFUSAL_STATUS = {
+  unknown_session: 404,
+  session_owner_mismatch: 403,
+  teacher_mismatch: 409,
+  replayed_turn: 409,
+  concurrent_turn: 409,
+  session_closed: 409,
+  capability_denied: 403,
+  anchor_required: 409,
+} as const;
+
+function refuseResponse(c: Context<EngineEnv>, error: unknown, profileId: string) {
+  if (!(error instanceof ConversationRefused)) throw error;
+  log.warn('chat_turn_refused', { profileId, code: error.rejection });
+  return c.json({ error: refusalCopy(error.rejection), code: error.rejection }, REFUSAL_STATUS[error.rejection]);
+}
+
 /** Everything scoped to the signed-in student: courses, chat, brain, quizzes. */
-export function studentRoutes(deps: EngineDeps) {
+export function studentRoutes(deps: EngineDeps, conversations: ConversationRegistry = new ConversationRegistry({})) {
   const app = new Hono<EngineEnv>();
   const guard = requireProfile(deps, { approved: true });
 
@@ -84,13 +104,74 @@ export function studentRoutes(deps: EngineDeps) {
     if (!parsed.success) return c.json({ error: 'Invalid chat request', issues: parsed.error.issues }, 400);
     const req = parsed.data as ChatRequest;
     const ws = c.get('ws');
-    const harness = { settings: ws.settings, content: ws.content, brain: ws.brain, sessions: ws.sessions, studentName: ws.profile.name };
+    const harness = { settings: ws.settings, content: ws.content, brain: ws.brain, sessions: ws.sessions, studentName: ws.profile.name, claims: ws.wiki };
     return streamSSE(c, async (stream) => {
       const emit = (event: ChatStreamEvent) => void stream.writeSSE({ data: JSON.stringify(event) });
       try {
         await runChatTurn(req, harness, emit);
       } catch (error) {
         log.error('chat_turn_failed', { teacher: req.teacher, profileId: ws.profile.id, ...errorFields(error) });
+        emit({ type: 'error', message: friendlyError(error) });
+      }
+    });
+  });
+
+  /**
+   * Conversations the server issues, bound to this student and one teacher. The transcript lives
+   * in the server's session store, so a turn carries a message and a message id — never history.
+   */
+  app.post('/chat/sessions', guard, async (c) => {
+    const body = z.strictObject({ teacher: z.enum(TEACHER_IDS) }).safeParse(await c.req.json().catch(() => null));
+    if (!body.success) return c.json({ error: 'Choose a teacher to start a conversation', issues: body.error.issues }, 400);
+    const ws = c.get('ws');
+    const session = await conversations.open({ profileId: ws.profile.id, teacher: body.data.teacher });
+    log.info('conversation_opened', { profileId: ws.profile.id, teacher: session.teacher });
+    return c.json({ sessionId: session.id, teacher: session.teacher, profileId: session.profileId, createdAt: session.createdAt, turnCount: 0 });
+  });
+
+  /** An explicit hand-off: a new conversation for the new teacher, never an edited one. */
+  app.post('/chat/sessions/:id/handoff', guard, async (c) => {
+    const raw = await c.req.json().catch(() => null);
+    const body = ConversationHandoffSchema.safeParse({ ...(raw && typeof raw === 'object' ? raw : {}), sessionId: c.req.param('id') });
+    if (!body.success) return c.json({ error: 'A hand-off needs a teacher and a reason', issues: body.error.issues }, 400);
+    const ws = c.get('ws');
+    try {
+      const next = await conversations.handoff({ sessionId: body.data.sessionId, profileId: ws.profile.id, to: body.data.to, reason: body.data.reason });
+      return c.json({ sessionId: next.id, teacher: next.teacher, profileId: next.profileId, createdAt: next.createdAt, turnCount: 0 });
+    } catch (error) {
+      return refuseResponse(c, error, ws.profile.id);
+    }
+  });
+
+  app.post('/chat/turn', guard, async (c) => {
+    const parsed = ConversationTurnSchema.safeParse(await c.req.json().catch(() => null));
+    if (!parsed.success) return c.json({ error: 'Invalid turn', issues: parsed.error.issues }, 400);
+    const turn = parsed.data;
+    const ws = c.get('ws');
+
+    let admitted;
+    try {
+      admitted = await conversations.admit({ sessionId: turn.sessionId, profileId: ws.profile.id, teacher: turn.teacher, clientMessageId: turn.clientMessageId });
+    } catch (error) {
+      return refuseResponse(c, error, ws.profile.id);
+    }
+
+    const stored = await ws.sessions.get(turn.sessionId);
+    const req: ChatRequest = {
+      teacher: turn.teacher,
+      sessionId: turn.sessionId,
+      messages: serverTranscript(stored, { role: 'user', content: turn.message, attachments: turn.attachments }),
+      consent: turn.consent,
+    };
+    const harness = { settings: ws.settings, content: ws.content, brain: ws.brain, sessions: ws.sessions, studentName: ws.profile.name, claims: ws.wiki };
+    return streamSSE(c, async (stream) => {
+      const emit = (event: ChatStreamEvent) => void stream.writeSSE({ data: JSON.stringify(event) });
+      try {
+        await runChatTurn(req, harness, emit);
+        await conversations.complete(admitted);
+      } catch (error) {
+        conversations.release(turn.sessionId);
+        log.error('chat_turn_failed', { teacher: turn.teacher, profileId: ws.profile.id, sessionId: turn.sessionId, ...errorFields(error) });
         emit({ type: 'error', message: friendlyError(error) });
       }
     });

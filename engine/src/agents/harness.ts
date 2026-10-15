@@ -1,4 +1,5 @@
-import { conceptKey, TEACHERS, type ChatRequest, type ChatStreamEvent, type SourceRef, type Verification, type VerificationCheck } from '@sef/shared';
+import { can, conceptKey, TEACHERS, teacherPolicy, type CapabilityId, type ChatRequest, type ChatStreamEvent, type SourceRef, type Verification, type VerificationCheck } from '@sef/shared';
+import type { ClaimReader } from '../brain/claim-evidence';
 import type { BrainService } from '../brain/service';
 import { errorFields, log } from '../config';
 import { searchLessons, type LessonHit } from '../content/search';
@@ -7,13 +8,14 @@ import { resolveModel, type ResolvedModel } from '../models/registry';
 import type { SessionStore } from '../sessions/store';
 import type { SettingsReader } from '../settings/store';
 import { webSearch, type WebResult } from '../web/searxng';
+import { ANCHOR_FAILURE_COPY, unresolvableAnchors, type AnchorResolver, type AnchorTarget } from './anchor';
 import { attributeLessons } from './attribution';
 import { TurnContext } from './context';
 import { makeAgent } from './factory';
-import { ACADEMIC_REDIRECT, classifyFriendLane, PRIVACY_REFUSAL } from './lanes';
+import { ACADEMIC_REDIRECT, classifyFriendInput, declaredAttachmentText, extractedTextLane, PRIVACY_REFUSAL } from './lanes';
 import { toModelMessages } from './messages';
 import { teacherInstructions } from './prompts';
-import { buildTools } from './tools';
+import { buildTools, claimBlock } from './tools';
 import { checkGrounding, checkPhilosopherFormat, repairPhilosopherFormat } from './validators';
 
 export interface HarnessDeps {
@@ -22,9 +24,23 @@ export interface HarnessDeps {
   brain: BrainService;
   sessions: SessionStore;
   studentName: string;
+  /** The student's wiki, so wiki claims can be filtered claim by claim. */
+  claims?: ClaimReader;
+  /** Defaults to the seam that resolves nothing: the Philosopher fails closed until PR-21. */
+  anchors?: AnchorResolver;
+  /** Committed, course-linked pages the anchor resolver may choose from. */
+  committedAnchors?: Map<string, AnchorTarget>;
+  /** Injectable so tests can prove a refusal happened before any model was built. */
+  makeAgent?: typeof makeAgent;
+  /** Injectable so tests can prove no web call was made on a refused turn. */
+  searchWeb?: typeof webSearch;
 }
 
 const MAX_STEPS = 4;
+
+export function anchorRefusal(reason: keyof typeof ANCHOR_FAILURE_COPY): string {
+  return `${ANCHOR_FAILURE_COPY[reason]} I won't invent a starting point: take it to the Guide, or write the idea into your own wiki and I can explore from there.`;
+}
 
 function lessonBlock(title: string, hits: LessonHit[]): string {
   if (!hits.length) return `${title}: none matched this question.`;
@@ -37,25 +53,40 @@ function webBlock(results: WebResult[] | null): string {
   return `WEB RESULTS:\n${results.map((r, i) => `${i + 1}. ${r.title} — ${r.url}\n${r.snippet}`).join('\n')}`;
 }
 
+function capabilityChecks(denied: CapabilityId[]): VerificationCheck[] {
+  return [
+    {
+      id: 'capabilities',
+      label: 'Reached only what this teacher’s policy declares',
+      passed: true,
+      detail: denied.length ? `refused and recorded: ${denied.join(', ')}` : undefined,
+    },
+  ];
+}
+
 /**
- * One chat turn, end to end. Deterministic steps (lanes, retrieval, validation)
+ * One chat turn, end to end. Deterministic steps (policy, lanes, anchors, retrieval, validation)
  * wrap the model so the teachers' contracts hold regardless of which model is plugged in.
+ *
+ * Order is the safety property. Policy, capability and lane refusals are decided synchronously
+ * before the first await, so nothing reaches a model — and no image bytes are handed to one —
+ * until the deterministic checks have passed.
  */
 export async function runChatTurn(req: ChatRequest, deps: HarnessDeps, emit: (event: ChatStreamEvent) => void): Promise<void> {
   const started = Date.now();
   const ctx = new TurnContext(emit);
-  const settings = await deps.settings.get();
   const latest = req.messages.at(-1);
   if (!latest || latest.role !== 'user') throw new Error('Last message must be from the user');
   const question = latest.content.trim();
-  const hasImage = Boolean(latest.attachments?.length);
+  const attachments = latest.attachments ?? [];
+  const hasImage = attachments.length > 0;
 
   const finish = async (text: string, resolved: ResolvedModel | null, checks: VerificationCheck[], lane?: Verification['lane'], sources: SourceRef[] = [...ctx.sources.values()]) => {
     const verification: Verification = {
       model: resolved?.modelId ?? 'rules',
       provider: resolved?.provider.label ?? 'Deterministic lane check',
       sources,
-      checks,
+      checks: [...capabilityChecks(ctx.denied), ...checks],
       toolCalls: ctx.toolCalls,
       handoff: ctx.handoff,
       lane,
@@ -65,21 +96,44 @@ export async function runChatTurn(req: ChatRequest, deps: HarnessDeps, emit: (ev
     log.info('chat_turn_done', { teacher: req.teacher, ms: Date.now() - started, sources: verification.sources.length, tools: ctx.toolCalls.length, lane });
   };
 
-  // Friend: deterministic boundaries before any model call.
-  if (req.teacher === 'friend' && !hasImage) {
-    const lane = classifyFriendLane(question);
-    if (lane === 'privacy') return finish(PRIVACY_REFUSAL, null, [{ id: 'privacy', label: 'Privacy rule applied before the model', passed: true }], 'refused');
+  // 1. Attachments are a declared capability, not something every teacher quietly accepts.
+  if (hasImage && !can(req.teacher, 'attachment:image')) {
+    ctx.recordRefusal('attachment:image');
+    return finish(`${TEACHERS[req.teacher].name} cannot open images. Send that to the Guide, who works from your lessons and your notes.`, null, [{ id: 'attachment', label: 'Image attachment refused by policy', passed: true, detail: 'attachment:image not declared' }], 'refused');
+  }
+
+  // 2. Friend: deterministic boundaries, over the typed text *and* the text standing next to any
+  //    image, before the bytes are ever handed over.
+  if (req.teacher === 'friend') {
+    const lane = classifyFriendInput({ text: question, attachmentText: declaredAttachmentText(attachments) });
+    if (lane === 'privacy') return finish(PRIVACY_REFUSAL, null, [{ id: 'privacy', label: 'Privacy rule applied before the model', passed: true, detail: hasImage ? 'Image attachment checked too' : undefined }], 'refused');
     if (lane === 'academic') {
       ctx.handoff = { to: 'guide', reason: 'Academic question' };
-      return finish(ACADEMIC_REDIRECT, null, [{ id: 'lane', label: 'Routed by lane check, no model call', passed: true }], 'redirected');
+      return finish(ACADEMIC_REDIRECT, null, [{ id: 'lane', label: 'Routed by lane check, no model call', passed: true, detail: hasImage ? 'Image attachment checked too' : undefined }], 'redirected');
+    }
+  }
+
+  // 3. Anchor seam. A teacher that cannot prove where it starts says so; it does not improvise.
+  const policy = teacherPolicy(req.teacher);
+  if (policy.anchor !== 'none') {
+    const resolution = await (deps.anchors ?? unresolvableAnchors).resolve({
+      teacher: req.teacher,
+      anchorPageId: req.anchorPageId,
+      syllabusConceptKey: req.syllabusConceptKey,
+      committed: deps.committedAnchors ?? new Map(),
+    });
+    if (!resolution.ok) {
+      log.warn('exploration_anchor_required', { teacher: req.teacher, reason: resolution.reason });
+      return finish(anchorRefusal(resolution.reason), null, [{ id: 'anchor', label: 'Refused without a committed wiki anchor', passed: true, detail: resolution.reason }], 'refused');
     }
   }
 
   // Context assembly: retrieval happens up front so even models weak at tool use stay grounded.
   ctx.status('Reading your lessons…');
-  const pool = req.teacher === 'friend' ? await deps.content.supportLessons() : await deps.content.academicLessons();
+  const pool = can(req.teacher, 'lesson:support_pool') ? await deps.content.supportLessons() : await deps.content.academicLessons();
   const hits = searchLessons(pool, question, 3);
-  for (const h of hits) ctx.addSource({ kind: req.teacher === 'friend' ? 'support' : 'lesson', id: h.lesson.id, title: h.lesson.title });
+  const sourceKind = can(req.teacher, 'lesson:support_pool') ? 'support' : 'lesson';
+  for (const h of hits) ctx.addSource({ kind: sourceKind, id: h.lesson.id, title: h.lesson.title });
 
   const blocks: string[] = [];
   if (req.teacher === 'friend') {
@@ -87,14 +141,16 @@ export async function runChatTurn(req: ChatRequest, deps: HarnessDeps, emit: (ev
   } else {
     blocks.push(lessonBlock('RELEASED LESSONS', hits));
     const keys = hits.flatMap((h) => h.lesson.concepts.map(conceptKey));
-    blocks.push(await deps.brain.contextFor(keys));
+    if (can(req.teacher, 'context:student_brain')) blocks.push(await deps.brain.contextFor(keys));
+    if (can(req.teacher, 'claim:wiki_claims')) blocks.push(await claimBlock(req.teacher, { claims: deps.claims }, ctx));
   }
 
   let webResults: WebResult[] | null = null;
-  if (req.teacher === 'philosopher') {
+  const webConsented = req.consent?.web === true;
+  if (can(req.teacher, 'tool:web_search') && policy.web === 'explicit_consent' && webConsented) {
     ctx.status('Searching the web…');
     try {
-      webResults = await webSearch(settings.searxngUrl, question, 4);
+      webResults = await (deps.searchWeb ?? webSearch)((await deps.settings.get()).searxngUrl, question, 4);
       ctx.recordTool('web_search', `"${question.slice(0, 60)}" → ${webResults.length} results`);
       for (const r of webResults) ctx.addSource({ kind: 'web', id: r.url, title: r.title, url: r.url });
     } catch (error) {
@@ -104,9 +160,11 @@ export async function runChatTurn(req: ChatRequest, deps: HarnessDeps, emit: (ev
     blocks.push(webBlock(webResults));
   }
 
+  const settings = await deps.settings.get();
   const resolved = resolveModel(settings, hasImage ? 'vision' : 'tutor');
   const instructions = `${teacherInstructions(req.teacher, deps.studentName)}\n\n---\n${blocks.join('\n\n')}`;
-  const agent = makeAgent(req.teacher, instructions, resolved, buildTools(req.teacher, { content: deps.content, brain: deps.brain, searxngUrl: settings.searxngUrl }, ctx));
+  const build = deps.makeAgent ?? makeAgent;
+  const agent = build(req.teacher, instructions, resolved, buildTools(req.teacher, { content: deps.content, brain: deps.brain, searxngUrl: settings.searxngUrl, claims: deps.claims, webConsented }, ctx));
 
   ctx.status(`${TEACHERS[req.teacher].name} is thinking…`);
   const prompt = hasImage && !question ? 'What is in this image, and how does it connect to my lessons?' : question;
@@ -119,9 +177,16 @@ export async function runChatTurn(req: ChatRequest, deps: HarnessDeps, emit: (ev
   let text = '';
   for await (const chunk of stream.textStream) {
     text += chunk;
-    emit({ type: 'delta', text: chunk });
+    emit({ type: 'delta', text });
   }
   text = text.trim() || "I couldn't put an answer together just now. Could you rephrase that?";
+
+  // 4. What the model read out of an image is untrusted input. Re-classified, and never served
+  //    if it reads out someone else's details.
+  if (req.teacher === 'friend' && hasImage && extractedTextLane(text) === 'privacy') {
+    log.warn('friend_image_text_refused', { sessionId: req.sessionId });
+    return finish(PRIVACY_REFUSAL, resolved, [{ id: 'privacy', label: 'Text extracted from the image refused by the privacy rule', passed: true }], 'refused');
+  }
 
   const sources = await attributeSources(text, question, [...ctx.sources.values()], deps.content);
   const citedLessons = sources.filter((s) => (s.kind === 'lesson' || s.kind === 'support') && s.cited).length;
@@ -134,7 +199,7 @@ export async function runChatTurn(req: ChatRequest, deps: HarnessDeps, emit: (ev
       format = checkPhilosopherFormat(text).map((c) => ({ ...c, detail: c.passed ? 'Repaired by validator' : c.detail }));
     }
     checks.push(...format);
-    checks.push({ id: 'web', label: 'Web search reachable', passed: webResults !== null, detail: webResults ? `${webResults.length} results` : 'offline' });
+    checks.push({ id: 'web', label: 'Web search reachable', passed: webResults !== null, detail: webResults ? `${webResults.length} results` : 'not consented this turn' });
   } else {
     checks.push(checkGrounding(citedLessons, text, ctx.lessonIds.size));
     checks.push({ id: 'released-only', label: 'Only released lessons were searched', passed: true, detail: 'Unreleased lessons are never on this device' });

@@ -9,6 +9,11 @@ export interface ChatAttachment {
   /** Base64 without the data: prefix. */
   data: string;
   name?: string;
+  /**
+   * Text the client says describes the image. Untrusted input: it is classified by the same
+   * privacy check as a typed message and never widens what a teacher may reach.
+   */
+  altText?: string;
 }
 
 export interface ChatTurn {
@@ -21,6 +26,12 @@ export interface ChatRequest {
   teacher: TeacherId;
   sessionId: string;
   messages: ChatTurn[];
+  /** Per-turn consent. The Philosopher reaches the web only with it, never by default. */
+  consent?: { web: boolean };
+  /** Page the Philosopher is asked to explore from. Unverified until the anchor seam resolves it. */
+  anchorPageId?: string;
+  /** A released syllabus concept offered as a starting point. Never an anchor on its own. */
+  syllabusConceptKey?: string;
 }
 
 export interface SourceRef {

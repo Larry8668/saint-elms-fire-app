@@ -1,5 +1,9 @@
+import { z } from 'zod';
+
 export const TEACHER_IDS = ['friend', 'guide', 'philosopher'] as const;
 export type TeacherId = (typeof TEACHER_IDS)[number];
+/** The one place a teacher id is shaped, so schemas cannot drift on a member list. */
+export const TeacherIdSchema = z.enum(TEACHER_IDS);
 
 export interface TeacherProfile {
   id: TeacherId;
