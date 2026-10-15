@@ -41,6 +41,7 @@ function toRow(data: AdminStudentRowData): AdminStudentRow {
     legalName: data.profile.legal_name,
     preferredName: data.profile.preferred_name,
     status: data.profile.status,
+    version: data.profile.version,
     enrolment: data.enrolment ? rowToEnrolment(data.enrolment) : null,
     createdAt: data.profile.created_at.toISOString(),
   };
