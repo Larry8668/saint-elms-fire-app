@@ -5,6 +5,7 @@ import type { UniDeps } from './deps';
 import { errorFields, log } from './logger';
 import { adminRoutes } from './routes/admin';
 import { authRoutes } from './routes/auth';
+import { magicLinkConfirm } from './routes/account';
 import { studentRoutes } from './routes/student';
 
 export type { UniDeps } from './deps';
@@ -33,6 +34,14 @@ export function createApp(deps: UniDeps) {
   app.get('/v1/cohorts', (c) => c.json(deps.releases.cohorts().map(({ id, name }) => ({ id, name }))));
 
   app.route('/v1/auth', authRoutes(deps));
+  if (deps.accountAuth) {
+    // Deliberate confirmation hop for magic links; registered ahead of the catch-all below.
+    app.get('/v1/auth/magic-link/confirm', magicLinkConfirm);
+    app.all('/v1/auth/*', (c) => deps.accountAuth!.handler(c.req.raw));
+  } else {
+    // Fail closed: account endpoints stay unavailable until a database is configured.
+    app.all('/v1/auth/*', (c) => c.json({ error: 'account_auth_unavailable' }, 503));
+  }
   app.route('/v1/admin', adminRoutes(deps));
   app.route('/v1', studentRoutes(deps));
 

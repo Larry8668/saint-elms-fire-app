@@ -6,6 +6,7 @@ import { test } from 'node:test';
 import { CONTRACT_VERSION, ProgrammeSchema, type CourseAvailability, type Programme } from '@sef/shared';
 import { hashPassword, signToken, TokenError, verifyPassword, verifyToken } from '@sef/shared/node';
 import { createApp } from './app';
+import type { AccountAuth } from './account-auth';
 import { config } from './config';
 import type { CoursewareIndex, ProgrammeManifestResult } from './courseware';
 import { loadSigningKeys } from './signing';
@@ -21,7 +22,7 @@ const course = (id: string, semesterNumber: number) => ({
   lessons: [],
 });
 
-async function harness() {
+async function harness(opts: { accountAuth?: AccountAuth | null } = {}) {
   const dir = await mkdtemp(path.join(tmpdir(), 'sef-uni-'));
   const seed = path.join(dir, 'releases.seed.json');
   await writeFile(
@@ -91,7 +92,7 @@ async function harness() {
   const shares = new ShareStore(dir);
   const keys = await loadSigningKeys(path.join(dir, 'keys'));
   await Promise.all([releases.load(), accounts.load(), audit.load(), dispersal.load(), shares.load()]);
-  const app = createApp({ courseware, programme: programmeResult, availability, releases, accounts, audit, dispersal, shares, keys });
+  const app = createApp({ courseware, programme: programmeResult, availability, releases, accounts, audit, dispersal, shares, keys, accountAuth: opts.accountAuth });
 
   const login = async (email: string) => {
     const res = await app.request('/v1/auth/login', {
@@ -198,4 +199,57 @@ test('admin release toggles change what a cohort can download', async () => {
 
   const audit = (await (await get('/v1/admin/audit', admin)).json()) as { action: string }[];
   assert.ok(audit.some((e) => e.action === 'courses_released'));
+});
+
+test('account endpoints fail closed while no database is configured', async () => {
+  const { app } = await harness();
+  const res = await app.request('/v1/auth/sign-up/email', {
+    method: 'POST',
+    headers: { 'content-type': 'application/json', origin: 'http://localhost:4200' },
+    body: JSON.stringify({ email: 'x@y.z', password: 'long-enough-password', name: 'X' }),
+  });
+  assert.equal(res.status, 503);
+  assert.deepEqual(await res.json(), { error: 'account_auth_unavailable' });
+});
+
+test('a session cookie cannot substitute for bearer-token authorization', async () => {
+  const { app } = await harness();
+  const res = await app.request('/v1/admin/overview', {
+    headers: { cookie: 'better-auth.session_token=forged-cookie-value' },
+  });
+  assert.equal(res.status, 401);
+});
+
+const stubAccountAuth: AccountAuth = {
+  handler: async (request: Request) =>
+    new Response(JSON.stringify({ stubPath: new URL(request.url).pathname }), {
+      status: 200,
+      headers: { 'content-type': 'application/json' },
+    }),
+  storage: {} as AccountAuth['storage'],
+};
+
+test('account routes delegate behind the confirmation hop without disturbing login routes', async () => {
+  const { app } = await harness({ accountAuth: stubAccountAuth });
+
+  const confirm = await app.request('/v1/auth/magic-link/confirm?token=abc123&callbackURL=%2F');
+  assert.equal(confirm.status, 200);
+  const html = await confirm.text();
+  assert.ok(html.includes('/v1/auth/magic-link/verify?token=abc123'));
+  assert.ok(html.includes('noindex'));
+
+  const signUp = await app.request('/v1/auth/sign-up/email', {
+    method: 'POST',
+    headers: { 'content-type': 'application/json', origin: 'http://localhost:4200' },
+    body: JSON.stringify({}),
+  });
+  assert.equal(signUp.status, 200);
+  assert.deepEqual(await signUp.json(), { stubPath: '/v1/auth/sign-up/email' });
+
+  const login = await app.request('/v1/auth/login', {
+    method: 'POST',
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify({ email: 'nobody@saintelms.local', password: 'wrong-password' }),
+  });
+  assert.equal(login.status, 401);
 });

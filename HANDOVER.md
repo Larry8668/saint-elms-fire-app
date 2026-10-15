@@ -124,6 +124,7 @@ The sign-in screen deliberately shows no names. Type an email, or open **Explori
 - **Engine sessions** last `ENGINE_SESSION_HOURS` (14 days by default). A 401 from the engine logs the UI out.
 - **The uni token** lasts `STUDENT_TOKEN_HOURS` (30 days) so devices can sync after weeks offline. If it expires, the Library shows a "sign in while online" prompt; studying still works.
 - **Registrar:** the UI talks to the uni server directly with a short-lived admin token (`ADMIN_TOKEN_HOURS`). Every admin write goes to `audit.jsonl`.
+- **Account endpoints (PR-04):** with `UNI_DATABASE_URL` set and migrations applied (`pnpm --filter @sef/uni-server db:migrate`), the uni server mounts better-auth under `/v1/auth/*`: email/password with required verification, magic links, password recovery and session revocation. Registration grants no admission or staff privilege. Magic links expire in 15 minutes, are stored hashed, consumed atomically, and the emailed link opens a confirmation page (`/v1/auth/magic-link/confirm`) so mail scanners cannot burn the token. Real SMTP is required in production; in development, start Mailpit (`docker compose --profile mail up -d mailpit`, UI at http://127.0.0.1:8025) or set `MAIL_SMTP_URL`. Without a database these endpoints answer 503 and the token login above is unaffected.
 
 ## 7. Common tasks
 

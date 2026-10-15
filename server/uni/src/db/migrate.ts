@@ -25,6 +25,11 @@ const migrations: MigrationSource[] = [
     name: 'university_persistence',
     url: new URL('./migrations/001_university_persistence.sql', import.meta.url),
   },
+  {
+    version: 2,
+    name: 'better_auth',
+    url: new URL('./migrations/002_better_auth.sql', import.meta.url),
+  },
 ];
 
 export interface MigrationResult {

@@ -43,6 +43,10 @@ services:
       COURSEWARE_DIR: /courseware
       KEYS_DIR: /data/keys
       UNI_DATA_DIR: /data
+      UNI_PUBLIC_URL: ${UNI_PUBLIC_URL:-http://localhost:4200}
+      UNI_TRUSTED_ORIGINS: ${UNI_TRUSTED_ORIGINS:-}
+      BETTER_AUTH_SECRET: ${BETTER_AUTH_SECRET:-saint-elms-compose-dev-only-secret-000000}
+      MAIL_SMTP_URL: ${MAIL_SMTP_URL:-smtp://mailpit:1025}
       UNI_DATABASE_URL: postgresql://sef:${UNI_DB_PASSWORD:-sef-uni-local-dev-only}@postgres:5432/sef_uni
     volumes:
       - ./courseware:/courseware:ro
@@ -56,6 +60,14 @@ services:
     depends_on:
       postgres: { condition: service_healthy }
     networks: [default, uni-db]
+
+  mailpit:
+    # Development-only loopback mail catcher: `docker compose --profile mail up -d mailpit`.
+    # Account emails fail unless a real MAIL_SMTP_URL is configured; starts nothing by default.
+    image: axllent/mailpit:latest
+    profiles: ["mail"]
+    restart: unless-stopped
+    ports: ["127.0.0.1:8025:8025", "127.0.0.1:1025:1025"]
 
   searxng:
     image: searxng/searxng:latest

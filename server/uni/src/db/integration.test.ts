@@ -51,21 +51,27 @@ async function expectSqlState(operation: Promise<unknown>, code: string): Promis
 test('migrates an empty schema and creates the five persistence tables', testOptions, async () => {
   await withTestSchema(async (pool) => {
     const result = await migrateDatabase(pool);
-    assert.deepEqual(result.appliedVersions, [1]);
-    assert.equal(result.currentVersion, 1);
+    assert.deepEqual(result.appliedVersions, [1, 2]);
+    assert.equal(result.currentVersion, 2);
 
     const tables = await pool.query<{ table_name: string }>(
       `SELECT table_name FROM information_schema.tables
        WHERE table_schema = current_schema() ORDER BY table_name`,
     );
-    assert.deepEqual(tables.rows.map((row) => row.table_name), [
+    assert.deepEqual(new Set(tables.rows.map((row) => row.table_name)), new Set([
+      'account',
       'audit_events',
+      'auth_kv',
       'course_selections',
+      'deviceCode',
       'enrolments',
       'schema_migrations',
+      'session',
       'staff_memberships',
       'student_profiles',
-    ]);
+      'twoFactor',
+      'user',
+    ]));
   });
 });
 
@@ -73,9 +79,9 @@ test('migration runs are repeatable and preserve the applied checksum', testOpti
   await withTestSchema(async (pool) => {
     const first = await migrateDatabase(pool);
     const second = await migrateDatabase(pool);
-    assert.deepEqual(first.appliedVersions, [1]);
+    assert.deepEqual(first.appliedVersions, [1, 2]);
     assert.deepEqual(second.appliedVersions, []);
-    assert.equal(second.currentVersion, 1);
+    assert.equal(second.currentVersion, 2);
   });
 });
 
