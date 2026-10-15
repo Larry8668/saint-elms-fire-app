@@ -1,0 +1,18 @@
+# Disposable PostgreSQL only for `pnpm --filter @sef/uni-server db:test:integration`.
+# It has no persistent volume and binds its dynamic host port to loopback only.
+services:
+  uni-db-test:
+    image: postgres:17-alpine
+    environment:
+      POSTGRES_DB: sef_uni_test
+      POSTGRES_USER: sef_test
+      POSTGRES_PASSWORD: ${UNI_TEST_DB_PASSWORD:?The isolated test runner must generate a password}
+    ports:
+      - "127.0.0.1:${UNI_TEST_DB_PORT:?The isolated test runner must select a port}:5432"
+    tmpfs:
+      - /var/lib/postgresql/data:rw,noexec,nosuid,size=256m
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U sef_test -d sef_uni_test"]
+      interval: 2s
+      timeout: 3s
+      retries: 30

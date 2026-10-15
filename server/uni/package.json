@@ -8,17 +8,23 @@
     "start": "tsx src/index.ts",
     "keys": "tsx src/scripts/print-public-key.ts",
     "typecheck": "tsc --noEmit -p .",
-    "test": "node --test --import tsx 'src/**/*.test.ts'"
+    "test": "node --test --import tsx 'src/**/*.test.ts'",
+    "db:migrate": "tsx src/scripts/db-migrate.ts",
+    "db:status": "tsx src/scripts/db-status.ts",
+    "db:check": "tsx src/scripts/db-check.ts",
+    "db:test:integration": "node scripts/run-db-integration-tests.mjs"
   },
   "dependencies": {
     "@hono/node-server": "^1.19.5",
     "@sef/shared": "workspace:*",
     "hono": "^4.10.1",
+    "pg": "8.23.1",
     "yaml": "^2.8.1",
     "zod": "^4.1.12"
   },
   "devDependencies": {
     "@types/node": "^24.7.0",
+    "@types/pg": "8.23.1",
     "tsx": "^4.20.6",
     "typescript": "^5.9.3"
   }
