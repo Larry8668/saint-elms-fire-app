@@ -95,3 +95,21 @@ export const CourseAvailabilitySchema = z.strictObject({
   selection: z.enum(['required', 'selected', 'not_selected', 'not_applicable']),
 });
 export type CourseAvailability = z.infer<typeof CourseAvailabilitySchema>;
+
+/**
+ * Programme identity only, for a verified applicant who has not been approved yet. It
+ * carries no rows, semesters or release state, so it is not a way to read the curriculum
+ * before admission.
+ */
+export const ProgrammeSummarySchema = z.strictObject({
+  id: IdentifierSchema,
+  name: z.string().trim().min(1).max(200),
+  institution: z.string().trim().min(1).max(200),
+});
+export type ProgrammeSummary = z.infer<typeof ProgrammeSummarySchema>;
+
+export const ProgrammeCatalogueSchema = z.strictObject({
+  schemaVersion: ContractVersionSchema,
+  programmes: z.array(ProgrammeSummarySchema),
+});
+export type ProgrammeCatalogue = z.infer<typeof ProgrammeCatalogueSchema>;

@@ -29,6 +29,8 @@ export const config = {
   adminTokenHours: Number(env('ADMIN_TOKEN_HOURS', '12')),
   /** Public origin of this server, used for account links and trusted-origin checks. */
   publicUrl: env('UNI_PUBLIC_URL', 'http://localhost:4200'),
+  /** Built onboarding/admin assets served from `/app`. Absent until the portal is built. */
+  portalDir: env('UNI_PORTAL_DIR', path.join(serverRoot, '../../apps/desktop/dist-portal')),
   /** Additional origins accepted for account redirects (comma-separated). */
   extraTrustedOrigins: env('UNI_TRUSTED_ORIGINS', '')
     .split(',')

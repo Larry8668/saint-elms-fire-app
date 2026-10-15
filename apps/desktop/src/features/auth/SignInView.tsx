@@ -1,15 +1,16 @@
 import { DEMO_ADMIN, DEMO_PASSWORD_DEFAULT, DEMO_PERSONAS, TEACHER_IDS, TEACHERS } from '@sef/shared';
 import { ChevronDown, GraduationCap, HardDrive, Landmark, ServerCrash, ShieldCheck, Sparkles, WifiOff } from 'lucide-react';
 import { AnimatePresence, motion } from 'motion/react';
-import { useRef, useState, type FormEvent } from 'react';
+import { useRef, useState } from 'react';
 import { Button } from '@/components/ui/button';
-import { EmptyState, Input, Label } from '@/components/ui/primitives';
+import { EmptyState } from '@/components/ui/primitives';
 import { TEACHER_LOOK } from '@/features/teachers/teacher-meta';
 import { EngineError } from '@/lib/api';
 import { cn } from '@/lib/cn';
 import { DEMO_MODE } from '@/lib/demo';
 import { useHealth } from '@/lib/queries';
 import { useSession } from '@/lib/session';
+import { DeviceSignInCard } from './DeviceSignInCard';
 
 const YEAR_LABEL = ['First-year', 'Second-year', 'Third-year'];
 
@@ -44,7 +45,10 @@ export function SignInView() {
               action={<Button onClick={() => void health.refetch()}>Try again</Button>}
             />
           ) : (
-            <SignInForm uniOffline={uniOffline} />
+            <>
+              <DeviceSignInCard uniOffline={uniOffline} />
+              {DEMO_MODE && <DemoAccounts />}
+            </>
           )}
         </section>
       </div>
@@ -89,74 +93,24 @@ function Pitch() {
   );
 }
 
-function SignInForm({ uniOffline }: { uniOffline: boolean }) {
+function DemoAccounts() {
   const { signIn } = useSession();
-  const [email, setEmail] = useState('');
-  const [password, setPassword] = useState('');
+  const [open, setOpen] = useState(false);
+  const [busy, setBusy] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
-  const [pending, setPending] = useState(false);
-  const passwordRef = useRef<HTMLInputElement>(null);
 
-  const submit = async (e: FormEvent) => {
-    e.preventDefault();
-    setPending(true);
+  /** Demo personas live in the engine, not the university, so they sign in the legacy way. */
+  const enter = async (email: string) => {
+    setBusy(email);
     setError(null);
     try {
-      await signIn(email.trim(), password);
+      await signIn(email, DEMO_PASSWORD_DEFAULT);
     } catch (err) {
       setError(err instanceof EngineError ? err.message : 'Sign-in failed. Try again.');
-    } finally {
-      setPending(false);
+      setBusy(null);
     }
   };
 
-  const fillDemo = (demoEmail: string) => {
-    setEmail(demoEmail);
-    setPassword(DEMO_PASSWORD_DEFAULT);
-    setError(null);
-    passwordRef.current?.focus();
-  };
-
-  return (
-    <form onSubmit={submit} className="space-y-4">
-      <div>
-        <h2 className="font-display text-3xl text-night-100">Sign in</h2>
-        <p className="mt-1 text-[13px] text-night-400">Use your university account. Students and the registrar sign in here.</p>
-      </div>
-
-      {uniOffline && (
-        <div className="flex gap-2.5 rounded-xl border border-ember-400/25 bg-ember-500/[0.08] p-3 text-[12.5px] leading-5 text-ember-300">
-          <WifiOff className="mt-0.5 size-3.5 shrink-0" />
-          <span>You're offline. Students who have signed in on this device before can still sign in; the registrar desk needs the university.</span>
-        </div>
-      )}
-
-      <div>
-        <Label htmlFor="email">Email</Label>
-        <Input id="email" type="email" autoComplete="username" placeholder="you@saintelms.local" value={email} onChange={(e) => setEmail(e.target.value)} autoFocus required />
-      </div>
-      <div>
-        <Label htmlFor="password">Password</Label>
-        <Input ref={passwordRef} id="password" type="password" autoComplete="current-password" value={password} onChange={(e) => setPassword(e.target.value)} required />
-      </div>
-
-      {error && (
-        <p role="alert" className="rounded-xl border border-rose-400/25 bg-rose-400/10 p-3 text-[13px] text-rose-400">
-          {error}
-        </p>
-      )}
-
-      <Button type="submit" variant="primary" size="lg" className="w-full" loading={pending}>
-        Sign in
-      </Button>
-
-      {DEMO_MODE && <DemoAccounts onPick={fillDemo} selected={email} />}
-    </form>
-  );
-}
-
-function DemoAccounts({ onPick, selected }: { onPick: (email: string) => void; selected: string }) {
-  const [open, setOpen] = useState(false);
   return (
     <div className="border-t border-white/[0.06] pt-4">
       <button type="button" onClick={() => setOpen((o) => !o)} aria-expanded={open} className="flex w-full cursor-pointer items-center gap-2 text-[12.5px] text-night-400 hover:text-night-200">
@@ -172,10 +126,11 @@ function DemoAccounts({ onPick, selected }: { onPick: (email: string) => void; s
                 <button
                   key={email}
                   type="button"
-                  onClick={() => onPick(email)}
+                  onClick={() => void enter(email)}
+                  disabled={busy !== null}
                   className={cn(
-                    'flex cursor-pointer items-center gap-3 rounded-xl border px-3 py-2 text-left transition',
-                    selected === email ? 'border-beacon-400/40 bg-beacon-500/10' : 'border-white/[0.05] bg-white/[0.02] hover:border-white/[0.12]',
+                    'flex cursor-pointer items-center gap-3 rounded-xl border px-3 py-2 text-left transition disabled:cursor-default disabled:opacity-60',
+                    busy === email ? 'border-beacon-400/40 bg-beacon-500/10' : 'border-white/[0.05] bg-white/[0.02] hover:border-white/[0.12]',
                   )}
                 >
                   <Icon className="size-4 shrink-0 text-night-400" />
@@ -186,7 +141,12 @@ function DemoAccounts({ onPick, selected }: { onPick: (email: string) => void; s
                 </button>
               ))}
             </div>
-            <p className="pt-2.5 text-[11.5px] text-night-500">Picking one fills in the form with the shared demo password.</p>
+            {error && (
+              <p role="alert" className="mt-2.5 rounded-xl border border-rose-400/25 bg-rose-400/10 p-2.5 text-[12.5px] text-rose-400">
+                {error}
+              </p>
+            )}
+            <p className="pt-2.5 text-[11.5px] text-night-500">Demo accounts are seeded locally and bypass university admission.</p>
           </motion.div>
         )}
       </AnimatePresence>

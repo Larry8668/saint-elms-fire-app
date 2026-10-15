@@ -4,6 +4,7 @@ import { cors } from 'hono/cors';
 import { config } from './config';
 import type { UniDeps } from './deps';
 import { errorFields, log } from './logger';
+import { portalRoutes } from './portal/routes';
 import { adminRoutes } from './routes/admin';
 import { authRoutes } from './routes/auth';
 import { meRoutes } from './routes/me';
@@ -65,6 +66,7 @@ export function createApp(deps: UniDeps) {
     // Fail closed: account endpoints stay unavailable until a database is configured.
     app.all('/v1/auth/*', (c) => c.json({ error: 'account_auth_unavailable' }, 503));
   }
+  app.route('/', portalRoutes(deps));
   app.route('/v1/admin', adminRoutes(deps));
   app.route('/v1/admin', staffRoutes(deps));
   app.route('/v1', meRoutes(deps));
