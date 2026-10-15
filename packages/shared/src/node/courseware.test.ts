@@ -27,7 +27,9 @@ test('with a manifest, the Administrative Support row is authoritative for the f
   await mkdir(path.dirname(lesson), { recursive: true });
   await writeFile(
     lesson,
-    '***\ncourseId: student-life\nsubjectId: university-support\nsemesterNumber: 0\n***\n# Welcome\n',
+    // Frontmatter deliberately disagrees with the manifest row: only the
+    // row's Administrative Support type can set the flag here.
+    '***\ncourseId: student-life\nsubjectId: mathematics\nsemesterNumber: 0\n***\n# Welcome\n',
   );
   const manifest = {
     programmeId: 'bsc-test',
