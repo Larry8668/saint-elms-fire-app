@@ -46,35 +46,80 @@ A concept's key is its normalised name (`conceptKey` in `packages/shared/src/con
 A plain markdown vault per student at `.data/engine/profiles/<id>/brain/`. It opens cleanly in Obsidian.
 
 ```
-SCHEMA.md            how the vault works (human-readable)
-index.md             every page with its status
+SCHEMA.md            versioned conventions + how the vault works (human-readable)
+index.md             every page with its summary, revision and provenance
 log.md               append-only timeline: "## [date] kind | title"
-concepts/<key>.md    one page per concept
-.history/<key>/…     previous versions of each page (for diffs)
+raw/<source>/…       originals and frozen source snapshots (write once, never edited)
+sources/<key>.md     generated source-summary pages
+concepts/<key>.md    one page per concept: the course's knowledge and the student's, kept apart
+syntheses/<key>.md   saved comparisons, derivations and applications
+questions/<key>.md   investigations and open questions
+.history/…           earlier revisions of every page (for diffs and undo)
+.meta/manifest.json  the committed revision, hash and size of every page and source
+.meta/sources/…      the typed source records
+.meta/jobs/…         wiki jobs, one file each
+.meta/journal/…      in-flight commits (a commit is cleared only once every file landed)
+.meta/recovery/…     records of commits that were finished after a crash
 ```
 
-A page is YAML frontmatter plus sections:
+`WikiStore` (`engine/src/brain/wiki-store.ts`) is the single authoritative writer for this vault.
+It reads every file from disk on each call — never a cached map — so an edit made in Obsidian is
+detected and reported (`out_of_band`) rather than overwritten. Writes take a per-vault lock
+(`.meta/writer.lock`), require the revision the caller read (optimistic concurrency), record a
+write-ahead journal, and only then touch the files. An interrupted commit is finished by
+`recover()`, which the workspace runs when it opens a profile.
+
+A page is YAML frontmatter plus prose. The frontmatter is typed (`schemaVersion`, `kind`, `id`,
+`revision`, `state`, `summary`, `courseRefs`, `claims`, `links`, `learner`, `sourceIds`,
+`provenance`) and **revisions are content-addressed**: `revision` is a hash of the page's metadata
+and body, so the same content always has the same revision and any edit shows up as a mismatch.
 
 ```markdown
 ---
-concept: Newton's second law
-key: newton-s-second-law
-course_refs: [mechanics]
-status: shaky                    # cache only; recomputed from evidence
-evidence:                        # quiz | session | capture | lesson | share
-  - { kind: quiz, ref: …, at: …, score: 1, outOf: 3 }
-misconceptions:
-  - { claim: "…", course: "…", flagged: …, resolved: false }
-links:
-  - { to: derivative, type: builds_upon, origin: student, why: "F = dp/dt" }
-updated: …
+id: newton-s-second-law
+kind: concept
+schemaVersion: 2
+revision: rev-9f2c…
+state: committed
+title: Newton's second law
+summary: Force as the rate of change of momentum.
+updatedAt: …
+courseRefs: [{ programmeId, courseId, conceptKey, lessonId }]
+claims: [{ id, text, kind, origin, status, citations, supersedes }]
+links:  [{ toPageId, type, origin, why, citations }]
+learner: { inMyWords, stuck, connections, evidenceIds }
+sourceIds: []
+provenance: null
 ---
 # Newton's second law
 ## In my words
 ## Where I got stuck
 ## Connections I made
-## Links            ← regenerated from frontmatter so Obsidian's graph matches ours
+## Links            ← carried over on migration; legacy links stay in `provenance`, not in `links`
 ```
+
+Sources are frozen first: `putSource()` writes the original into `raw/` with an exclusive create
+and refuses any later write that is not byte-identical, so neither the keeper nor the model can
+replace a source the student already has. The keeper's write paths refuse any path under `raw/`;
+only student-controlled erasure (`eraseSource`) may remove one.
+
+### Conventions live with the vault
+
+SCHEMA.md carries a versioned `sef:vault-conventions` block that `readConventions()` parses and a
+future job must be prepared against: a proposal whose `conventionRevision` no longer matches is
+refused. The block can only *describe* invariants the code already enforces (the schema is strict
+and the required rules cannot be dropped), so a document — or text inside a source or a peer page —
+cannot grant itself a capability, and text in a source is data, never an instruction.
+
+### Earlier vaults
+
+The earlier layout (`concepts/` only, with `status`/`evidence`/`misconceptions`/`sections` in the
+frontmatter and `.history/<key>/`) is still read during the transition: a page without a
+`schemaVersion` is parsed as version 1. `migrateLegacyVault()` adopts those pages — the student's
+prose is kept byte for byte, the sections become `learner`, and everything whose provenance cannot
+be resolved (evidence with no citation, misconceptions, unevidenced links, course references, the
+old status cache) is preserved verbatim in the page's `provenance` block rather than upgraded by
+guesswork. A single page can also be adopted on first write, by passing the revision it had on disk.
 
 ### Brain edges
 
