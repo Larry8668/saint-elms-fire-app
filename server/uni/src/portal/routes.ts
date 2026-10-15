@@ -1,4 +1,6 @@
 import { readFile } from 'node:fs/promises';
+import path from 'node:path';
+import { fileURLToPath } from 'node:url';
 import { Hono, type Context } from 'hono';
 import { config } from '../config';
 import type { UniDeps } from '../deps';
@@ -7,10 +9,20 @@ import { devicePageHtml } from './device-page';
 import { cacheControlFor, contentTypeFor, etagFor, nonce, resolveAsset, type ResolvedAsset } from './static-files';
 
 /**
- * University-hosted surfaces: the device confirmation page at `/device` and the onboarding
- * shell at `/app`. Both are served by this server so they share its origin, which is what
- * lets the browser send the session cookie to the account endpoints.
+ * University-hosted surfaces: the device confirmation page at `/device`, the onboarding shell at
+ * `/app` and the staff portal at `/admin`. All are served by this server so they share its
+ * origin, which is what lets the browser send the session cookie to the account endpoints.
  */
+
+/** This module lives in `src/portal/`, one level deeper than `src/config.ts`. */
+const serverRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..', '..');
+
+/**
+ * `apps/admin` is its own workspace package with its own build, and `config.portalDir` points
+ * at the onboarding shell's `dist-portal`. Resolved here rather than in `config.ts` so the two
+ * builds stay independent.
+ */
+const adminDir = (): string => process.env.UNI_ADMIN_DIR?.trim() || path.join(serverRoot, '../../apps/admin/dist');
 
 /** The device page carries its own inline script and style, both bound to one nonce. */
 const inlineCsp = (scriptNonce: string): string =>
@@ -86,6 +98,26 @@ export function portalRoutes(deps: UniDeps) {
     if (!asset && !requested) asset = await resolveAsset(config.portalDir, 'index.html');
     if (!asset) {
       log.warn('portal_asset_missing', { path: requested });
+      return c.json({ error: 'not_found' }, 404);
+    }
+    return sendAsset(c, asset);
+  });
+
+  /**
+   * The staff portal build. Same rules as the onboarding shell — traversal-proof, hashed assets
+   * cached hard, the shell revalidated, and a typed error when the build is missing so an
+   * absent portal can never look like a working one.
+   */
+  app.get('/admin/*', async (c) => {
+    if (!deps.accountAuth) {
+      return c.json({ error: 'account_auth_unavailable', message: 'The staff portal is not configured on this server.' }, 503);
+    }
+    const requested = c.req.path.slice('/admin/'.length);
+    let asset = await resolveAsset(adminDir(), requested || 'index.html');
+    // Only the bare `/admin` entry point falls back to the shell; a missing sub-path is a 404.
+    if (!asset && !requested) asset = await resolveAsset(adminDir(), 'index.html');
+    if (!asset) {
+      log.warn('portal_asset_missing', { surface: 'admin', path: requested });
       return c.json({ error: 'not_found' }, 404);
     }
     return sendAsset(c, asset);

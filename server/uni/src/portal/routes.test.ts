@@ -135,14 +135,84 @@ test('the device page keeps its nonce-bound inline policy', async () => {
   assert.ok(!csp.includes('unsafe-inline'), csp);
 });
 
-test('without a configured account layer both portal surfaces fail closed', async () => {
+test('without a configured account layer every portal surface fails closed', async () => {
   const server = new Hono();
   server.route('/', portalRoutes({} as UniDeps));
-  for (const url of ['/device', '/app/']) {
+  for (const url of ['/device', '/app/', '/admin/']) {
     const res = await server.request(url);
     assert.equal(res.status, 503, url);
     assert.equal(((await res.json()) as { error: string }).error, 'account_auth_unavailable', url);
   }
+});
+
+const adminBuild = async () => {
+  const dir = await mkdtemp(path.join(tmpdir(), 'sef-admin-build-'));
+  await mkdir(path.join(dir, 'assets'), { recursive: true });
+  await writeFile(path.join(dir, 'index.html'), '<!doctype html><title>staff portal</title>');
+  await writeFile(path.join(dir, 'assets', 'index-abcdef12.js'), 'console.log(1)');
+  return dir;
+};
+
+const withAdminDir = async (dir: string) => {
+  const previous = process.env.UNI_ADMIN_DIR;
+  process.env.UNI_ADMIN_DIR = dir;
+  const server = new Hono();
+  server.route('/', portalRoutes(withAccount as unknown as UniDeps));
+  return { server, restore: () => { if (previous === undefined) delete process.env.UNI_ADMIN_DIR; else process.env.UNI_ADMIN_DIR = previous; } };
+};
+
+test('the staff portal and its hashed assets are served', async () => {
+  const dir = await adminBuild();
+  const { server, restore } = await withAdminDir(dir);
+
+  const shell = await server.request('/admin/');
+  assert.equal(shell.status, 200);
+  assert.ok((await shell.text()).includes('staff portal'));
+
+  const script = await server.request('/admin/assets/index-abcdef12.js');
+  assert.equal(script.status, 200);
+  assert.equal(script.headers.get('cache-control'), 'public, max-age=31536000, immutable');
+  restore();
+});
+
+test('the staff portal gets the same hardened, non-inline CSP as the onboarding shell', async () => {
+  const dir = await adminBuild();
+  const { server, restore } = await withAdminDir(dir);
+  const csp = (await server.request('/admin/')).headers.get('content-security-policy') ?? '';
+  restore();
+
+  assert.ok(csp.includes("script-src 'self'"), csp);
+  assert.ok(csp.includes("frame-ancestors 'none'"), csp);
+  assert.ok(!csp.includes('unsafe-eval'), csp);
+  assert.ok(!csp.includes('script-src \'none\''), csp);
+});
+
+test('an unbuilt staff portal is a typed 404, never an empty success', async () => {
+  const { server, restore } = await withAdminDir(await mkdtemp(path.join(tmpdir(), 'sef-admin-empty-')));
+  const res = await server.request('/admin/');
+  restore();
+  assert.equal(res.status, 404);
+  assert.equal(((await res.json()) as { error: string }).error, 'not_found');
+});
+
+test('a missing sub-path under /admin does not fall back to the shell', async () => {
+  const dir = await adminBuild();
+  const { server, restore } = await withAdminDir(dir);
+  const res = await server.request('/admin/nope.js');
+  restore();
+  assert.equal(res.status, 404);
+});
+
+test('traversal through the staff portal mount cannot read outside its build', async () => {
+  const dir = await adminBuild();
+  const { server, restore } = await withAdminDir(dir);
+  await writeFile(path.join(dir, '..', 'sef-admin-escape.txt'), 'secret');
+  for (const url of ['/admin/../sef-admin-escape.txt', '/admin/..%2f..%2fetc%2fpasswd']) {
+    const res = await server.request(url);
+    assert.ok(res.status === 404 || res.status === 400, `${url} -> ${res.status}`);
+    assert.ok(!(await res.text()).includes('root:'), url);
+  }
+  restore();
 });
 
 test('the onboarding shell and its assets are served from the portal build', async () => {

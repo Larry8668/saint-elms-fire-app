@@ -171,6 +171,12 @@ export const AdminStudentRowSchema = z.strictObject({
   legalName: z.string().min(1).max(200),
   preferredName: z.string().min(1).max(120).nullable(),
   status: z.enum(['active', 'suspended']),
+  /**
+   * Optimistic-concurrency token for `PATCH /v1/admin/students/:id`. The server compares
+   * this against `student_profiles.version`, so a client cannot issue a profile update
+   * without reading it here first.
+   */
+  version: z.number().int().min(1),
   enrolment: EnrolmentSchema.nullable(),
   createdAt: TimestampSchema,
 });
