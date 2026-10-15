@@ -3,6 +3,7 @@ import { bearer, deviceAuthorization, magicLink, twoFactor } from 'better-auth/p
 import type { Pool } from 'pg';
 import type { Mailer } from './mail';
 import { createPgSecondaryStorage, type SecondaryStorage } from './rate-limit';
+import { withMagicLinkConfirmation } from './routes/account';
 import { log } from './logger';
 
 export interface AccountAuthOptions {
@@ -17,6 +18,7 @@ export interface AccountAuthOptions {
 export interface AccountAuth {
   handler: (request: Request) => Promise<Response>;
   storage: SecondaryStorage;
+  trustedOrigins: readonly string[];
 }
 
 /** The task scope pins 15-minute magic tokens. */
@@ -34,9 +36,9 @@ export function confirmationUrl(verifyUrl: string): string {
   return url.toString();
 }
 
-/** Better-auth messages can embed request data; strip long token-like runs before logging. */
-export function redactSecrets(message: string): string {
-  return message.replace(/[A-Za-z0-9_-]{32,}/g, '[redacted]');
+/** Better-auth messages can embed request data; only a fixed message reaches the logger. */
+export function redactSecrets(_message: string): string {
+  return 'Authentication library reported an error';
 }
 
 export function resolveAccountAuthSecret(environment: NodeJS.ProcessEnv = process.env): string {
@@ -52,6 +54,39 @@ export function resolveAccountAuthSecret(environment: NodeJS.ProcessEnv = proces
   return 'saint-elms-development-only-secret-0000000000';
 }
 
+const LOOPBACK_HOSTS = new Set(['localhost', '127.0.0.1', '[::1]']);
+
+export function accountAuthOrigins(
+  publicUrl: string,
+  trustedOrigins: string[] = [],
+  production = process.env.NODE_ENV === 'production',
+): string[] {
+  const origins: string[] = [];
+  for (const [index, entry] of [publicUrl, ...trustedOrigins].entries()) {
+    const field = index === 0 ? 'UNI_PUBLIC_URL' : 'UNI_TRUSTED_ORIGINS';
+    let url: URL;
+    try {
+      url = new URL(entry);
+    } catch {
+      throw new Error(`${field} contains an invalid URL`);
+    }
+    if (url.protocol !== 'https:' && url.protocol !== 'http:') {
+      throw new Error(`${field} origins must use http or https`);
+    }
+    if (url.username || url.password || url.pathname !== '/' || url.search || url.hash) {
+      throw new Error(`${field} origins must be bare origins without credentials, path, query or fragment`);
+    }
+    if (production && url.protocol !== 'https:') {
+      throw new Error(`${field} requires https origins in production`);
+    }
+    if (!production && url.protocol === 'http:' && !LOOPBACK_HOSTS.has(url.hostname)) {
+      throw new Error(`${field} http origins must be loopback in development`);
+    }
+    origins.push(url.origin);
+  }
+  return [...new Set(origins)];
+}
+
 /**
  * Options for the pinned better-auth release. Exported so schema tooling and tests exercise the
  * exact configuration the server runs.
@@ -62,11 +97,17 @@ export function accountAuthOptions({ pool, mail, publicUrl, secret, trustedOrigi
     baseURL: publicUrl,
     secret,
     database: pool,
-    trustedOrigins: [...new Set([publicUrl, 'http://localhost:4200', 'http://127.0.0.1:4200', ...trustedOrigins])],
+    trustedOrigins: accountAuthOrigins(publicUrl, trustedOrigins),
     logger: {
       log: (level: 'debug' | 'info' | 'warn' | 'error', message: string) => {
         if (level === 'error') log.error('better_auth', { message: redactSecrets(message) });
       },
+    },
+    advanced: {
+      useSecureCookies: new URL(publicUrl).protocol === 'https:',
+    },
+    verification: {
+      storeIdentifier: 'hashed',
     },
     emailAndPassword: {
       enabled: true,
@@ -74,6 +115,7 @@ export function accountAuthOptions({ pool, mail, publicUrl, secret, trustedOrigi
       // separate decision (PR-05). Duplicate sign-ups answer generically while this is on.
       requireEmailVerification: true,
       autoSignIn: false,
+      revokeSessionsOnPasswordReset: true,
       sendResetPassword: async ({ user, url }: { user: { email: string }; url: string }) => {
         await mail.sendPasswordReset(user.email, url);
       },
@@ -122,6 +164,11 @@ export function accountAuthOptions({ pool, mail, publicUrl, secret, trustedOrigi
 export function createAccountAuth(options: AccountAuthOptions): AccountAuth {
   const storage = createPgSecondaryStorage(options.pool);
   const auth = betterAuth(accountAuthOptions(options));
+  const origins = accountAuthOrigins(options.publicUrl, options.trustedOrigins ?? []);
   log.info('account_auth_ready', { magicLinkTtlSeconds: MAGIC_LINK_TTL_SECONDS });
-  return { handler: (request: Request) => auth.handler(request), storage };
+  return {
+    handler: withMagicLinkConfirmation((request: Request) => auth.handler(request), origins[0]),
+    storage,
+    trustedOrigins: origins,
+  };
 }

@@ -1,6 +1,6 @@
 import nodemailer from 'nodemailer';
 import type { Transporter } from 'nodemailer';
-import { errorFields, log } from './logger';
+import { log } from './logger';
 
 export interface MailConfig {
   smtpUrl: string;
@@ -10,11 +10,18 @@ export interface MailConfig {
 /**
  * Mail configuration is validated here rather than in `config.ts` so the SMTP URL (which may
  * carry credentials) stays out of the general config object. Production refuses to run without
- * real SMTP; development falls back to a loopback-only Mailpit instance (`pnpm search:up` runs it).
+ * real SMTP; development falls back to a loopback-only Mailpit instance
+ * (`docker compose --profile mail up -d mailpit`).
  */
 export function parseMailConfig(environment: NodeJS.ProcessEnv = process.env): MailConfig {
   const smtpUrl = environment.MAIL_SMTP_URL?.trim();
   const from = environment.MAIL_FROM?.trim();
+  if (from && /[\r\n]/.test(from)) {
+    throw new Error('MAIL_FROM must not contain line breaks');
+  }
+  if (smtpUrl && /[\r\n]/.test(smtpUrl)) {
+    throw new Error('MAIL_SMTP_URL must not contain line breaks');
+  }
   if (!smtpUrl) {
     if (environment.NODE_ENV === 'production') {
       throw new Error('MAIL_SMTP_URL is required in production; refusing to boot without real mail delivery');
@@ -29,6 +36,9 @@ export function parseMailConfig(environment: NodeJS.ProcessEnv = process.env): M
   }
   if (parsed.protocol !== 'smtp:' && parsed.protocol !== 'smtps:') {
     throw new Error('MAIL_SMTP_URL must use smtp:// or smtps://');
+  }
+  if (!parsed.hostname) {
+    throw new Error('MAIL_SMTP_URL must include a hostname');
   }
   return { smtpUrl, from: from || `Saint Elms University <no-reply@${parsed.hostname}>` };
 }
@@ -76,11 +86,12 @@ export function createMailer(config: MailConfig, transport?: Transporter): Maile
   const send = async (template: TemplateName, to: string, url: string) => {
     const { subject, body } = templates[template]();
     try {
-      await transporter.sendMail({ from: config.from, to, subject, text: body(url) });
+      const result = await transporter.sendMail({ from: config.from, to, subject, text: body(url) });
+      if (!Array.isArray(result.accepted) || result.accepted.length === 0) throw new Error('mail_rejected');
       log.info('mail_sent', { template });
-    } catch (error) {
-      log.error('mail_send_failed', { template, ...errorFields(error) });
-      throw error;
+    } catch {
+      log.error('mail_send_failed', { template });
+      throw new Error('Account email delivery failed');
     }
   };
 

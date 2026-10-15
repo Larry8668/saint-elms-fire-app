@@ -2,6 +2,7 @@ import assert from 'node:assert/strict';
 import test from 'node:test';
 import type { Transporter } from 'nodemailer';
 import { createMailer, parseMailConfig } from './mail';
+import { log } from './logger';
 
 const configFixture = { smtpUrl: 'smtp://127.0.0.1:1025', from: 'Saint Elms Test <test@saintelms.test>' };
 
@@ -31,6 +32,9 @@ test('mail config refuses production without SMTP and defaults to loopback Mailp
 
   assert.throws(() => parseMailConfig({ MAIL_SMTP_URL: 'https://mail.example' }), /smtp:\/\/ or smtps:\/\//);
   assert.throws(() => parseMailConfig({ MAIL_SMTP_URL: 'not a url' }), /not a valid URL/);
+  assert.throws(() => parseMailConfig({ MAIL_SMTP_URL: 'smtp://' }), /hostname/);
+  assert.throws(() => parseMailConfig({ MAIL_FROM: 'Saint Elms\nBCC: evil@example.test' }), /line breaks/);
+  assert.throws(() => parseMailConfig({ MAIL_SMTP_URL: 'smtp://127.0.0.1:1025\nX-Injected: yes' }), /line breaks/);
 
   const prod = parseMailConfig({ NODE_ENV: 'production', MAIL_SMTP_URL: 'smtps://mail.example:465' });
   assert.equal(prod.from, 'Saint Elms University <no-reply@mail.example>');
@@ -57,12 +61,30 @@ test('each template renders its own link and subject', async () => {
   }
 });
 
-test('send failures propagate instead of reporting success', async () => {
+test('send failures surface a generic error without leaking transport details', async (t) => {
+  const logged: unknown[] = [];
+  t.mock.method(log, 'error', (event: string, fields?: unknown) => logged.push({ event, fields }));
   const failing = {
     sendMail: async () => {
-      throw new Error('smtp unreachable');
+      throw new Error('smtp unreachable at user:secretpw@smtp.internal token tok_abc123');
     },
   } as unknown as Transporter;
   const mailer = createMailer(configFixture, failing);
-  await assert.rejects(() => mailer.sendVerificationEmail('a@b.c', 'https://uni.example/verify-email?token=x'), /smtp unreachable/);
+  await assert.rejects(
+    () => mailer.sendVerificationEmail('recipient@example.test', 'https://uni.example/verify-email?token=tok_abc123'),
+    (error: unknown) => {
+      assert.equal((error as Error).message, 'Account email delivery failed');
+      return true;
+    },
+  );
+  const serialized = JSON.stringify(logged);
+  for (const secret of ['secretpw', 'tok_abc123', 'smtp.internal', 'recipient@example.test', 'unreachable']) {
+    assert.ok(!serialized.includes(secret), `expected ${secret} to stay out of mail failure logs`);
+  }
+});
+
+test('a transport that accepts no recipients still fails the send', async () => {
+  const rejected = { sendMail: async () => ({ accepted: [], rejected: ['a@b.c'] }) } as unknown as Transporter;
+  const mailer = createMailer(configFixture, rejected);
+  await assert.rejects(() => mailer.sendVerificationEmail('a@b.c', 'https://uni.example/verify-email?token=x'), /Account email delivery failed/);
 });

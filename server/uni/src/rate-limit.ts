@@ -1,5 +1,5 @@
 import type { Pool } from 'pg';
-import { log } from './logger';
+import { getDatabaseMigrationStatus, supportedMigrationVersion } from './db/migrate';
 
 export interface SecondaryStorage {
   get(key: string): Promise<string | null>;
@@ -20,9 +20,11 @@ export function createPgSecondaryStorage(pool: Pool): SecondaryStorage {
   return {
     async get(key) {
       // Expired rows are removed on read so they cannot linger; the value is null either way.
-      const cleaned = await pool.query('DELETE FROM auth_kv WHERE key = $1 AND expires_at <= now()', [key]);
-      if (cleaned.rowCount) return null;
-      const result = await pool.query<{ value: string }>('SELECT value FROM auth_kv WHERE key = $1', [key]);
+      const result = await pool.query<{ value: string }>(
+        `WITH expired AS (DELETE FROM auth_kv WHERE key = $1 AND expires_at <= now())
+         SELECT value FROM auth_kv WHERE key = $1 AND expires_at > now()`,
+        [key],
+      );
       return result.rows[0]?.value ?? null;
     },
     async set(key, value, ttl) {
@@ -60,10 +62,14 @@ export function createPgSecondaryStorage(pool: Pool): SecondaryStorage {
 /** Fails fast when the migration has not run: rate limiting must not silently degrade to memory. */
 export async function assertSecondaryStorageReady(pool: Pool): Promise<void> {
   try {
+    const status = await getDatabaseMigrationStatus(pool);
+    if (status.currentVersion !== supportedMigrationVersion || status.pendingVersions.length > 0) {
+      throw new Error('pending');
+    }
     await pool.query('SELECT 1 FROM auth_kv LIMIT 1');
-  } catch (error) {
+  } catch {
     throw new Error(
-      `auth_kv table is unavailable; run the university migrations before starting account authentication (${(error as Error).message})`,
+      `auth_kv storage requires university schema version ${supportedMigrationVersion}; run the university migrations before starting account authentication`,
     );
   }
 }
