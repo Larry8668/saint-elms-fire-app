@@ -62,6 +62,10 @@ const sourceBase = z.strictObject({
       method: z.enum(['text', 'pdf', 'vision', 'student_correction']),
       sha256: Sha256Schema,
       createdAt: TimestampSchema,
+      /** Characters of text the pass produced; absent on records written before it was tracked. */
+      chars: z.number().int().nonnegative().optional(),
+      /** Whether that pass stopped short of the whole source. */
+      partial: z.boolean().optional(),
     }),
   ),
 });

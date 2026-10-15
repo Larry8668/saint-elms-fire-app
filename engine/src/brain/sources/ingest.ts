@@ -10,10 +10,10 @@ import {
   type SourceSummary,
 } from '@sef/shared';
 import type { ContentfulStatusCode } from 'hono/utils/http-status';
-import { log } from '../../config';
+import { errorFields, log } from '../../config';
 import { extractPdf, extractText, sha256, type ExtractionResult } from './extract';
 import { assertJobCapacity, advanceJob, cancelJob, createJob, jobStore, JobConflictError, JobStateError, listProfileJobs, retryJob } from './jobs';
-import { checkBytes, sanitiseTitle, titleIsSafe, type Limits } from './limits';
+import { checkBytes, countChars, sanitiseTitle, titleIsSafe, type Limits } from './limits';
 import { openPdf, PdfParseError } from './pdf';
 import type { WikiStore } from '../wiki-store';
 
@@ -98,11 +98,19 @@ export class SourceIngestor {
     });
 
     // The original is durable before anything is read out of it.
-    const { record: stored, alreadyPresent } = await this.store.putSource(record, input.bytes);
+    const { record: storedAt, alreadyPresent } = await this.store.putSource(record, input.bytes);
+    let stored = storedAt;
     log.info('source_stored', { sourceId: stored.id, kind: stored.kind, bytes: stored.bytes, alreadyPresent });
 
     const extraction = await this.extract(stored, input.bytes, limits);
-    const job = await this.track(stored.id, limits);
+    // The extraction pass is part of the record: without it a later listing cannot say
+    // whether the source ever produced text.
+    if (extraction) {
+      const chars = countChars(extraction.text);
+      await this.store.recordExtraction(stored.id, { method: extraction.method, sha256: extraction.sha256, chars, partial: extraction.partial });
+      stored = { ...stored, extractions: [...stored.extractions, { revision: stored.revision, method: extraction.method, sha256: extraction.sha256, createdAt: new Date().toISOString(), chars, partial: extraction.partial }] };
+    }
+    const job = await this.track(stored.id, limits, identity);
 
     return {
       source: this.summaryOf(stored, extraction),
@@ -112,10 +120,18 @@ export class SourceIngestor {
     };
   }
 
+  /** The method a source would have used — reported even when no text was produced. */
+  private intendedMethod(record: SourceRecord): ExtractionResult['method'] {
+    if (record.mediaType.startsWith('application/pdf')) return 'pdf';
+    if (record.mediaType.startsWith('image/')) return 'vision';
+    return 'text';
+  }
+
   /** Reads the source. A failure is reported in the result, never thrown: the original is safe. */
   private async extract(record: SourceRecord, bytes: Uint8Array, limits: Limits): Promise<ExtractionResult | null> {
+    const method = this.intendedMethod(record);
     try {
-      if (record.mediaType.startsWith('application/pdf')) {
+      if (method === 'pdf') {
         const reader = await openPdf(bytes, limits);
         try {
           const outcome = await extractPdf(bytes, reader, limits);
@@ -125,14 +141,19 @@ export class SourceIngestor {
           await reader.close().catch(() => {});
         }
       }
-      if (record.mediaType.startsWith('image/')) {
+      if (method === 'vision') {
         // Local vision is not wired yet. Say so rather than inventing a reading.
         return this.readFailure(record, 'No text has been read from this image yet.');
       }
       const outcome = extractText(bytes, limits);
       return outcome.ok ? outcome.result : this.readFailure(record, outcome.rejection.message);
     } catch (error) {
-      const message = error instanceof PdfParseError ? error.message : `That source could not be read: ${(error as Error).message}`;
+      // A bug in the extractor is not a "could not read" — keep it visible in the log so a
+      // broken reader is not indistinguishable from a corrupt file.
+      if (!(error instanceof PdfParseError)) {
+        log.error('source_extraction_unexpected', { sourceId: record.id, mediaType: record.mediaType, ...errorFields(error) });
+      }
+      const message = error instanceof PdfParseError ? error.message : 'That source could not be read here.';
       return this.readFailure(record, message);
     }
   }
@@ -140,10 +161,16 @@ export class SourceIngestor {
   /** An unreadable source keeps its bytes and reports why, rather than looking intact. */
   private readFailure(record: SourceRecord, note: string): ExtractionResult {
     log.warn('source_extraction_failed', { sourceId: record.id, mediaType: record.mediaType, note });
-    return { method: 'text', text: '', sha256: record.sha256, partial: true, note };
+    return { method: this.intendedMethod(record), text: '', sha256: record.sha256, partial: true, note };
   }
 
+  /**
+   * `extraction` is the just-run pass when ingest calls this; `list()` passes null and the
+   * answer comes from the record's own ledger instead, so the two paths agree.
+   */
   private summaryOf(record: SourceRecord, extraction: ExtractionResult | null): SourceSummary {
+    const ledger = record.extractions.at(-1);
+    const last = extraction;
     return SourceSummarySchema.parse({
       id: record.id,
       revision: record.revision,
@@ -152,18 +179,18 @@ export class SourceIngestor {
       mediaType: record.mediaType,
       bytes: record.bytes,
       sha256: record.sha256,
-      extracted: extraction !== null && extraction.text !== '',
-      partial: extraction?.partial ?? false,
-      ...(extraction?.note ? { note: extraction.note } : {}),
+      extracted: last ? last.text !== '' : (ledger?.chars ?? 0) > 0,
+      partial: last?.partial ?? ledger?.partial ?? false,
+      ...(last?.note ? { note: last.note } : {}),
       capturedAt: record.createdAt,
     });
   }
 
   /** Joins the source to a durable job. Re-ingesting the same material reuses the live job. */
-  private async track(sourceId: string, limits: Limits): Promise<{ id: string; reused: boolean }> {
+  private async track(sourceId: string, limits: Limits, identity: ProfileIdentity): Promise<{ id: string; reused: boolean }> {
     const { job, reused } = await createJob(
       this.jobs,
-      { profile: await this.profile(), sourceIds: [sourceId], now: new Date() },
+      { profile: identity, sourceIds: [sourceId], now: new Date() },
       limits,
     );
     if (job.stage === 'queued') {

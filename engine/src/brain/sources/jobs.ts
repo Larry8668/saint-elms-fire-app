@@ -162,5 +162,5 @@ export async function listProfileJobs(store: JobStore, profile: ProfileIdentity)
 /** A profile may not start unlimited concurrent work. */
 export function assertJobCapacity(active: number, limits: Limits = {}): void {
   const cap = limits.maxActiveJobs ?? INGEST_LIMITS.maxActiveJobs;
-  if (active >= cap) throw new JobStateError(`You already have ${active} sources processing; the limit is ${cap}.`);
+  if (active >= cap) throw new JobStateError(`You already have ${active} jobs in progress; the limit is ${cap}.`);
 }

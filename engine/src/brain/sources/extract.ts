@@ -1,5 +1,5 @@
 import { createHash } from 'node:crypto';
-import { INGEST_LIMITS, checkPageCount, type Limits, type Rejection } from './limits';
+import { INGEST_LIMITS, checkPageCount, countChars, sliceChars, type Limits, type Rejection } from './limits';
 
 /**
  * Extraction turns a student's own bytes into text. It runs entirely on-device and never
@@ -16,7 +16,7 @@ export interface ExtractionResult {
   method: ExtractionMethod;
   text: string;
   sha256: string;
-  /** Set when the extractor stopped early. The job must surface this, not hide it. */
+  /** Set when extraction did not capture the whole source — truncated, pages unreadable, or bytes that decoded only partially. The job must surface this, not hide it. */
   partial: boolean;
   /** Human-readable reason for the truncation or failure. */
   note?: string;
@@ -31,18 +31,20 @@ export const sha256 = (bytes: Uint8Array): string => createHash('sha256').update
 /** Plain text and Markdown: decoded locally, never sent anywhere. */
 export function extractText(bytes: Uint8Array, limits: Limits = {}): ExtractionOutcome {
   const max = limits.maxExtractedChars ?? INGEST_LIMITS.maxExtractedChars;
-  let decoded: string;
-  try {
-    decoded = new TextDecoder('utf-8', { fatal: false }).decode(bytes);
-  } catch {
-    return { ok: false, rejection: { code: 'unsupported_media', message: 'That text could not be decoded.' } };
-  }
+  // fatal: false replaces undecodable bytes with U+FFFD — counted and reported below rather
+  // than silently absorbed.
+  const decoded = new TextDecoder('utf-8', { fatal: false }).decode(bytes);
   // A NUL in the body usually means this was not text at all, whatever it claimed to be.
   if (decoded.includes('\u0000')) {
     return { ok: false, rejection: { code: 'unsupported_media', message: 'That file is not readable text.' } };
   }
-  const partial = decoded.length > max;
-  const text = decoded.slice(0, max);
+  const undecodable = decoded.split('\uFFFD').length - 1;
+  const truncated = countChars(decoded) > max;
+  const text = sliceChars(decoded, max);
+  const partial = truncated || undecodable > 0;
+  const notes: string[] = [];
+  if (truncated) notes.push(`Only the first ${max.toLocaleString('en-GB')} characters were read`);
+  if (undecodable) notes.push(`${undecodable.toLocaleString('en-GB')} byte${undecodable === 1 ? '' : 's'} could not be decoded and were replaced`);
   return {
     ok: true,
     result: {
@@ -50,7 +52,7 @@ export function extractText(bytes: Uint8Array, limits: Limits = {}): ExtractionO
       text,
       sha256: sha256(bytes),
       partial,
-      ...(partial ? { note: `Only the first ${max.toLocaleString('en-GB')} characters were read.` } : {}),
+      ...(notes.length ? { note: `${notes.join('; ')}.` } : {}),
     },
   };
 }
@@ -97,8 +99,11 @@ export async function extractPdf(bytes: Uint8Array, reader: PdfReader, limits: L
     }
     const cleaned = tidy(pageText);
     if (!cleaned.trim()) continue;
-    if (total + cleaned.length > maxChars) {
-      parts.push(cleaned.slice(0, Math.max(0, maxChars - total)));
+    // `total` is the length of the eventual join, separators included.
+    const joinOverhead = parts.length > 0 ? 2 : 0;
+    const size = countChars(cleaned);
+    if (total + joinOverhead + size > maxChars) {
+      parts.push(sliceChars(cleaned, Math.max(0, maxChars - total - joinOverhead)));
       return {
         ok: true,
         result: {
@@ -112,11 +117,12 @@ export async function extractPdf(bytes: Uint8Array, reader: PdfReader, limits: L
       };
     }
     parts.push(cleaned);
-    total += cleaned.length;
+    total += joinOverhead + size;
   }
 
   const notes: string[] = [];
   if (failed) notes.push(`${failed} page${failed === 1 ? '' : 's'} could not be read`);
+  // An empty result is reported, but it did not stop early — nothing was skipped.
   if (parts.join('').trim() === '') notes.push('No text layer was found — this may be a scanned document');
 
   return {
@@ -125,7 +131,7 @@ export async function extractPdf(bytes: Uint8Array, reader: PdfReader, limits: L
       method: 'pdf',
       text: parts.join('\n\n'),
       sha256: sha256(bytes),
-      partial: failed > 0 || notes.length > 0,
+      partial: failed > 0,
       ...(notes.length ? { note: `${notes.join('. ')}.` } : {}),
       units: reader.pages,
     },
@@ -138,12 +144,12 @@ export async function extractPdf(bytes: Uint8Array, reader: PdfReader, limits: L
  */
 export function recordVisionText(bytes: Uint8Array, text: string, limits: Limits = {}): ExtractionOutcome {
   const maxChars = limits.maxExtractedChars ?? INGEST_LIMITS.maxExtractedChars;
-  const partial = text.length > maxChars;
+  const partial = countChars(text) > maxChars;
   return {
     ok: true,
     result: {
       method: 'vision',
-      text: text.slice(0, maxChars),
+      text: sliceChars(text, maxChars),
       sha256: sha256(bytes),
       partial,
       ...(partial ? { note: `Only the first ${maxChars.toLocaleString('en-GB')} characters of the reading were kept.` } : {}),
@@ -154,12 +160,12 @@ export function recordVisionText(bytes: Uint8Array, text: string, limits: Limits
 /** A student correction is a derivative revision, never a rewrite of the original bytes. */
 export function recordStudentCorrection(bytes: Uint8Array, text: string, limits: Limits = {}): ExtractionOutcome {
   const maxChars = limits.maxExtractedChars ?? INGEST_LIMITS.maxExtractedChars;
-  const partial = text.length > maxChars;
+  const partial = countChars(text) > maxChars;
   return {
     ok: true,
     result: {
       method: 'student_correction',
-      text: text.slice(0, maxChars),
+      text: sliceChars(text, maxChars),
       sha256: sha256(bytes),
       partial,
       ...(partial ? { note: 'The correction was longer than the limit and was shortened.' } : {}),

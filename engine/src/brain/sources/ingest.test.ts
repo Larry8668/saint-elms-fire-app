@@ -97,6 +97,30 @@ test('the listing never returns source bodies, only metadata', async () => {
   assert.ok(!raw.includes('a private note body'), 'the listing must not leak content');
 });
 
+test('the listing reports what was extracted from the record itself', async () => {
+  const { ingestor } = await harness('ingest-ledger');
+  await ingestor.ingest(note('chapter notes'));
+  await ingestor.ingest({ kind: 'image', title: 'Whiteboard', mediaType: 'image/png', bytes: Buffer.from([0x89, 0x50, 0x4e, 0x47]) });
+  const list = await ingestor.list();
+
+  const noteSummary = list.sources.find((source) => source.kind === 'note');
+  assert.equal(noteSummary?.extracted, true, 'the ledger must survive a restart-shaped re-read');
+  assert.equal(noteSummary?.partial, false);
+
+  const imageSummary = list.sources.find((source) => source.kind === 'image');
+  assert.equal(imageSummary?.extracted, false);
+  assert.equal(imageSummary?.partial, true, 'an unread image is a partial pass, not a clean one');
+});
+
+test('a failed read is reported with the method that would have been used', async () => {
+  const { ingestor } = await harness('ingest-method');
+  const image = await ingestor.ingest({ kind: 'image', title: 'Board', mediaType: 'image/png', bytes: Buffer.from([0x89, 0x50, 0x4e, 0x47]) });
+  assert.equal(image.extraction?.method, 'vision');
+
+  const pdf = await ingestor.ingest({ kind: 'document', title: 'Broken', mediaType: 'application/pdf', bytes: Buffer.from('not a pdf', 'utf8') });
+  assert.equal(pdf.extraction?.method, 'pdf');
+});
+
 test('a job can be cancelled and a cancelled job cannot be retried', async () => {
   const { ingestor } = await harness('ingest-cancel');
   const result = await ingestor.ingest(note('cancel me'));

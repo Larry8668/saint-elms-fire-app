@@ -2,6 +2,7 @@ import path from 'node:path';
 import { Hono } from 'hono';
 import { z } from 'zod';
 import { JobConflictError, JobStateError, SourceIngestor, SourceRejection } from '../../brain/sources/ingest';
+import { INGEST_LIMITS } from '../../brain/sources/limits';
 import { requireProfile, type EngineDeps, type EngineEnv } from '../context';
 import { friendlyError } from '../errors';
 import type { ProfileIdentity } from '@sef/shared';
@@ -13,13 +14,17 @@ import type { Workspace } from '../../profiles/workspace';
  * vault.
  */
 
+// Base64 carries 3 bytes in 4 characters; the envelope cap derives from the decoded-byte
+// limit with slack for the whitespace and padding some clients fold in.
+const MAX_ENVELOPE_CHARS = Math.ceil(INGEST_LIMITS.maxSourceBytes / 3) * 4 + 4 + 64 * 1024;
+
 const ingestBody = z
   .object({
     kind: z.enum(['note', 'document', 'image']),
     title: z.string().min(1).max(300),
     mediaType: z.string().min(1).max(120),
     // Ceiling on the envelope only; the real limit is enforced on the decoded bytes.
-    data: z.string().min(1).max(44 * 1024 * 1024),
+    data: z.string().min(1).max(MAX_ENVELOPE_CHARS),
   })
   .strict();
 
@@ -36,6 +41,22 @@ const identityOf = (ws: Workspace, uniServerUrl: string): ProfileIdentity => ({
   studentId: ws.profile.id,
   programmeId: ws.profile.cohortId,
 });
+
+/**
+ * Decodes a base64 envelope — standard or URL-safe alphabet, whitespace tolerated.
+ * `Buffer.from` decodes permissively, so the input is confirmed by a round trip rather
+ * than trusted; anything that cannot re-encode to itself is refused.
+ */
+export function decodeSourceBytes(data: string): Uint8Array | null {
+  try {
+    const canonical = data.replace(/\s+/g, '').replace(/-/g, '+').replace(/_/g, '/');
+    const buffer = Buffer.from(data, 'base64');
+    if (buffer.toString('base64').replace(/=+$/, '') !== canonical.replace(/=+$/, '')) return null;
+    return new Uint8Array(buffer);
+  } catch {
+    return null;
+  }
+}
 
 export function sourceRoutes(deps: EngineDeps) {
   const app = new Hono<EngineEnv>();
@@ -58,17 +79,8 @@ export function sourceRoutes(deps: EngineDeps) {
     if (!parsed.success) return c.json({ error: 'Send a kind, title, mediaType and base64 data', code: 'invalid_request' }, 400);
 
     const { kind, title, mediaType, data } = parsed.data;
-    let bytes: Uint8Array;
-    try {
-      const buffer = Buffer.from(data, 'base64');
-      // Base64 decodes permissively, so confirm the round trip rather than trusting it.
-      if (buffer.toString('base64').replace(/=+$/, '') !== data.replace(/=+$/, '').replace(/\s+/g, '')) {
-        return c.json({ error: 'That file could not be decoded', code: 'undecodable' }, 400);
-      }
-      bytes = new Uint8Array(buffer);
-    } catch {
-      return c.json({ error: 'That file could not be decoded', code: 'undecodable' }, 400);
-    }
+    const bytes = decodeSourceBytes(data);
+    if (!bytes) return c.json({ error: 'That file could not be decoded', code: 'undecodable' }, 400);
 
     try {
       const result = await (await ingestorFor(c.get('ws'))).ingest({ kind, title, mediaType, bytes });

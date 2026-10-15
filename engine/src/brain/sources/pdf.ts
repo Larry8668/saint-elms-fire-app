@@ -1,5 +1,6 @@
 import path from 'node:path';
-import { checkPageCount, INGEST_LIMITS, type Limits } from './limits';
+import { fileURLToPath } from 'node:url';
+import { checkPageCount, INGEST_LIMITS, sliceChars, type Limits } from './limits';
 import type { PdfReader } from './extract';
 
 /**
@@ -61,7 +62,7 @@ const closeTask = async (document: PdfDocumentLike, task: PdfTaskLike | null): P
 /** Absolute path to the metric data shipped with pdfjs, needed for text positioning. */
 const standardFontDataUrl = (): string => {
   const specifier = import.meta.resolve('pdfjs-dist/package.json');
-  const dir = path.dirname(new URL(specifier).pathname);
+  const dir = path.dirname(fileURLToPath(specifier));
   return `${path.join(dir, 'standard_fonts')}${path.sep}`;
 };
 
@@ -117,7 +118,7 @@ export async function openPdf(bytes: Uint8Array, limits: Limits = {}): Promise<P
       const handle = await document.getPage(page);
       try {
         const content = await handle.getTextContent();
-        return content.items.map(itemText).join(' ').slice(0, maxChars);
+        return sliceChars(content.items.map(itemText).join(' '), maxChars);
       } finally {
         handle.cleanup();
       }

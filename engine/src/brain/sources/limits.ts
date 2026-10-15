@@ -60,8 +60,17 @@ export interface Rejection {
  * name is kept only as a readable hint; anything that could escape the sources directory or
  * confuse a later parse is replaced.
  */
+const MEDIA_EXTENSIONS: Record<string, string> = {
+  'application/pdf': '.pdf',
+  'image/png': '.png',
+  'image/jpeg': '.jpg',
+  'text/markdown': '.md',
+  'text/plain': '.txt',
+};
+
 export function safeSourceFilename(id: string, mediaType: string): string {
-  const extension = mediaType.includes('pdf') ? '.pdf' : mediaType.includes('png') ? '.png' : mediaType.includes('jpeg') ? '.jpg' : mediaType.includes('markdown') ? '.md' : '.txt';
+  // Exact match only — a media type we do not know gets the opaque `.bin`, not a guessed name.
+  const extension = MEDIA_EXTENSIONS[mediaType.trim().toLowerCase()] ?? '.bin';
   return `${id}${extension}`;
 }
 
@@ -72,9 +81,10 @@ export function safeSourceFilename(id: string, mediaType: string): string {
 export function sanitiseTitle(raw: string): string {
   const cleaned = raw
     .replace(/[\u0000-\u001f\u007f]/g, ' ')
-    .replace(/[\\/]+/g, '/')
-    // Strip leading dots and slashes repeatedly, so `../../x` cannot survive as `../x`.
-    .replace(/^[./]+/, '')
+    .replace(/[\\/]+/g, ' ')
+    // Strip leading dots, separators and the spaces the replacements leave behind, so
+    // `../../x` cannot survive as `.. x`.
+    .replace(/^[\s./]+/, '')
     .trim();
   return cleaned.slice(0, 300) || 'Untitled source';
 }
@@ -123,6 +133,12 @@ export function checkSourceCount(count: number, limits: Limits = {}): Rejection 
 
 export function formatBytes(bytes: number): string {
   if (bytes < 1024) return `${bytes} B`;
-  if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(0)} KB`;
-  return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
+  // Floored, never rounded up: the message appears next to a hard limit, so overstating
+  // either side would mislead a student about what was refused.
+  if (bytes < 1024 * 1024) return `${Math.floor(bytes / 1024)} KB`;
+  return `${(Math.floor((bytes / (1024 * 1024)) * 10) / 10).toFixed(1)} MB`;
 }
+
+/** Characters as a student counts them — Unicode code points, not UTF-16 code units. */
+export const countChars = (text: string): number => [...text].length;
+export const sliceChars = (text: string, max: number): string => [...text].slice(0, max).join('');

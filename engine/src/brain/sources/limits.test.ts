@@ -5,10 +5,12 @@ import {
   checkImageDimensions,
   checkPageCount,
   checkSourceCount,
+  countChars,
   formatBytes,
   INGEST_LIMITS,
   safeSourceFilename,
   sanitiseTitle,
+  sliceChars,
   titleIsSafe,
 } from './limits';
 
@@ -61,6 +63,11 @@ test('the on-disk filename is derived from the id, never from the title', () => 
   assert.equal(safeSourceFilename('src_abc', 'text/plain'), 'src_abc.txt');
   // A hostile title cannot reach the filename at all.
   assert.equal(safeSourceFilename('src_abc', 'application/pdf').includes('/'), false);
+  // A media type we do not know gets the opaque extension — never a guessed one. Only an
+  // exact match earns a friendly extension; 'application/pdf-evil' is not a PDF.
+  assert.equal(safeSourceFilename('src_abc', 'application/pdf-evil'), 'src_abc.bin');
+  assert.equal(safeSourceFilename('src_abc', 'application/octet-stream'), 'src_abc.bin');
+  assert.equal(safeSourceFilename('src_abc', ' Application/PDF '), 'src_abc.pdf');
 });
 
 test('a title that could act like a path is refused', () => {
@@ -84,4 +91,15 @@ test('byte formatting is human-scale and never lies about the limit', () => {
   assert.equal(formatBytes(512), '512 B');
   assert.equal(formatBytes(2048), '2 KB');
   assert.equal(formatBytes(INGEST_LIMITS.maxSourceBytes), '25.0 MB');
+  // Floored, never rounded up: a size next to a hard limit must not overstate itself.
+  assert.equal(formatBytes(1024 * 1024 * 25 + 900 * 1024), '25.8 MB');
+  assert.equal(formatBytes(1536), '1 KB');
+});
+
+test('characters are counted as code points, not UTF-16 code units', () => {
+  const books = `${'📚'.repeat(5)}abcde`;
+  assert.equal(countChars(books), 10);
+  assert.equal(sliceChars(books, 7), `${'📚'.repeat(5)}ab`);
+  // A slice may never end inside a surrogate pair.
+  assert.equal(sliceChars('a📚b', 2), 'a📚');
 });
