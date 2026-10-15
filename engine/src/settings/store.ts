@@ -3,6 +3,15 @@ import { config, log } from '../config';
 import { readJson, writeJson } from '../lib/fs';
 
 export type StoredSettings = EngineSettings;
+export type PrivateStoredSettings = Pick<StoredSettings, 'providers' | 'roles' | 'thinking'>;
+
+export interface SettingsReader {
+  get(): Promise<StoredSettings>;
+}
+
+export interface SettingsSource extends SettingsReader {
+  update(patch: Partial<StoredSettings>): Promise<StoredSettings>;
+}
 
 function defaultSettings(): StoredSettings {
   const d = config.defaults;
@@ -22,18 +31,20 @@ function defaultSettings(): StoredSettings {
   };
 }
 
-/** Settings live in one JSON file in the engine data dir. API keys never leave the engine. */
-export class SettingsStore {
+/** Device settings live in the engine data dir; student model settings use ProfileSettingsStore below. */
+export class SettingsStore implements SettingsSource {
   private current: StoredSettings | null = null;
+
+  constructor(private readonly filePath = config.paths.settings) {}
 
   async get(): Promise<StoredSettings> {
     if (!this.current) {
-      const stored = await readJson<Partial<StoredSettings> | null>(config.paths.settings, null);
+      const stored = await readJson<Partial<StoredSettings> | null>(this.filePath, null);
       const { studentName: _n, cohortId: _c, ...rest } = (stored ?? {}) as Partial<StoredSettings> & { studentName?: string; cohortId?: string };
       this.current = { ...defaultSettings(), ...rest };
       if (!stored) {
-        await writeJson(config.paths.settings, this.current);
-        log.info('settings_created', { file: config.paths.settings });
+        await writeJson(this.filePath, this.current);
+        log.info('settings_created', { file: this.filePath });
       }
     }
     return this.current;
@@ -43,7 +54,7 @@ export class SettingsStore {
     const existing = await this.get();
     const providers = patch.providers ? mergeProviders(existing.providers, patch.providers) : existing.providers;
     this.current = { ...existing, ...patch, providers };
-    await writeJson(config.paths.settings, this.current);
+    await writeJson(this.filePath, this.current);
     log.info('settings_updated', { fields: Object.keys(patch) });
     return this.current;
   }
@@ -54,6 +65,54 @@ export class SettingsStore {
       ...settings,
       providers: settings.providers.map(({ apiKey, ...rest }) => ({ ...rest, hasApiKey: Boolean(apiKey) })),
     };
+  }
+}
+
+/**
+ * Per-profile model configuration and provider credentials. Device endpoint settings remain
+ * shared so sign-in can select the university server before a student profile is known.
+ */
+export class ProfileSettingsStore implements SettingsSource {
+  private current: PrivateStoredSettings | null = null;
+
+  constructor(
+    private readonly deviceSettings: SettingsStore,
+    private readonly filePath: string,
+  ) {}
+
+  private async privateSettings(): Promise<PrivateStoredSettings> {
+    if (!this.current) {
+      const stored = await readJson<Partial<PrivateStoredSettings> | null>(this.filePath, null);
+      const defaults = defaultSettings();
+      this.current = {
+        providers: stored?.providers ?? defaults.providers,
+        roles: stored?.roles ?? defaults.roles,
+        thinking: stored?.thinking ?? defaults.thinking,
+      };
+    }
+    return this.current;
+  }
+
+  async get(): Promise<StoredSettings> {
+    const [device, privateSettings] = await Promise.all([this.deviceSettings.get(), this.privateSettings()]);
+    return { ...device, ...privateSettings };
+  }
+
+  async update(patch: Partial<StoredSettings>): Promise<StoredSettings> {
+    const devicePatch: Partial<StoredSettings> = {};
+    if (patch.uniServerUrl !== undefined) devicePatch.uniServerUrl = patch.uniServerUrl;
+    if (patch.searxngUrl !== undefined) devicePatch.searxngUrl = patch.searxngUrl;
+    if (Object.keys(devicePatch).length) await this.deviceSettings.update(devicePatch);
+
+    const existing = await this.privateSettings();
+    this.current = {
+      providers: patch.providers ? mergeProviders(existing.providers, patch.providers) : existing.providers,
+      roles: patch.roles ?? existing.roles,
+      thinking: patch.thinking ?? existing.thinking,
+    };
+    await writeJson(this.filePath, this.current);
+    log.info('profile_settings_updated', { fields: Object.keys(patch).filter((field) => !['uniServerUrl', 'searxngUrl'].includes(field)) });
+    return this.get();
   }
 }
 

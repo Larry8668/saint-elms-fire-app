@@ -1,6 +1,7 @@
 import type { MiddlewareHandler } from 'hono';
 import type { EngineMe } from '@sef/shared';
 import type { AuthService } from '../profiles/auth';
+import type { AnonymousDataManager } from '../profiles/anonymous';
 import type { Workspace, WorkspaceManager } from '../profiles/workspace';
 import type { SettingsStore } from '../settings/store';
 
@@ -8,6 +9,7 @@ export interface EngineDeps {
   settings: SettingsStore;
   auth: AuthService;
   workspaces: WorkspaceManager;
+  anonymousData: AnonymousDataManager;
 }
 
 export type EngineEnv = { Variables: { me: EngineMe; ws: Workspace; token: string } };

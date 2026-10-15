@@ -1,4 +1,5 @@
 import { SyncAuthError } from '../content/sync';
+import { AnonymousDataBackupError, AnonymousDataClaimedError } from '../profiles/anonymous';
 import { ModelConfigError } from '../models/registry';
 import { UniHttpError, UniUnreachableError } from '../uni/client';
 
@@ -13,8 +14,9 @@ export function friendlyError(error: unknown): string {
 }
 
 /** A university error is reported as 502 (bad upstream), never 401, so it can't sign the student out of the engine. */
-export function errorStatus(error: unknown): 400 | 401 | 502 | 503 | 500 {
-  if (error instanceof ModelConfigError) return 400;
+export function errorStatus(error: unknown): 400 | 401 | 409 | 502 | 503 | 500 {
+  if (error instanceof ModelConfigError || error instanceof AnonymousDataBackupError) return 400;
+  if (error instanceof AnonymousDataClaimedError) return 409;
   if (error instanceof SyncAuthError) return 401;
   if (error instanceof UniUnreachableError) return 503;
   if (error instanceof UniHttpError) return 502;

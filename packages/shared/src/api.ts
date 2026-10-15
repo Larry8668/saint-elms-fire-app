@@ -144,7 +144,7 @@ export interface ProviderConfig {
   apiKey?: string;
 }
 
-/** Device-wide settings. Who is studying comes from the signed-in profile, not from here. */
+/** Combined engine settings: device server endpoints plus profile-local model choices and provider credentials. */
 export interface EngineSettings {
   uniServerUrl: string;
   searxngUrl: string;

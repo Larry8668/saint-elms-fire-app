@@ -78,7 +78,9 @@ pnpm preflight           # green/red checklist before a demo
 
 **Where data lives:**
 - uni server: `.data/uni/` (accounts, releases, dispersal, shares, `audit.jsonl`) and `server/uni/keys/` (the signing key, created on first boot);
-- engine: `.data/engine/` (`profiles.json`, `auth-sessions.json`, `settings.json`, `trust/` for the pinned key, `profiles/<id>/…`).
+- engine: `.data/engine/` (`profiles.json` and `auth-sessions.json` hold device auth state; `settings.json` holds shared server endpoints and any legacy device settings; `trust/` pins the university key; `profiles/<id>/{content,brain,sessions,quizzes}/` is portable student data, while `profiles/<id>/private-settings.json` holds new per-profile model choices and provider credentials. Legacy provider keys are not copied to a student profile automatically.
+
+Legacy anonymous folders at `.data/engine/{content,brain,sessions,quizzes}/` are never assigned at sign-in. After signing in to the intended profile, use `GET /api/anonymous-data` to preview, `POST /api/anonymous-data/backup` to create a safety copy, and `POST /api/anonymous-data/claim` with that response’s `backupId` to import. The original folders remain unchanged; the backup includes only those four data categories, never auth or provider secrets.
 
 **Resetting the demo:** stop everything and delete `.data/engine/` and `.data/uni/`. Both services re-seed the demo accounts on the next boot, and the engine regenerates the three brains, which is deterministic, so you get the same demo every time. Keep `server/uni/keys/` unless you also want to reset the pinned key. If you delete the keys, delete the engine data as well, or sync will (correctly) refuse the new key.
 

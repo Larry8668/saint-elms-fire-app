@@ -1,3 +1,4 @@
+import { createHash } from 'node:crypto';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { createLogger, DEMO_PASSWORD_DEFAULT } from '@sef/shared';
@@ -20,16 +21,25 @@ export interface ProfilePaths {
   brain: string;
   sessions: string;
   quizzes: string;
+  /** Private, non-portable settings (including provider credentials). */
+  privateSettings: string;
 }
 
-export const profilePaths = (profileId: string): ProfilePaths => {
-  const root = path.join(dataDir, 'profiles', profileId.replace(/[^a-z0-9-]/gi, ''));
+function profileDirectory(profileId: string): string {
+  if (!profileId) throw new Error('Profile id must not be empty');
+  if (/^[a-z0-9][a-z0-9_-]{0,127}$/.test(profileId)) return profileId;
+  return `~${createHash('sha256').update(profileId).digest('hex')}`;
+}
+
+export const profilePaths = (profileId: string, rootDir = dataDir): ProfilePaths => {
+  const root = path.join(rootDir, 'profiles', profileDirectory(profileId));
   return {
     root,
     content: path.join(root, 'content'),
     brain: path.join(root, 'brain'),
     sessions: path.join(root, 'sessions'),
     quizzes: path.join(root, 'quizzes'),
+    privateSettings: path.join(root, 'private-settings.json'),
   };
 };
 

@@ -4,6 +4,7 @@ import { config, errorFields, log } from './config';
 import { bootstrapDemo } from './demo/bootstrap';
 import { createApp } from './http/app';
 import { AuthService } from './profiles/auth';
+import { AnonymousDataManager } from './profiles/anonymous';
 import { ProfileRegistry } from './profiles/registry';
 import { AuthSessions } from './profiles/sessions';
 import { WorkspaceManager } from './profiles/workspace';
@@ -19,7 +20,7 @@ async function main() {
 
   if (config.seedDemo) await bootstrapDemo(registry, workspaces);
 
-  const app = createApp({ settings, auth, workspaces });
+  const app = createApp({ settings, auth, workspaces, anonymousData: new AnonymousDataManager() });
   serve({ fetch: app.fetch, port: config.port, hostname: config.host }, (info) => {
     log.info('engine_listening', { url: `http://${config.host}:${info.port}`, data: config.paths.data, seedDemo: config.seedDemo });
   });
