@@ -31,20 +31,27 @@ export const sha256 = (bytes: Uint8Array): string => createHash('sha256').update
 /** Plain text and Markdown: decoded locally, never sent anywhere. */
 export function extractText(bytes: Uint8Array, limits: Limits = {}): ExtractionOutcome {
   const max = limits.maxExtractedChars ?? INGEST_LIMITS.maxExtractedChars;
-  // fatal: false replaces undecodable bytes with U+FFFD — counted and reported below rather
-  // than silently absorbed.
-  const decoded = new TextDecoder('utf-8', { fatal: false }).decode(bytes);
+  // Strict first: a clean decode is the common case. On malformed UTF-8 we still read
+  // what we can — with U+FFFD substitution — but flag the pass partial and say why,
+  // rather than silently absorbing the damage or refusing the file outright.
+  let undecodable = false;
+  let decoded: string;
+  try {
+    decoded = new TextDecoder('utf-8', { fatal: true }).decode(bytes);
+  } catch {
+    undecodable = true;
+    decoded = new TextDecoder('utf-8', { fatal: false }).decode(bytes);
+  }
   // A NUL in the body usually means this was not text at all, whatever it claimed to be.
   if (decoded.includes('\u0000')) {
     return { ok: false, rejection: { code: 'unsupported_media', message: 'That file is not readable text.' } };
   }
-  const undecodable = decoded.split('\uFFFD').length - 1;
   const truncated = countChars(decoded) > max;
   const text = sliceChars(decoded, max);
-  const partial = truncated || undecodable > 0;
+  const partial = truncated || undecodable;
   const notes: string[] = [];
   if (truncated) notes.push(`Only the first ${max.toLocaleString('en-GB')} characters were read`);
-  if (undecodable) notes.push(`${undecodable.toLocaleString('en-GB')} byte${undecodable === 1 ? '' : 's'} could not be decoded and were replaced`);
+  if (undecodable) notes.push('Some bytes were not valid UTF-8 and were replaced');
   return {
     ok: true,
     result: {
@@ -104,6 +111,9 @@ export async function extractPdf(bytes: Uint8Array, reader: PdfReader, limits: L
     const size = countChars(cleaned);
     if (total + joinOverhead + size > maxChars) {
       parts.push(sliceChars(cleaned, Math.max(0, maxChars - total - joinOverhead)));
+      // Report both reasons when they coincide: the stop point and any pages already lost.
+      const reasons = [`Stopped at page ${page} of ${reader.pages} at the ${maxChars.toLocaleString('en-GB')} character limit`];
+      if (failed) reasons.push(`${failed} page${failed === 1 ? '' : 's'} could not be read`);
       return {
         ok: true,
         result: {
@@ -111,7 +121,7 @@ export async function extractPdf(bytes: Uint8Array, reader: PdfReader, limits: L
           text: parts.join('\n\n'),
           sha256: sha256(bytes),
           partial: true,
-          note: `Read ${page - 1} of ${reader.pages} pages before reaching the ${maxChars.toLocaleString('en-GB')} character limit.`,
+          note: `${reasons.join('; ')}.`,
           units: reader.pages,
         },
       };
