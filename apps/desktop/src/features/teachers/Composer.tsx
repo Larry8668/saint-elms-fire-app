@@ -12,6 +12,8 @@ import { TEACHER_LOOK } from './teacher-meta';
 
 const MAX_IMAGE_BYTES = 8 * 1024 * 1024;
 const MAX_TEXTAREA_PX = 200;
+/** The turn contract only carries png/jpeg, so anything else is refused at the boundary. */
+const IMAGE_TYPES = new Set(['image/png', 'image/jpeg']);
 
 export type Attachments = NonNullable<ChatMessage['attachments']>;
 
@@ -50,7 +52,7 @@ export const Composer = forwardRef<ComposerHandle, ComposerProps>(function Compo
   const attach = async (files: FileList | null) => {
     const file = files?.[0];
     if (!file) return;
-    if (!file.type.startsWith('image/')) return toast.error('Only images can be attached for now.');
+    if (!IMAGE_TYPES.has(file.type)) return toast.error('Only PNG and JPEG images can be attached.');
     if (file.size > MAX_IMAGE_BYTES) return toast.error('That image is over 8 MB.');
     try {
       const encoded = await fileToBase64(file);
@@ -92,6 +94,7 @@ export const Composer = forwardRef<ComposerHandle, ComposerProps>(function Compo
           }}
           onPaste={(e) => {
             const file = [...e.clipboardData.files].find((f) => f.type.startsWith('image/'));
+            // Paste surfaces whatever the clipboard holds; the type check in attach() still gates it.
             if (!file) return;
             e.preventDefault();
             const list = new DataTransfer();
@@ -108,7 +111,7 @@ export const Composer = forwardRef<ComposerHandle, ComposerProps>(function Compo
               <ImagePlus />
             </Button>
           </Tooltip>
-          <input ref={fileInput} type="file" accept="image/*" className="hidden" onChange={(e) => { void attach(e.target.files); e.target.value = ''; }} />
+          <input ref={fileInput} type="file" accept="image/png,image/jpeg" className="hidden" onChange={(e) => { void attach(e.target.files); e.target.value = ''; }} />
           <span className={cn('ml-1 inline-flex items-center gap-1.5 rounded-full border border-white/[0.07] px-2 py-0.5 text-[11px] text-night-400')}>
             <look.Icon className={cn('size-3', look.accent)} /> {profile.name}
           </span>

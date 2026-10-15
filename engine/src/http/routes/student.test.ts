@@ -54,3 +54,18 @@ test('anonymous-data claim binds to the authenticated workspace, never a caller-
   assert.equal(accepted.status, 200);
   assert.deepEqual(claims, [{ profileId: 'student-from-session', paths, backupId }]);
 });
+
+test('the legacy client-history /chat endpoint is gone — only /chat/turn admits messages', async () => {
+  const profile = { id: 'student-legacy', name: 'S', email: 's@example.test', cohortId: 'c', programmeId: 'p', offlineReady: true };
+  const app = studentRoutes({
+    settings: {},
+    auth: { resolve: async () => ({ profile, mode: 'offline' as const }) },
+    workspaces: { get: async () => ({ profile, paths: profilePaths(profile.id) }) },
+  } as never);
+  const res = await app.request('/chat', {
+    method: 'POST',
+    headers: { authorization: 'Bearer valid', 'content-type': 'application/json' },
+    body: JSON.stringify({ teacher: 'guide', sessionId: 'invented', messages: [{ role: 'user', content: 'smuggled history' }] }),
+  });
+  assert.equal(res.status, 404, 'a client-supplied history has no route left to arrive by');
+});

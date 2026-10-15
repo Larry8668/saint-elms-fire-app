@@ -15,7 +15,7 @@ The guiding principle: **models propose, code decides.** A small local model (Ge
 | **Ollama + Gemma 4** | Default model for every role (`gemma4:e4b`), including vision | runs locally on :11434 |
 | **SearXNG** | Open-source metasearch for the Philosopher | `infra/searxng`, :8888 |
 | **Zod** | Tool input schemas, structured-output schemas, request validation | throughout |
-| **Hono + SSE** | `/api/chat` streams status, tool, delta, done and error events to the UI | `engine/src/http/routes/student.ts` |
+| **Hono + SSE** | `/api/chat/turn` streams status, tool, delta, done and error events; the conversation registry owns sessions and history | `engine/src/http/routes/student.ts` |
 
 ## 2. The cast
 
@@ -89,8 +89,10 @@ Cited sources are listed first. In the UI, cited lessons are shown as chips, and
 
 Attribution is lexical, not semantic. It reliably separates "the answer used this lesson" from "this lesson happened to share a keyword with the question". A heavily paraphrased answer could still be under-credited. Tests: `engine/src/agents/attribution.test.ts`.
 
-## 5. Chat history
+## 5. Conversations and chat history
 
+- The engine owns conversations: `POST /api/chat/sessions` issues a session id bound to the signed-in student and one teacher, `POST /api/chat/turn` admits exactly one message (`clientMessageId`, no client history), and `POST /api/chat/sessions/:id/handoff` closes a session and issues its successor (`engine/src/agents/conversation.ts`).
+- The registry refuses unknown, foreign, mismatched-teacher, replayed, concurrent or closed turns before any model or store is touched. Deleting a transcript also closes the conversation.
 - Every conversation is a JSON file in the student's workspace: `.data/engine/profiles/<id>/sessions/<sessionId>.json` (`engine/src/sessions/store.ts`).
 - Each assistant turn stores its `Verification`, so a reopened chat still shows its sources, checks and model. Images are never stored, only how many were sent.
 - API: `GET /api/sessions?teacher=guide`, `GET /api/sessions/:id`, `DELETE /api/sessions/:id`.

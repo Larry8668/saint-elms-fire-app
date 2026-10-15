@@ -135,6 +135,21 @@ test('a hand-off is the only way to change teacher, and it closes the old conver
   }
 });
 
+test('closing a conversation ends it without a successor — a deleted transcript cannot still answer', async () => {
+  const { conversations, cleanup } = await registry();
+  try {
+    const session = await conversations.open({ profileId: STUDENT, teacher: 'guide' });
+    assert.equal(await conversations.close({ sessionId: session.id, profileId: STUDENT }), true);
+    assert.equal(await rejectionOf(() => conversations.admit({ sessionId: session.id, profileId: STUDENT, teacher: 'guide', clientMessageId: 'm-1' })), 'session_closed');
+    assert.equal(await conversations.close({ sessionId: session.id, profileId: STUDENT }), false, 'already closed is a no-op');
+    assert.equal(await conversations.close({ sessionId: 's-missing', profileId: STUDENT }), false, 'unknown ids are a no-op');
+    const theirs = await conversations.open({ profileId: OTHER, teacher: 'guide' });
+    assert.equal(await conversations.close({ sessionId: theirs.id, profileId: STUDENT }), false, "one student cannot close another's");
+  } finally {
+    await cleanup();
+  }
+});
+
 test('sessions survive a restart and stay bound to the student who opened them', async () => {
   const dir = await mkdtemp(path.join(tmpdir(), 'sef-conversations-restart-'));
   try {

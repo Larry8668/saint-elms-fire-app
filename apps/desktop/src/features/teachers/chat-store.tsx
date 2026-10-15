@@ -1,8 +1,8 @@
-import { TEACHER_IDS, type ChatAttachment, type ChatTurn, type SessionDetail, type TeacherId, type Verification } from '@sef/shared';
+import { TEACHER_IDS, type ChatAttachment, type ChatStreamEvent, type SessionDetail, type TeacherId, type Verification } from '@sef/shared';
 import { useQueryClient } from '@tanstack/react-query';
 import { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 import { toast } from 'sonner';
-import { api, EngineError, streamChat } from '@/lib/api';
+import { api, conversationApi, EngineError, streamTurn, TurnRefused } from '@/lib/api';
 import { log } from '@/lib/log';
 import { keys } from '@/lib/queries';
 
@@ -32,7 +32,8 @@ export interface ChatMessage {
 }
 
 export interface Thread {
-  sessionId: string;
+  /** Server-issued conversation id; null until the first turn is sent. */
+  sessionId: string | null;
   messages: ChatMessage[];
   busy: boolean;
   /** A saved conversation is being loaded from the engine. */
@@ -46,6 +47,8 @@ interface ChatStore {
   retry: (teacher: TeacherId) => Promise<void>;
   stop: (teacher: TeacherId) => void;
   reset: (teacher: TeacherId) => void;
+  /** Records an accepted hand-off with the engine and points the target thread at the successor. */
+  handoff: (from: TeacherId, to: TeacherId) => Promise<void>;
   /** Opens a saved conversation from this device. */
   open: (teacher: TeacherId, sessionId: string) => Promise<void>;
   remove: (teacher: TeacherId, sessionId: string) => Promise<void>;
@@ -53,11 +56,11 @@ interface ChatStore {
 
 const ChatContext = createContext<ChatStore | null>(null);
 
-const newSessionId = (teacher: TeacherId) => `${teacher}-${new Date().toISOString().slice(0, 10)}-${Math.random().toString(36).slice(2, 8)}`;
-const newThread = (teacher: TeacherId): Thread => ({ sessionId: newSessionId(teacher), messages: [], busy: false });
+const newThread = (): Thread => ({ sessionId: null, messages: [], busy: false });
 const uid = () => Math.random().toString(36).slice(2, 10);
 
-const toTurn = (m: ChatMessage): ChatTurn => ({ role: m.role, content: m.content, attachments: m.attachments?.map(({ preview: _p, ...a }) => a) });
+/** Refusals the client can heal itself: the session is gone or finished, so reopen and resend. */
+const REOPENABLE = new Set(['unknown_session', 'session_closed']);
 
 function fromSession(session: SessionDetail): ChatMessage[] {
   return session.turns.map((t, i) => ({
@@ -96,7 +99,7 @@ function activeStore(profileId: string) {
 
 /** Holds one conversation per teacher so switching screens or teachers never loses a thread. */
 export function ChatProvider({ profileId, children }: { profileId: string; children: ReactNode }) {
-  const [threads, setThreads] = useState<Record<TeacherId, Thread>>({ friend: newThread('friend'), guide: newThread('guide'), philosopher: newThread('philosopher') });
+  const [threads, setThreads] = useState<Record<TeacherId, Thread>>({ friend: newThread(), guide: newThread(), philosopher: newThread() });
   const aborts = useRef<Partial<Record<TeacherId, AbortController>>>({});
   /** Source of truth between renders: streaming events and retry read it synchronously. */
   const threadsRef = useRef(threads);
@@ -124,7 +127,7 @@ export function ChatProvider({ profileId, children }: { profileId: string; child
       } catch (error) {
         log.warn('chat_session_load_failed', { teacher, sessionId, error: String(error) });
         active.set(teacher, null);
-        update(teacher, () => newThread(teacher));
+        update(teacher, () => newThread());
         if (!quiet && !(error instanceof EngineError && error.status === 404)) toast.error('Could not open that conversation.');
       }
     },
@@ -145,43 +148,65 @@ export function ChatProvider({ profileId, children }: { profileId: string; child
       if (thread.busy || thread.loading) return;
       const userMsg: ChatMessage = { id: uid(), role: 'user', content: text, attachments };
       const assistantId = uid();
-      const history = [...thread.messages, userMsg].filter((m) => !m.error && m.content).map(toTurn);
       const startedAt = Date.now();
 
       update(teacher, (t) => ({ ...t, busy: true, messages: [...t.messages, userMsg, { id: assistantId, role: 'assistant', content: '', pending: true, trace: [], startedAt }] }));
 
       const controller = new AbortController();
       aborts.current[teacher] = controller;
-      log.info('chat_send', { teacher, sessionId: thread.sessionId, images: attachments?.length ?? 0 });
 
       const addStep = (step: Omit<TraceStep, 'at'>) => patchMessage(teacher, assistantId, (m) => ({ ...m, trace: [...(m.trace ?? []), { ...step, at: Date.now() }] }));
+      const onEvent = (sessionId: string) => (event: ChatStreamEvent) => {
+        switch (event.type) {
+          case 'status':
+            addStep({ kind: 'status', label: event.message });
+            break;
+          case 'tool':
+            addStep({ kind: 'tool', label: event.tool, detail: event.summary });
+            break;
+          case 'delta':
+            patchMessage(teacher, assistantId, (m) => ({ ...m, content: m.content + event.text, firstTokenAt: m.firstTokenAt ?? Date.now() }));
+            break;
+          case 'done':
+            patchMessage(teacher, assistantId, (m) => ({ ...m, content: event.text, pending: false, finishedAt: Date.now(), verification: event.verification }));
+            active.set(teacher, sessionId);
+            void queryClient.invalidateQueries({ queryKey: keys.scoped.sessions(profileId, teacher) });
+            break;
+          case 'error':
+            log.warn('chat_error', { teacher, message: event.message });
+            patchMessage(teacher, assistantId, (m) => ({ ...m, pending: false, finishedAt: Date.now(), error: event.message }));
+            break;
+        }
+      };
 
-      await streamChat(
-        { teacher, sessionId: thread.sessionId, messages: history.slice(-12) },
-        (event) => {
-          switch (event.type) {
-            case 'status':
-              addStep({ kind: 'status', label: event.message });
-              break;
-            case 'tool':
-              addStep({ kind: 'tool', label: event.tool, detail: event.summary });
-              break;
-            case 'delta':
-              patchMessage(teacher, assistantId, (m) => ({ ...m, content: m.content + event.text, firstTokenAt: m.firstTokenAt ?? Date.now() }));
-              break;
-            case 'done':
-              patchMessage(teacher, assistantId, (m) => ({ ...m, content: event.text, pending: false, finishedAt: Date.now(), verification: event.verification }));
-              active.set(teacher, thread.sessionId);
-              void queryClient.invalidateQueries({ queryKey: keys.scoped.sessions(profileId, teacher) });
-              break;
-            case 'error':
-              log.warn('chat_error', { teacher, message: event.message });
-              patchMessage(teacher, assistantId, (m) => ({ ...m, pending: false, finishedAt: Date.now(), error: event.message }));
-              break;
-          }
-        },
-        controller.signal,
-      );
+      // A conversation is opened lazily on the first turn: the server issues the id, so there is
+      // nothing to mint client-side and nothing to fake before the server agrees.
+      const ensureSession = async (): Promise<string> => {
+        const existing = threadsRef.current[teacher].sessionId;
+        if (existing) return existing;
+        const conversation = await conversationApi.open(teacher);
+        update(teacher, (t) => ({ ...t, sessionId: conversation.sessionId }));
+        return conversation.sessionId;
+      };
+
+      try {
+        let sessionId = await ensureSession();
+        log.info('chat_send', { teacher, sessionId, images: attachments?.length ?? 0 });
+        const turn = { sessionId, teacher, clientMessageId: userMsg.id, message: text, attachments: attachments?.map(({ preview: _p, ...a }) => a) };
+        try {
+          await streamTurn(turn, onEvent(sessionId), controller.signal);
+        } catch (error) {
+          if (!(error instanceof TurnRefused && REOPENABLE.has(error.code))) throw error;
+          // The session we knew is gone or finished — reopen once and send the same message again.
+          sessionId = (await conversationApi.open(teacher)).sessionId;
+          update(teacher, (t) => ({ ...t, sessionId }));
+          await streamTurn({ ...turn, sessionId }, onEvent(sessionId), controller.signal);
+        }
+      } catch (error) {
+        const message = error instanceof TurnRefused ? error.message : 'Could not send that message.';
+        log.warn('chat_send_refused', { teacher, code: error instanceof TurnRefused ? error.code : 'request_failed' });
+        patchMessage(teacher, assistantId, (m) => ({ ...m, pending: false, finishedAt: Date.now(), error: message }));
+      }
 
       patchMessage(teacher, assistantId, (m) => (m.pending ? { ...m, pending: false, finishedAt: Date.now(), stopped: controller.signal.aborted } : m));
       update(teacher, (t) => ({ ...t, busy: false }));
@@ -211,7 +236,24 @@ export function ChatProvider({ profileId, children }: { profileId: string; child
     (teacher: TeacherId) => {
       aborts.current[teacher]?.abort();
       active.set(teacher, null);
-      update(teacher, () => newThread(teacher));
+      update(teacher, () => newThread());
+    },
+    [active, update],
+  );
+
+  const handoff = useCallback<ChatStore['handoff']>(
+    async (from, to) => {
+      const sessionId = threadsRef.current[from].sessionId;
+      if (!sessionId) return; // nothing was ever said on the source thread — the view just switches
+      try {
+        const next = await conversationApi.handoff(sessionId, to, 'the student accepted a hand-off');
+        update(to, () => ({ sessionId: next.sessionId, messages: [], busy: false }));
+        active.set(to, next.sessionId);
+        log.info('chat_handoff_recorded', { from, to, sessionId: next.sessionId });
+      } catch (error) {
+        log.warn('chat_handoff_failed', { from, to, error: String(error) });
+        toast.error('The hand-off could not be recorded, so the original conversation stays open.');
+      }
     },
     [active, update],
   );
@@ -240,7 +282,7 @@ export function ChatProvider({ profileId, children }: { profileId: string; child
     [queryClient, reset],
   );
 
-  const value = useMemo(() => ({ threads, send, retry, stop, reset, open, remove }), [threads, send, retry, stop, reset, open, remove]);
+  const value = useMemo(() => ({ threads, send, retry, stop, reset, handoff, open, remove }), [threads, send, retry, stop, reset, handoff, open, remove]);
   return <ChatContext.Provider value={value}>{children}</ChatContext.Provider>;
 }
 
