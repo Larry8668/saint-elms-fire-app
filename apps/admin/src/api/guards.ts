@@ -25,11 +25,13 @@ export interface AuthSession {
 /** `/v1/auth/get-session` answers `null` when there is no session, else `{ session, user }`. */
 export function readAuthSession(raw: unknown): AuthSession | null {
   if (raw === null || raw === undefined) return null;
-  if (!isRecord(raw) || !isRecord(raw.user)) return null;
+  if (!isRecord(raw) || !isRecord(raw.user) || !isRecord(raw.session)) return null;
   const user = raw.user;
+  const session = raw.session;
   if (typeof user.id !== 'string' || !user.id) return null;
   if (typeof user.email !== 'string' || !user.email) return null;
-  const session = isRecord(raw.session) ? raw.session : null;
+  // A `user` with no `session` is not a session: answer null, not a half-record.
+  if (typeof session.id !== 'string' || !session.id) return null;
   return {
     user: {
       id: user.id,
@@ -37,8 +39,8 @@ export function readAuthSession(raw: unknown): AuthSession | null {
       name: typeof user.name === 'string' ? user.name : '',
       emailVerified: user.emailVerified === true,
     },
-    sessionId: typeof session?.id === 'string' ? session.id : '',
-    createdAt: isTimestamp(session?.createdAt) ? session.createdAt : null,
+    sessionId: session.id,
+    createdAt: isTimestamp(session.createdAt) ? session.createdAt : null,
   };
 }
 
