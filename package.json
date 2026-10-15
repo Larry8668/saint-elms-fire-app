@@ -2,7 +2,7 @@
   "name": "saint-elms-fire-app",
   "private": true,
   "version": "0.1.0",
-  "description": "Saint Elms Fire — a local-first second brain with three Socratic teachers, powered by open-weight Gemma 4.",
+  "description": "Saint Elms Fire \u2014 a local-first second brain with three Socratic teachers, powered by open-weight Gemma 4.",
   "license": "Apache-2.0",
   "type": "module",
   "packageManager": "pnpm@10.18.0",
@@ -27,9 +27,12 @@
     "search:up": "docker compose up -d searxng",
     "search:down": "docker compose stop searxng",
     "ollama:pull": "ollama pull gemma4:e4b && ollama pull embeddinggemma",
-    "keys:uni": "pnpm --filter @sef/uni-server keys"
+    "keys:uni": "pnpm --filter @sef/uni-server keys",
+    "test:e2e": "playwright test",
+    "test:e2e:install": "playwright install chromium"
   },
   "devDependencies": {
+    "@playwright/test": "1.64.0",
     "concurrently": "^9.2.1",
     "typescript": "^5.9.3"
   }
