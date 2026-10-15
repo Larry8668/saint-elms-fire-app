@@ -217,11 +217,27 @@ export class SourceIngestor {
     });
   }
 
+  /**
+   * Belt-and-suspenders over the per-profile store: the jobs directory only holds this
+   * profile's jobs today, but the ownership rule is stated here so it survives any store
+   * that ever becomes shared. A job that is not this profile's answers 404, not 403 —
+   * its existence is not another profile's business.
+   */
+  private async assertOwns(id: string): Promise<void> {
+    const job = await this.jobs.read(id);
+    const identity = await this.profile();
+    if (!job || job.profile.studentId !== identity.studentId) {
+      throw new JobConflictError(`Job ${id} does not exist.`);
+    }
+  }
+
   async cancel(id: string): Promise<void> {
+    await this.assertOwns(id);
     await cancelJob(this.jobs, id);
   }
 
   async retry(id: string): Promise<void> {
+    await this.assertOwns(id);
     await retryJob(this.jobs, id);
   }
 }

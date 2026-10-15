@@ -109,6 +109,7 @@ export function sourceRoutes(deps: EngineDeps) {
       await (await ingestorFor(c.get('ws'))).cancel(c.req.param('jobId'));
       return c.body(null, 204);
     } catch (error) {
+      if (error instanceof SourceRejection) return c.json({ error: error.message, code: error.code }, error.status);
       if (error instanceof JobConflictError) return c.json({ error: error.message, code: 'job_conflict' }, 404);
       if (error instanceof JobStateError) return c.json({ error: error.message, code: 'job_state' }, 409);
       return c.json({ error: friendlyError(error), code: 'cancel_failed' }, 500);
@@ -120,6 +121,7 @@ export function sourceRoutes(deps: EngineDeps) {
       await (await ingestorFor(c.get('ws'))).retry(c.req.param('jobId'));
       return c.body(null, 202);
     } catch (error) {
+      if (error instanceof SourceRejection) return c.json({ error: error.message, code: error.code }, error.status);
       if (error instanceof JobConflictError) return c.json({ error: error.message, code: 'job_conflict' }, 404);
       if (error instanceof JobStateError) return c.json({ error: error.message, code: 'job_state' }, 409);
       return c.json({ error: friendlyError(error), code: 'retry_failed' }, 500);
