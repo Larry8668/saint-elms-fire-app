@@ -1,5 +1,6 @@
 import type { CoursewareIndex, ProgrammeManifestResult } from './courseware';
 import type { CourseAvailability } from '@sef/shared';
+import type { AccountAuth } from './account-auth';
 import type { SigningKeys } from './signing';
 import type { AccountStore } from './store/accounts';
 import type { AuditLog } from './store/audit';
@@ -19,4 +20,6 @@ export interface UniDeps {
   programme?: ProgrammeManifestResult | null;
   /** Content/release/selection per row, derived from the content tree at boot. */
   availability?: Record<string, CourseAvailability>;
+  /** better-auth account endpoints; absent when the deployment has no database configured. */
+  accountAuth?: AccountAuth | null;
 }

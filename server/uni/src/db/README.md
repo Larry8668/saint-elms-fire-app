@@ -32,7 +32,9 @@ The integration command generates a random test password and free loopback port,
 
 ## Tables
 
-The initial migration adds `student_profiles`, `enrolments`, `course_selections`, `staff_memberships`, and `audit_events`. Each mutable record uses a positive `version` for optimistic concurrency. Foreign keys and natural-key uniqueness protect enrollment and course assignment relationships; code, status, dates, names, and audit JSON have checks. No auth-library/user/password schema is created.
+The initial migration adds `student_profiles`, `enrolments`, `course_selections`, `staff_memberships`, and `audit_events`. Each mutable record uses a positive `version` for optimistic concurrency. Foreign keys and natural-key uniqueness protect enrollment and course assignment relationships; code, status, dates, names, and audit JSON have checks.
+
+Migration 002 adds the better-auth account tables (`user`, `session`, `account`, `deviceCode`, `twoFactor`) for the plugin set in `src/account-auth.ts`, plus `auth_kv` — the database backing for rate limiting and hashed short-lived verification tokens. It contains no custom password tables: credentials live in better-auth's `account` rows.
 
 ## Readiness, backups, and restore boundary
 

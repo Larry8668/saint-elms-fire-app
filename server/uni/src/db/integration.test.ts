@@ -1,5 +1,7 @@
 import assert from 'node:assert/strict';
+import { createHash } from 'node:crypto';
 import { randomUUID } from 'node:crypto';
+import { readFile } from 'node:fs/promises';
 import { Pool } from 'pg';
 import test from 'node:test';
 import { closeDatabasePool, createDatabasePool, parseDatabaseConfig, type DatabaseConfig } from './index';
@@ -51,21 +53,27 @@ async function expectSqlState(operation: Promise<unknown>, code: string): Promis
 test('migrates an empty schema and creates the five persistence tables', testOptions, async () => {
   await withTestSchema(async (pool) => {
     const result = await migrateDatabase(pool);
-    assert.deepEqual(result.appliedVersions, [1]);
-    assert.equal(result.currentVersion, 1);
+    assert.deepEqual(result.appliedVersions, [1, 2]);
+    assert.equal(result.currentVersion, 2);
 
     const tables = await pool.query<{ table_name: string }>(
       `SELECT table_name FROM information_schema.tables
        WHERE table_schema = current_schema() ORDER BY table_name`,
     );
-    assert.deepEqual(tables.rows.map((row) => row.table_name), [
+    assert.deepEqual(new Set(tables.rows.map((row) => row.table_name)), new Set([
+      'account',
       'audit_events',
+      'auth_kv',
       'course_selections',
+      'deviceCode',
       'enrolments',
       'schema_migrations',
+      'session',
       'staff_memberships',
       'student_profiles',
-    ]);
+      'twoFactor',
+      'user',
+    ]));
   });
 });
 
@@ -73,9 +81,45 @@ test('migration runs are repeatable and preserve the applied checksum', testOpti
   await withTestSchema(async (pool) => {
     const first = await migrateDatabase(pool);
     const second = await migrateDatabase(pool);
-    assert.deepEqual(first.appliedVersions, [1]);
+    assert.deepEqual(first.appliedVersions, [1, 2]);
     assert.deepEqual(second.appliedVersions, []);
-    assert.equal(second.currentVersion, 1);
+    assert.equal(second.currentVersion, 2);
+  });
+});
+
+test('upgrades a version-1 database, preserving its rows and the recorded checksum', testOptions, async () => {
+  await withTestSchema(async (pool) => {
+    const sql = await readFile(new URL('./migrations/001_university_persistence.sql', import.meta.url), 'utf8');
+    const checksum = createHash('sha256').update(sql).digest('hex');
+    await pool.query(`CREATE TABLE schema_migrations (
+      version integer PRIMARY KEY CHECK (version > 0),
+      name text NOT NULL UNIQUE,
+      checksum text NOT NULL CHECK (checksum ~ '^[a-f0-9]{64}$'),
+      applied_at timestamptz NOT NULL DEFAULT now()
+    )`);
+    await pool.query(sql);
+    await pool.query('INSERT INTO schema_migrations (version, name, checksum) VALUES (1, $1, $2)', [
+      'university_persistence',
+      checksum,
+    ]);
+    const profile = await pool.query<{ id: string }>(
+      "INSERT INTO student_profiles (legal_name) VALUES ('Ada Example') RETURNING id",
+    );
+
+    const result = await migrateDatabase(pool);
+    assert.deepEqual(result.appliedVersions, [2]);
+    assert.equal(result.currentVersion, 2);
+
+    const retained = await pool.query<{ legal_name: string }>(
+      'SELECT legal_name FROM student_profiles WHERE id = $1',
+      [profile.rows[0]!.id],
+    );
+    assert.deepEqual(retained.rows, [{ legal_name: 'Ada Example' }]);
+    const authTables = await pool.query<{ n: string }>(
+      `SELECT count(*)::text AS n FROM information_schema.tables
+       WHERE table_schema = current_schema() AND table_name IN ('account', 'auth_kv', 'deviceCode', 'session', 'twoFactor', 'user')`,
+    );
+    assert.equal(authTables.rows[0]!.n, '6');
   });
 });
 

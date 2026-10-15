@@ -6,6 +6,8 @@ import { test } from 'node:test';
 import { CONTRACT_VERSION, ProgrammeSchema, type CourseAvailability, type Programme } from '@sef/shared';
 import { hashPassword, signToken, TokenError, verifyPassword, verifyToken } from '@sef/shared/node';
 import { createApp } from './app';
+import { accountAuthOptions, accountAuthOrigins, redactSecrets, type AccountAuth } from './account-auth';
+import { log } from './logger';
 import { config } from './config';
 import type { CoursewareIndex, ProgrammeManifestResult } from './courseware';
 import { loadSigningKeys } from './signing';
@@ -21,7 +23,7 @@ const course = (id: string, semesterNumber: number) => ({
   lessons: [],
 });
 
-async function harness() {
+async function harness(opts: { accountAuth?: AccountAuth | null } = {}) {
   const dir = await mkdtemp(path.join(tmpdir(), 'sef-uni-'));
   const seed = path.join(dir, 'releases.seed.json');
   await writeFile(
@@ -91,7 +93,7 @@ async function harness() {
   const shares = new ShareStore(dir);
   const keys = await loadSigningKeys(path.join(dir, 'keys'));
   await Promise.all([releases.load(), accounts.load(), audit.load(), dispersal.load(), shares.load()]);
-  const app = createApp({ courseware, programme: programmeResult, availability, releases, accounts, audit, dispersal, shares, keys });
+  const app = createApp({ courseware, programme: programmeResult, availability, releases, accounts, audit, dispersal, shares, keys, accountAuth: opts.accountAuth });
 
   const login = async (email: string) => {
     const res = await app.request('/v1/auth/login', {
@@ -198,4 +200,150 @@ test('admin release toggles change what a cohort can download', async () => {
 
   const audit = (await (await get('/v1/admin/audit', admin)).json()) as { action: string }[];
   assert.ok(audit.some((e) => e.action === 'courses_released'));
+});
+
+test('account endpoints fail closed while no database is configured', async () => {
+  const { app } = await harness();
+  const res = await app.request('/v1/auth/sign-up/email', {
+    method: 'POST',
+    headers: { 'content-type': 'application/json', origin: 'http://localhost:4200' },
+    body: JSON.stringify({ email: 'x@y.z', password: 'long-enough-password', name: 'X' }),
+  });
+  assert.equal(res.status, 503);
+  assert.deepEqual(await res.json(), { error: 'account_auth_unavailable' });
+});
+
+test('a session cookie cannot substitute for bearer-token authorization', async () => {
+  const { app } = await harness();
+  const res = await app.request('/v1/admin/overview', {
+    headers: { cookie: 'better-auth.session_token=forged-cookie-value' },
+  });
+  assert.equal(res.status, 401);
+});
+
+const stubAccountAuth: AccountAuth = {
+  handler: async (request: Request) =>
+    new Response(JSON.stringify({ stubPath: new URL(request.url).pathname }), {
+      status: 200,
+      headers: { 'content-type': 'application/json' },
+    }),
+  storage: {} as AccountAuth['storage'],
+  trustedOrigins: ['http://localhost:4200'],
+};
+
+test('account routes delegate to the wrapped account handler without disturbing login routes', async () => {
+  const { app } = await harness({ accountAuth: stubAccountAuth });
+
+  const confirm = await app.request('/v1/auth/magic-link/confirm?token=abc123&callbackURL=%2F');
+  assert.equal(confirm.status, 200);
+  assert.deepEqual(await confirm.json(), { stubPath: '/v1/auth/magic-link/confirm' });
+
+  const signUp = await app.request('/v1/auth/sign-up/email', {
+    method: 'POST',
+    headers: { 'content-type': 'application/json', origin: 'http://localhost:4200' },
+    body: JSON.stringify({}),
+  });
+  assert.equal(signUp.status, 200);
+  assert.deepEqual(await signUp.json(), { stubPath: '/v1/auth/sign-up/email' });
+
+  const login = await app.request('/v1/auth/login', {
+    method: 'POST',
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify({ email: 'nobody@saintelms.local', password: 'wrong-password' }),
+  });
+  assert.equal(login.status, 401);
+});
+
+test('account auth origins accept only bare origins and never imply localhost', () => {
+  assert.deepEqual(accountAuthOrigins('https://uni.example', [], true), ['https://uni.example']);
+  assert.deepEqual(
+    accountAuthOrigins('http://localhost:4200', ['http://localhost:5173', 'http://localhost:4200'], false),
+    ['http://localhost:4200', 'http://localhost:5173'],
+  );
+  assert.ok(!accountAuthOrigins('https://uni.example', [], true).includes('http://localhost:4200'));
+
+  assert.throws(() => accountAuthOrigins('http://uni.example', [], true), /https origins in production/);
+  assert.throws(() => accountAuthOrigins('http://uni.example', [], false), /loopback in development/);
+  assert.throws(() => accountAuthOrigins('not a url', [], true), /invalid URL/);
+  assert.throws(() => accountAuthOrigins('https://uni.example', ['ftp://files.example'], true), /http or https/);
+  assert.throws(() => accountAuthOrigins('https://uni.example', ['https://user:pw@files.example'], true), /bare origins/);
+  assert.throws(() => accountAuthOrigins('https://uni.example', ['https://files.example/path'], true), /bare origins/);
+  assert.throws(() => accountAuthOrigins('https://uni.example', ['https://files.example/?q=1'], true), /bare origins/);
+  assert.throws(() => accountAuthOrigins('https://uni.example', ['https://files.example/#frag'], true), /bare origins/);
+  assert.throws(() => accountAuthOrigins('http://localhost:4200', ['http://10.0.0.5:5173'], false), /loopback in development/);
+});
+
+test('account auth options pin hashed identifiers, reset revocation, and https-derived cookies', () => {
+  const stubPool = {} as never;
+  const stubMail = {} as never;
+  const https = accountAuthOptions({ pool: stubPool, mail: stubMail, publicUrl: 'https://uni.example', secret: 'x'.repeat(32) });
+  assert.equal(https.advanced?.useSecureCookies, true);
+  assert.equal(https.emailAndPassword?.revokeSessionsOnPasswordReset, true);
+  assert.equal(https.verification?.storeIdentifier, 'hashed');
+  assert.deepEqual(https.trustedOrigins, ['https://uni.example']);
+
+  const http = accountAuthOptions({ pool: stubPool, mail: stubMail, publicUrl: 'http://localhost:4200', secret: 'x'.repeat(32) });
+  assert.equal(http.advanced?.useSecureCookies, false);
+});
+
+test('library error messages never reach the logger payload', async (t) => {
+  const calls: unknown[] = [];
+  t.mock.method(log, 'error', (event: string, fields?: unknown) => calls.push([event, fields]));
+  const options = accountAuthOptions({ pool: {} as never, mail: {} as never, publicUrl: 'https://uni.example', secret: 'x'.repeat(32) });
+  options.logger?.log?.('error', 'sign-in failed for victim@example.test token=t0kenV4lue password=hunter2 url=https://uni.example/leak');
+  assert.equal(calls.length, 1);
+  const [event, fields] = calls[0] as [string, { message?: string }];
+  assert.equal(event, 'better_auth');
+  assert.equal(fields?.message, 'Authentication library reported an error');
+  const serialized = JSON.stringify(calls);
+  for (const secret of ['victim@example.test', 't0kenV4lue', 'hunter2', 'leak']) {
+    assert.ok(!serialized.includes(secret), `expected ${secret} to stay out of logs`);
+  }
+});
+
+test('redactSecrets returns a fixed message regardless of library input', () => {
+  assert.equal(redactSecrets('short pw leak'), 'Authentication library reported an error');
+  assert.equal(redactSecrets(''), 'Authentication library reported an error');
+});
+
+test('request logging and error responses redact account auth paths', async (t) => {
+  const entries: { event: string; fields?: { path?: string } }[] = [];
+  t.mock.method(log, 'info', (event: string, fields?: { path?: string }) => entries.push({ event, fields }));
+  const { app } = await harness({ accountAuth: stubAccountAuth });
+
+  await app.request('/v1/auth/reset-password/t0kenV4lueInPath', {
+    method: 'POST',
+    headers: { 'content-type': 'application/json', origin: 'http://localhost:4200' },
+    body: JSON.stringify({ newPassword: 'x' }),
+  });
+  const requestLog = entries.find((entry) => entry.event === 'request');
+  assert.equal(requestLog?.fields?.path, '/v1/auth/[redacted]');
+
+  const health = await app.request('/health');
+  assert.equal(health.status, 200);
+  const healthLog = entries.find((entry) => entry.event === 'request' && entry.fields?.path !== '/v1/auth/[redacted]');
+  assert.equal(healthLog?.fields?.path, '/health');
+});
+
+test('account endpoints use the explicit trusted-origin cors policy while legacy login stays permissive', async () => {
+  const { app } = await harness({ accountAuth: stubAccountAuth });
+
+  const allowed = await app.request('/v1/auth/sign-in/email', {
+    method: 'OPTIONS',
+    headers: { origin: 'http://localhost:4200', 'access-control-request-method': 'POST' },
+  });
+  assert.equal(allowed.headers.get('access-control-allow-origin'), 'http://localhost:4200');
+  assert.equal(allowed.headers.get('access-control-allow-credentials'), 'true');
+
+  const denied = await app.request('/v1/auth/sign-in/email', {
+    method: 'OPTIONS',
+    headers: { origin: 'https://evil.example', 'access-control-request-method': 'POST' },
+  });
+  assert.equal(denied.headers.get('access-control-allow-origin'), null);
+
+  const legacy = await app.request('/v1/auth/login', {
+    method: 'OPTIONS',
+    headers: { origin: 'https://anywhere.example', 'access-control-request-method': 'POST' },
+  });
+  assert.equal(legacy.headers.get('access-control-allow-origin'), '*');
 });

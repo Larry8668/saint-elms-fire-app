@@ -49,7 +49,7 @@ try {
     await run('pnpm', ['--filter', '@sef/uni-server', command], { cwd: repoDir, env: cliEnv });
   }
   await run('pnpm', [
-    'exec', 'node', '--import', 'tsx', '--test', 'src/db/integration.test.ts',
+    'exec', 'node', '--import', 'tsx', '--test', 'src/db/integration.test.ts', 'src/account-auth.integration.test.ts',
   ], {
     cwd: packageDir,
     env: {

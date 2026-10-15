@@ -25,4 +25,13 @@ export const config = {
   /** Student tokens are long-lived so devices can keep working offline between syncs. */
   studentTokenHours: Number(env('STUDENT_TOKEN_HOURS', String(24 * 30))),
   adminTokenHours: Number(env('ADMIN_TOKEN_HOURS', '12')),
+  /** Public origin of this server, used for account links and trusted-origin checks. */
+  publicUrl: env('UNI_PUBLIC_URL', 'http://localhost:4200'),
+  /** Additional origins accepted for account redirects (comma-separated). */
+  extraTrustedOrigins: env('UNI_TRUSTED_ORIGINS', '')
+    .split(',')
+    .map((origin) => origin.trim())
+    .filter(Boolean),
+  /** When set, the better-auth account layer runs against this database. */
+  databaseUrl: process.env.UNI_DATABASE_URL?.trim() || undefined,
 };
