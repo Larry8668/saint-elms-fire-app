@@ -1,11 +1,18 @@
-import { readdir, rm } from 'node:fs/promises';
+import { mkdir, readdir, rename, rm } from 'node:fs/promises';
 import path from 'node:path';
 import { lessonFromMarkdown, type CourseSummary, type Lesson } from '@sef/shared';
 import { log } from '../config';
 import { readJson, readText, writeFileAtomic, writeJson } from '../lib/fs';
 
+/** True when the path exists; used to decide whether an install has a previous version. */
+async function exists(target: string): Promise<boolean> {
+  return readdir(path.dirname(target)).then((entries) => entries.includes(path.basename(target)), () => false);
+}
+
 export interface InstalledCourse extends CourseSummary {
   installedAt: string;
+  /** False when the manifest that produced this install predates signed metadata. */
+  signedMetadata?: boolean;
 }
 
 interface InstalledIndex {
@@ -31,19 +38,52 @@ export class ContentStore {
     return this.index.courses;
   }
 
-  async install(course: CourseSummary, files: Array<{ path: string; content: string }>): Promise<void> {
-    const dir = path.join(this.dir, 'courses', course.id);
-    await rm(dir, { recursive: true, force: true });
+  /**
+   * Replace a course's files as a unit. The new tree is staged beside the live one and only
+   * swapped in once every file is written, so a failure or a crash mid-install leaves the
+   * previous working installation exactly as it was rather than half-replaced.
+   */
+  async install(course: CourseSummary, files: Array<{ path: string; content: string }>, signedMetadata = true): Promise<void> {
+    const coursesDir = path.join(this.dir, 'courses');
+    const dir = path.join(coursesDir, course.id);
+    const staging = `${dir}.staging-${process.pid}-${Date.now().toString(36)}`;
+    const retired = `${dir}.retired-${process.pid}-${Date.now().toString(36)}`;
+
+    // Everything that can reject the package does so before the live tree is touched.
     for (const file of files) {
-      const target = path.resolve(dir, file.path);
-      if (!target.startsWith(dir + path.sep)) throw new Error(`Refusing path outside course dir: ${file.path}`);
-      await writeFileAtomic(target, file.content);
+      const target = path.resolve(staging, file.path);
+      if (!target.startsWith(staging + path.sep)) throw new Error(`Refusing path outside course dir: ${file.path}`);
     }
-    const courses = await this.installed();
-    courses[course.id] = { ...course, installedAt: new Date().toISOString() };
+
+    let hadPrevious = false;
+    try {
+      await rm(staging, { recursive: true, force: true });
+      // Created up front so a course with no files still has a real directory to swap in.
+      await mkdir(staging, { recursive: true });
+      for (const file of files) {
+        const target = path.resolve(staging, file.path);
+        await writeFileAtomic(target, file.content);
+      }
+      hadPrevious = await exists(dir);
+      if (hadPrevious) await rename(dir, retired);
+      await rename(staging, dir);
+    } catch (error) {
+      // Put the previous installation back before surfacing the failure.
+      await rm(staging, { recursive: true, force: true }).catch(() => {});
+      if (hadPrevious && !(await exists(dir))) {
+        await rename(retired, dir).catch((rollback) => log.error('course_install_rollback_failed', { courseId: course.id, error: String(rollback) }));
+      } else {
+        await rm(retired, { recursive: true, force: true }).catch(() => {});
+      }
+      throw error;
+    }
+    await rm(retired, { recursive: true, force: true }).catch(() => {});
+
+    const installed = await this.installed();
+    installed[course.id] = { ...course, installedAt: new Date().toISOString(), signedMetadata };
     await writeJson(this.indexFile, this.index);
     this.lessons = null;
-    log.info('course_installed', { courseId: course.id, version: course.version, files: files.length });
+    log.info('course_installed', { courseId: course.id, version: course.version, files: files.length, signedMetadata });
   }
 
   async allLessons(): Promise<Lesson[]> {

@@ -168,6 +168,11 @@ export interface SyncStatus {
     localVersion?: string;
     state: 'available' | 'installed' | 'update' | 'local-only';
     support: boolean;
+    /**
+     * False when the installed manifest predates signed academic metadata. The file hashes
+     * were verified; the metadata was not covered by the signature until the next sync.
+     */
+    signedMetadata?: boolean;
   }>;
 }
 

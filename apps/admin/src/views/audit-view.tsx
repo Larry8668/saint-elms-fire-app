@@ -83,7 +83,7 @@ export function AuditView() {
       )}
 
       <p className="text-[12.5px] text-night-500">
-        Showing {rows.length} event{rows.length === 1 ? '' : 's'}.
+        {events.isPending ? 'Loading events…' : `Showing ${rows.length} event${rows.length === 1 ? '' : 's'}.`}
         {events.isFetching && !events.isPending && ' Refreshing…'}
       </p>
       <Button variant="ghost" size="sm" onClick={() => void events.refetch()}>

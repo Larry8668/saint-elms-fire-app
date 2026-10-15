@@ -1,4 +1,5 @@
 import { useEffect, useState } from 'react';
+import { isIdentifier } from '../api/guards';
 
 /**
  * Hash routing, so the staff portal never needs a server-side SPA fallback: the uni serves
@@ -24,7 +25,8 @@ const parse = (hash: string): Route => {
   const view = VIEWS.has(first) ? (first as Route['view']) : 'students';
   return {
     view,
-    id: view === 'students' ? (segments[1] ?? null) : null,
+    // An unrecognised detail segment is dropped, not passed on as a profile id.
+    id: view === 'students' && segments[1] && isIdentifier(segments[1]) ? segments[1] : null,
     params: new URLSearchParams(search),
   };
 };

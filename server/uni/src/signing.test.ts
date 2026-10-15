@@ -4,14 +4,24 @@ import { mkdtemp } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { test } from 'node:test';
-import { canonicalJson, type PackageManifest } from '@sef/shared';
+import { canonicalJson, CONTENT_SCHEMA_VERSION, courseMetadataOf, type PackageManifest } from '@sef/shared';
 import { loadSigningKeys, signManifest } from './signing';
 
 const manifest: PackageManifest = {
+  schemaVersion: CONTENT_SCHEMA_VERSION,
   courseId: 'waves',
   version: 'abc123',
   issuedAt: '2026-10-14T00:00:00Z',
   issuer: 'Saint Elms University',
+  metadata: courseMetadataOf({
+    id: 'waves',
+    title: 'Waves',
+    subjectId: 'physics',
+    semesterNumber: 1,
+    lessonCount: 3,
+    version: 'abc123',
+    support: false,
+  }),
   files: [{ path: 'lesson.md', sha256: 'deadbeef', bytes: 10 }],
 };
 

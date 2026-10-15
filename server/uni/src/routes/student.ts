@@ -1,5 +1,16 @@
 import { Hono, type Context } from 'hono';
-import { CONTRACT_VERSION, type Catalogue, type CoursePackage, type PackageManifest, type ProgrammeCatalogue } from '@sef/shared';
+import {
+  CONTENT_SCHEMA_VERSION,
+  CONTRACT_VERSION,
+  courseMetadataOf,
+  deriveContentVersion,
+  type Catalogue,
+  type CoursePackage,
+  type CourseSummary,
+  type PackageFile,
+  type PackageManifest,
+  type ProgrammeCatalogue,
+} from '@sef/shared';
 import { requireCourseAccess, requireProgrammeAccess, requireSession, type AppEnv } from '../authorization';
 import { config } from '../config';
 import type { UniDeps } from '../deps';
@@ -17,6 +28,10 @@ export function studentRoutes(deps: UniDeps) {
   const app = new Hono<AppEnv>();
   const guard = requireCourseAccess(deps);
   const session = requireSession(deps);
+
+  /** The version a student sees must be the version the package actually carries. */
+  const signedVersion = (summary: CourseSummary, files: PackageFile[]): string =>
+    deriveContentVersion(files, courseMetadataOf(summary));
 
   const cohortFor = (c: Context<AppEnv>): string | null => {
     const accessor = c.get('accessor');
@@ -41,7 +56,7 @@ export function studentRoutes(deps: UniDeps) {
     if (!cohortId) return c.json({ error: 'cohort_unavailable' }, 403);
     const courses = [...deps.courseware.courses.values()]
       .filter((course) => deps.releases.isReleased(cohortId, course.summary.id))
-      .map((course) => course.summary)
+      .map((course) => ({ ...course.summary, version: signedVersion(course.summary, course.files) }))
       .sort((a, b) => a.semesterNumber - b.semesterNumber || a.title.localeCompare(b.title));
     const body: Catalogue = {
       programmeId: deps.courseware.programmeId,
@@ -93,12 +108,18 @@ export function studentRoutes(deps: UniDeps) {
       log.warn('package_refused_unreleased', { cohortId, courseId });
       return c.json({ error: 'not_released' }, 403);
     }
+    // The manifest carries the academic metadata, and the signature covers the whole thing,
+    // so a corrected credit total or renamed course is as tamper-evident as the lesson files.
+    const metadata = courseMetadataOf(course.summary);
+    const files = course.files.map(({ path, sha256, bytes }) => ({ path, sha256, bytes }));
     const manifest: PackageManifest = {
+      schemaVersion: CONTENT_SCHEMA_VERSION,
       courseId,
-      version: course.summary.version,
+      version: signedVersion(course.summary, files),
       issuedAt: new Date().toISOString(),
       issuer: config.issuer,
-      files: course.files.map(({ path, sha256, bytes }) => ({ path, sha256, bytes })),
+      metadata,
+      files,
     };
     const body: CoursePackage = {
       manifest,

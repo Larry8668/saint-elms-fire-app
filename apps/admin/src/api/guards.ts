@@ -7,7 +7,7 @@
 
 /** Mirrors `IdentifierSchema` in `packages/shared/src/contracts.ts`. */
 const IDENTIFIER = /^[A-Za-z0-9][A-Za-z0-9_-]*$/;
-const isIdentifier = (value: unknown): value is string =>
+export const isIdentifier = (value: unknown): value is string =>
   typeof value === 'string' && value.length >= 1 && value.length <= 128 && IDENTIFIER.test(value);
 
 const isRecord = (value: unknown): value is Record<string, unknown> =>
