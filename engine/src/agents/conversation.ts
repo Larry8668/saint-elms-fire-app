@@ -197,6 +197,7 @@ export class ConversationRegistry {
     const previous = this.sessions.get(input.sessionId);
     if (!previous) throw new ConversationRefused('unknown_session', refusalCopy('unknown_session'));
     if (previous.profileId !== input.profileId) throw new ConversationRefused('session_owner_mismatch', refusalCopy('session_owner_mismatch'));
+    if (previous.closed) throw new ConversationRefused('session_closed', refusalCopy('session_closed'));
     if (previous.teacher === input.to) throw new ConversationRefused('teacher_mismatch', refusalCopy('teacher_mismatch'));
     // Closed is set before the first await so no turn can be admitted mid-hand-off; admit() only
     // checks this field. If issuing the successor fails the thread is reopened rather than left dead.
@@ -214,6 +215,20 @@ export class ConversationRegistry {
       });
       throw error;
     }
+  }
+
+  /**
+   * Ends a conversation without a successor — used when the student deletes the transcript, so a
+   * session that no longer appears in history cannot keep admitting turns. Returns whether a
+   * session was actually closed: nothing to close is not an error, just nothing to report.
+   */
+  async close(input: { sessionId: string; profileId: string }): Promise<boolean> {
+    await this.load(input.profileId);
+    const session = this.sessions.get(input.sessionId);
+    if (!session || session.profileId !== input.profileId || session.closed) return false;
+    session.closed = true;
+    await this.persist(session);
+    return true;
   }
 
   /** Test and shutdown seam. */

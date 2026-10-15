@@ -24,7 +24,7 @@ import { TEACHER_LOOK } from './teacher-meta';
 export function TeachersView() {
   const nav = useNav();
   const [teacher, setTeacher] = useState<TeacherId>(nav.teacher ?? 'guide');
-  const { threads, send, retry, stop, reset } = useChat();
+  const { threads, send, retry, stop, reset, handoff } = useChat();
   const thread = threads[teacher];
   const [draft, setDraft] = useState(nav.draft ?? '');
   const [attachments, setAttachments] = useState<Attachments>([]);
@@ -48,6 +48,7 @@ export function TeachersView() {
 
   const reflect = useMutation({
     mutationFn: () => {
+      if (!thread.sessionId) throw new Error('Nothing has been said in this conversation yet.');
       setReflection(null);
       setReflectStartedAt(Date.now());
       setReflectOpen(true);
@@ -151,6 +152,9 @@ export function TeachersView() {
                       onFollowUp={(text) => submit(text)}
                       onHandoff={(to) => {
                         const lastQuestion = thread.messages.findLast((x) => x.role === 'user');
+                        // The registry closes this conversation and issues the successor; the view
+                        // follows it rather than silently re-teachering the same session.
+                        void handoff(teacher, to);
                         setTeacher(to);
                         if (lastQuestion) setDraft(lastQuestion.content);
                       }}

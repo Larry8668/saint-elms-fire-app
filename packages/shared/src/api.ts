@@ -99,7 +99,7 @@ export interface SessionDetail {
   ingestedTurns: number;
 }
 
-/** Server-sent events emitted by POST /api/chat. */
+/** Server-sent events emitted by POST /api/chat/turn. */
 export type ChatStreamEvent =
   | { type: 'status'; message: string }
   | { type: 'delta'; text: string }

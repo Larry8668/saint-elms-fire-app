@@ -1,6 +1,6 @@
+import { CONTRACT_VERSION } from '@sef/shared';
 import type {
   BrainLogEntry,
-  ChatRequest,
   ChatStreamEvent,
   ConceptPage,
   CourseSummary,
@@ -23,7 +23,7 @@ import type {
 } from '@sef/shared';
 import { log } from './log';
 
-export const ENGINE_URL = (import.meta.env.VITE_ENGINE_URL as string | undefined) ?? 'http://127.0.0.1:4100';
+export const ENGINE_URL = (import.meta.env?.VITE_ENGINE_URL as string | undefined) ?? 'http://127.0.0.1:4100';
 
 export class EngineError extends Error {
   constructor(
@@ -134,14 +134,53 @@ export const api = {
   submitQuiz: (id: string, answers: number[]) => post<QuizResult>(`/api/quiz/${encodeURIComponent(id)}/submit`, { answers }),
 };
 
-/** Streams a chat turn over SSE, calling `onEvent` for each parsed event. */
-export async function streamChat(req: ChatRequest, onEvent: (event: ChatStreamEvent) => void, signal?: AbortSignal): Promise<void> {
+export interface ConversationHandle {
+  sessionId: string;
+  teacher: TeacherId;
+  createdAt: string;
+}
+
+/** The conversation registry refused the turn before any model was reached. */
+export class TurnRefused extends Error {
+  constructor(
+    readonly code: string,
+    message: string,
+    readonly status: number,
+  ) {
+    super(message);
+    this.name = 'TurnRefused';
+  }
+}
+
+export const conversationApi = {
+  open: (teacher: TeacherId) => post<ConversationHandle>('/api/chat/sessions', { teacher }),
+  handoff: (sessionId: string, to: TeacherId, reason: string) =>
+    post<ConversationHandle>(`/api/chat/sessions/${encodeURIComponent(sessionId)}/handoff`, { sessionId, to, reason }),
+};
+
+export interface TurnPayload {
+  sessionId: string;
+  teacher: TeacherId;
+  clientMessageId: string;
+  message: string;
+  attachments?: Array<{ kind: 'image'; mimeType: string; data: string; name?: string; altText?: string }>;
+  consent?: { web: boolean };
+}
+
+/**
+ * Streams one admitted turn over SSE. The server owns the transcript, so a turn carries the
+ * new message only — never a client-built history.
+ *
+ * A refusal before streaming (unknown session, replay, concurrency, policy) arrives as a
+ * non-SSE JSON response and is thrown as TurnRefused so the caller can reopen or surface it.
+ */
+export async function streamTurn(turn: TurnPayload, onEvent: (event: ChatStreamEvent) => void, signal?: AbortSignal): Promise<void> {
   let res: Response;
   try {
-    res = await fetch(`${ENGINE_URL}/api/chat`, {
+    res = await fetch(`${ENGINE_URL}/api/chat/turn`, {
       method: 'POST',
       headers: { 'content-type': 'application/json', ...authHeaders() },
-      body: JSON.stringify(req),
+      body: JSON.stringify({ schemaVersion: CONTRACT_VERSION, ...turn }),
       signal,
     });
   } catch (error) {
@@ -150,7 +189,8 @@ export async function streamChat(req: ChatRequest, onEvent: (event: ChatStreamEv
     return;
   }
   if (!res.ok || !res.body) {
-    const body = (await res.json().catch(() => ({}))) as { error?: string };
+    const body = (await res.json().catch(() => ({}))) as { error?: string; code?: string };
+    if (body.code) throw new TurnRefused(body.code, body.error ?? `Turn refused (${res.status})`, res.status);
     onEvent({ type: 'error', message: body.error ?? `Chat failed (${res.status})` });
     return;
   }

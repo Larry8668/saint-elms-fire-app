@@ -44,6 +44,12 @@ const writeStatus = (value: { ok: boolean; reason?: string }) =>
   writeFileSync(statusPath, JSON.stringify(value), 'utf8');
 
 export default async function globalSetup(): Promise<void> {
+  // Something already answering /health on our port is not our server: running against it would
+  // test the wrong build while reporting ours. Refuse to start rather than race the spawn.
+  if (await reachable(`${UNI_URL}/health`)) {
+    writeStatus({ ok: false, reason: `Port ${UNI_PORT} already answers as a university server — kill it or set E2E_UNI_PORT.` });
+    return;
+  }
   writeStatus({ ok: true });
 
   uni = spawn(

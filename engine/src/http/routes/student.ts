@@ -16,15 +16,6 @@ const AttachmentSchema = z.object({
   altText: z.string().max(500).optional(),
 });
 
-const ChatRequestSchema = z.object({
-  teacher: z.enum(TEACHER_IDS),
-  sessionId: z.string().min(1).max(80),
-  messages: z
-    .array(z.object({ role: z.enum(['user', 'assistant']), content: z.string().max(8000), attachments: z.array(AttachmentSchema).max(2).optional() }))
-    .min(1)
-    .max(40),
-});
-
 /** Which refusal gets which status. Every one of them is a refusal, none of them is a crash. */
 const REFUSAL_STATUS = {
   unknown_session: 404,
@@ -96,24 +87,6 @@ export function studentRoutes(deps: EngineDeps, conversations: ConversationRegis
   app.get('/lessons/:id', guard, async (c) => {
     const lesson = await c.get('ws').content.lesson(c.req.param('id'));
     return lesson ? c.json(lesson) : c.json({ error: 'Lesson not found' }, 404);
-  });
-
-  // Chat (server-sent events)
-  app.post('/chat', guard, async (c) => {
-    const parsed = ChatRequestSchema.safeParse(await c.req.json().catch(() => null));
-    if (!parsed.success) return c.json({ error: 'Invalid chat request', issues: parsed.error.issues }, 400);
-    const req = parsed.data as ChatRequest;
-    const ws = c.get('ws');
-    const harness = { settings: ws.settings, content: ws.content, brain: ws.brain, sessions: ws.sessions, studentName: ws.profile.name, claims: ws.wiki };
-    return streamSSE(c, async (stream) => {
-      const emit = (event: ChatStreamEvent) => void stream.writeSSE({ data: JSON.stringify(event) });
-      try {
-        await runChatTurn(req, harness, emit);
-      } catch (error) {
-        log.error('chat_turn_failed', { teacher: req.teacher, profileId: ws.profile.id, ...errorFields(error) });
-        emit({ type: 'error', message: friendlyError(error) });
-      }
-    });
   });
 
   /**
@@ -191,9 +164,14 @@ export function studentRoutes(deps: EngineDeps, conversations: ConversationRegis
   });
   app.delete('/sessions/:id', guard, async (c) => {
     const ws = c.get('ws');
-    const removed = await ws.sessions.remove(c.req.param('id'));
-    if (!removed) return c.json({ error: 'Session not found' }, 404);
-    log.info('session_deleted', { profileId: ws.profile.id, sessionId: c.req.param('id') });
+    // Deleting the transcript also retires the conversation: a session that no longer shows up
+    // in history must not keep admitting turns.
+    const [removed, closed] = await Promise.all([
+      ws.sessions.remove(c.req.param('id')),
+      conversations.close({ sessionId: c.req.param('id'), profileId: ws.profile.id }),
+    ]);
+    if (!removed && !closed) return c.json({ error: 'Session not found' }, 404);
+    log.info('session_deleted', { profileId: ws.profile.id, sessionId: c.req.param('id'), conversationClosed: closed });
     return c.json({ ok: true });
   });
 
