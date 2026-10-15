@@ -1,5 +1,5 @@
 import { createHash, randomBytes } from 'node:crypto';
-import { lstat, realpath, stat } from 'node:fs/promises';
+import { realpath, stat } from 'node:fs/promises';
 import path from 'node:path';
 
 /**
@@ -45,15 +45,13 @@ export async function resolveAsset(root: string, requestPath: string): Promise<R
   // Defence in depth: a normalize that produced a traversal still has to pass this check.
   if (candidate !== base && !candidate.startsWith(base + path.sep)) return null;
 
-  const link = await lstat(candidate).catch(() => null);
-  if (!link) return null;
-  // lstat, not stat: a link whose target leaves the root is refused instead of followed.
-  // Compared against the real root, because on macOS the temp dir itself sits under /private/var.
+  // Resolve the entire path, not just its last component. A symlinked *directory* inside
+  // the root can otherwise lead out of it while the file it reaches looks like an
+  // ordinary regular file. Compared against the real root, because on macOS the temp dir
+  // itself sits under /private/var.
   const realBase = await realpath(base).catch(() => null);
-  if (link.isSymbolicLink()) {
-    const real = realBase && (await realpath(candidate).catch(() => null));
-    if (!real || !realBase || (real !== realBase && !real.startsWith(realBase + path.sep))) return null;
-  }
+  const real = realBase ? await realpath(candidate).catch(() => null) : null;
+  if (!realBase || !real || (real !== realBase && !real.startsWith(realBase + path.sep))) return null;
 
   const info = await stat(candidate).catch(() => null);
   if (!info?.isFile()) return null;

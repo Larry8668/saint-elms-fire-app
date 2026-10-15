@@ -113,6 +113,19 @@ test('the onboarding bundle gets a policy that actually permits its own assets',
   assert.ok(!csp.includes('unsafe-eval'), csp);
 });
 
+test('a hostile publicUrl cannot break out of the markup', async () => {
+  const { server, restore } = await app();
+  const previous = config.publicUrl;
+  config.publicUrl = '</p><script>window.stolen=1</script>';
+  const res = await server.request('/device');
+  config.publicUrl = previous;
+  restore();
+
+  const html = await res.text();
+  assert.ok(!html.includes('<script>window.stolen'), 'the injected tag must not survive as markup');
+  assert.ok(html.includes('&lt;/p&gt;&lt;script&gt;'), 'it must appear escaped instead');
+});
+
 test('the device page keeps its nonce-bound inline policy', async () => {
   const { server, restore } = await app();
   const csp = (await server.request('/device')).headers.get('content-security-policy') ?? '';

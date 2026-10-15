@@ -53,6 +53,17 @@ test('a symlink staying inside the root is served', async () => {
   assert.equal((await resolveAsset(dir, 'inside.html'))?.relative, 'inside.html');
 });
 
+test('a symlinked directory inside the root cannot be used to read outside it', async () => {
+  const dir = await root();
+  const outside = await mkdtemp(path.join(tmpdir(), 'sef-outside-'));
+  await writeFile(path.join(outside, 'secret.txt'), 'secret');
+  // The final component is an ordinary file, so only resolving the whole path catches this.
+  await symlink(outside, path.join(dir, 'escape'));
+
+  assert.equal(await resolveAsset(dir, 'escape/secret.txt'), null);
+  assert.equal(await resolveAsset(dir, 'escape'), null);
+});
+
 test('the ETag tracks the bytes, so a rewritten asset cannot get a stale 304', () => {
   const before = etagFor(Buffer.from('<!doctype html><title>shell</title>'));
   const after = etagFor(Buffer.from('<!doctype html><title>changed</title>'));

@@ -4,9 +4,12 @@ import type { AdmissionMe, EnrolmentStatus } from '@sef/shared';
 export type AdmissionState = 'not-applied' | EnrolmentStatus;
 
 /**
- * Admission is derived from the server's record, never claimed by the client. A missing
- * student record reads as "has not applied" regardless of whether an enrolment row exists,
- * because the application is the thing that creates that record.
+ * Admission is derived from the server's record, never claimed by the client.
+ *
+ * Either half being absent reads as "has not applied". The two move together in practice —
+ * applying is what creates the student record — so the only way to observe one without the
+ * other is a server or migration that left them inconsistent. Treating that as not-applied
+ * fails closed: the shell offers the apply path, and the server still decides the outcome.
  */
 export function admissionState(me: AdmissionMe): AdmissionState {
   if (me.studentId === null || me.enrolment === null) return 'not-applied';

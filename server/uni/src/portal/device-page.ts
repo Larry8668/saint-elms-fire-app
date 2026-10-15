@@ -17,6 +17,11 @@ export interface DevicePageOptions {
   publicUrl: string;
 }
 
+/**
+ * HTML text/attribute escaping. Every interpolation into markup goes through this.
+ * It is deliberately NOT applied to `DEVICE_PATH` below: that one lands inside a JS string
+ * literal, where an HTML entity would be taken literally, and it is a module constant.
+ */
 const escape = (value: string): string =>
   value.replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[c] as string);
 
@@ -28,7 +33,7 @@ export function devicePageHtml({ nonce, publicUrl }: DevicePageOptions): string 
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <meta name="referrer" content="strict-origin">
 <title>Confirm this device · Saint Elms</title>
-<style nonce="${nonce}">
+<style nonce="${escape(nonce)}">
   :root { color-scheme: dark; }
   * { box-sizing: border-box; }
   body {
@@ -76,7 +81,7 @@ export function devicePageHtml({ nonce, publicUrl }: DevicePageOptions): string 
   <p class="status" id="status" role="status" aria-live="polite"></p>
   <p class="origin">${escape(publicUrl)}</p>
 </main>
-<script nonce="${nonce}">
+<script nonce="${escape(nonce)}">
 (function () {
   var params = new URLSearchParams(location.search);
   var fromLink = (params.get('user_code') || '').trim();
