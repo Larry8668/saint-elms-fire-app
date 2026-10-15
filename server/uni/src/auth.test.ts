@@ -163,11 +163,17 @@ test('students only see their own cohort and cannot reach admin routes', async (
   assert.equal((await get('/v1/admin/overview', ananya)).status, 403);
 });
 
-test('the programme endpoint requires auth and exposes the normalized manifest', async () => {
+test('the programme endpoint requires auth and temporarily restricts the manifest to admins', async () => {
   const { login, get } = await harness();
   assert.equal((await get('/v1/programme')).status, 401);
+
   const ananya = await login('ananya@saintelms.local');
-  const body = (await (await get('/v1/programme', ananya)).json()) as {
+  assert.equal((await get('/v1/programme', ananya)).status, 403);
+
+  const admin = await login('admin@saintelms.local');
+  const response = await get('/v1/programme', admin);
+  assert.equal(response.status, 200);
+  const body = (await response.json()) as {
     programme: { id: string; rows: Array<{ rowId: string }> };
     derivedCounts: { rows: number };
     availability: Record<string, { content: string }>;

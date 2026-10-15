@@ -33,9 +33,10 @@ export function studentRoutes(deps: UniDeps) {
     return c.json(body);
   });
 
-  // Full validated programme structure. Listing a row does not grant download
-  // permission; packages are still gated by cohort release.
-  app.get('/programme', guard, (c) => {
+  // Interim until PR-05 adds live enrolment state: replace this admin-only gate
+  // with an approved-enrolment check while preserving visibility into future rows.
+  // Listing a row does not grant download permission; packages remain release-gated.
+  app.get('/programme', requireRole(deps.keys, 'admin'), (c) => {
     const programme = deps.programme;
     if (!programme) return c.json({ error: 'programme_unavailable' }, 503);
     return c.json({
