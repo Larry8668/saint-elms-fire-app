@@ -284,7 +284,7 @@ export async function loadProgrammeManifest(root: string): Promise<ProgrammeMani
   const rows: ProgrammeRow[] = [];
   const semesters: ManifestSemester[] = [];
   for (const [key, value] of Object.entries(raw)) {
-    if (!/^semester-\d+$/.test(key) && key !== 'support') continue;
+    if (sectionNumber(key) < 0) continue;
     const section = RawSectionSchema.parse(value);
     const number = semesterFromKey(key);
     semesters.push({
