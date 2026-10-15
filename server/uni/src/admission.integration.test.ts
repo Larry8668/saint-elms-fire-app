@@ -115,7 +115,13 @@ test('unauthenticated callers get 401 on every admission surface', testOptions, 
   await withAuthSchema(async (context) => {
     const extra = await staticDeps();
     mount(context.app, deps(context, extra));
-    for (const path of ['/v1/me', '/v1/admin/students', '/v1/admin/staff', '/v1/admin/audit-events']) {
+    for (const path of [
+      '/v1/me',
+      '/v1/admin/students',
+      '/v1/admin/staff',
+      '/v1/admin/audit-events',
+      '/v1/admin/erasure-requests',
+    ]) {
       const res = await context.app.request(`${context.origin}${path}`);
       assert.equal(res.status, 401, path);
     }
