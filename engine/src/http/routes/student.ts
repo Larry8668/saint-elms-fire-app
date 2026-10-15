@@ -26,7 +26,7 @@ const ChatRequestSchema = z.object({
 /** Everything scoped to the signed-in student: courses, chat, brain, quizzes. */
 export function studentRoutes(deps: EngineDeps) {
   const app = new Hono<EngineEnv>();
-  const guard = requireProfile(deps);
+  const guard = requireProfile(deps, { approved: true });
 
   // Legacy, identity-free data is only copied after an explicit backup and claim.
   app.get('/anonymous-data', guard, async (c) => c.json(await deps.anonymousData.preview()));

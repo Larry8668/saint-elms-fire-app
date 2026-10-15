@@ -1,4 +1,5 @@
 import { z } from 'zod';
+import type { EnrolmentStatus } from './identity';
 
 export const ROLES = ['student', 'admin'] as const;
 export type Role = (typeof ROLES)[number];
@@ -27,11 +28,17 @@ export interface TokenClaims {
   email: string;
   cohortId?: string;
   stage?: string;
+  /** Audience restriction. Engine-bound credentials carry ENGINE_AUDIENCE. */
+  aud?: string;
+  /** Device id the credential was issued to, for offline entitlement checks. */
+  dev?: string;
   iat: number;
   exp: number;
 }
 
 export const TOKEN_PREFIX = 'sef1';
+/** Audience claim on uni-signed offline entitlements; a device credential is never a staff credential. */
+export const ENGINE_AUDIENCE = 'sef-engine';
 
 /** Emails are compared and stored case-insensitively, so one mailbox can never hold two accounts. */
 export const normalizeEmail = (email: string) => email.trim().toLowerCase();
@@ -73,6 +80,11 @@ export interface DeviceProfile {
   lastOnlineAt?: string;
   /** True once the student has signed in online here, so offline sign-in is possible. */
   offlineReady: boolean;
+  /**
+   * Admission state from the university, set on profiles created through device sign-in.
+   * Undefined on legacy/password profiles, which predate admission gating and stay usable.
+   */
+  admission?: EnrolmentStatus | 'none';
 }
 
 export type SessionMode = 'online' | 'offline';
@@ -85,6 +97,37 @@ export type EngineLoginResponse =
 export interface EngineMe {
   profile: DeviceProfile;
   mode: SessionMode;
+}
+
+// ---- Device sign-in (RFC 8628 over the uni's better-auth device endpoints) ----
+
+/** What the engine hands the UI after asking the uni for a device grant. */
+export interface DeviceSignInStart {
+  userCode: string;
+  verificationUri: string;
+  /** Verification page with the code pre-filled; open this when there is only one device. */
+  verificationUriComplete?: string;
+  expiresInSeconds: number;
+  intervalSeconds: number;
+}
+
+export type DevicePollResult =
+  | { status: 'pending'; intervalSeconds?: number }
+  | ({ status: 'approved' } & Extract<EngineLoginResponse, { role: 'student' }>)
+  | { status: 'denied' }
+  | { status: 'expired' };
+
+// ---- Offline entitlement (uni-signed, engine-verified) ----
+
+export const EntitlementRequestSchema = z.object({
+  deviceId: z.string().min(1).max(128),
+});
+export type EntitlementRequest = z.infer<typeof EntitlementRequestSchema>;
+
+export interface EntitlementResponse {
+  token: string;
+  expiresAt: string;
+  cohortId: string;
 }
 
 // ---- Admin API (uni server) ----

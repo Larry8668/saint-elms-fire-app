@@ -400,3 +400,78 @@ test('erasure requests deduplicate and confirmation anonymizes the account', tes
     assert.equal(sessions.rows[0]!.n, '1', 'only the owner session remains');
   });
 });
+
+test('the offline entitlement binds signature, audience, student, device and cohort', testOptions, async () => {
+  await withAuthSchema(async (context) => {
+    const extra = await staticDeps();
+    mount(context.app, deps(context, extra));
+    const { cookie: ownerCookie } = await staffToken(context, 'owner-ent@example.test');
+    const cookie = await signUpVerified(context, 'entitled@example.test', 'Entitled');
+    await apply(context, cookie);
+
+    // Pending students get no entitlement.
+    const pending = await authed(context, '/v1/entitlement', cookie, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ deviceId: 'device-1' }),
+    });
+    assert.equal(pending.status, 403);
+
+    const mine = (await (await authed(context, '/v1/me', cookie)).json()) as { enrolment: Enrolment | null };
+    const decided = await decide(context, ownerCookie, mine.enrolment!.id, { action: 'approve', reason: 'ok', cohortId: COHORT, expectedVersion: mine.enrolment!.version });
+    assert.equal(decided.status, 200);
+
+    const res = await authed(context, '/v1/entitlement', cookie, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ deviceId: 'device-1' }),
+    });
+    assert.equal(res.status, 200);
+    const body = (await res.json()) as { token: string; expiresAt: string; cohortId: string };
+    assert.equal(body.cohortId, COHORT);
+
+    const { verifyToken } = await import('@sef/shared/node');
+    const claims = verifyToken(body.token, extra.keys.publicKeyPem);
+    const user = await context.pool.query<{ id: string }>('SELECT id FROM "user" WHERE email = $1', ['entitled@example.test']);
+    assert.equal(claims.sub, user.rows[0]!.id);
+    assert.equal(claims.role, 'student');
+    assert.equal(claims.aud, 'sef-engine');
+    assert.equal(claims.dev, 'device-1');
+    assert.equal(claims.cohortId, COHORT);
+    assert.ok(claims.exp * 1000 > Date.now());
+  });
+});
+
+test('entitlement rejects anonymous callers, staff-only sessions and missing devices', testOptions, async () => {
+  await withAuthSchema(async (context) => {
+    const extra = await staticDeps();
+    mount(context.app, deps(context, extra));
+    const anon = await context.app.request(`${context.origin}/v1/entitlement`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ deviceId: 'd' }),
+    });
+    assert.equal(anon.status, 401);
+
+    const { cookie: ownerCookie } = await staffToken(context, 'owner-noent@example.test');
+    const staff = await authed(context, '/v1/entitlement', ownerCookie, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ deviceId: 'd' }),
+    });
+    assert.equal(staff.status, 403, 'staff without a student enrolment get no entitlement');
+
+    const cookie = await signUpVerified(context, 'nodev@example.test', 'No Device');
+    await apply(context, cookie);
+    const { cookie: approver } = await staffToken(context, 'owner-ent2@example.test');
+    const mine = (await (await authed(context, '/v1/me', cookie)).json()) as { enrolment: Enrolment | null };
+    await decide(context, approver, mine.enrolment!.id, { action: 'approve', reason: 'ok', cohortId: COHORT, expectedVersion: mine.enrolment!.version });
+
+    const noDevice = await authed(context, '/v1/entitlement', cookie, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({}),
+    });
+    assert.equal(noDevice.status, 400);
+  });
+});

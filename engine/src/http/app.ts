@@ -1,4 +1,5 @@
 import { Hono } from 'hono';
+import { bodyLimit } from 'hono/body-limit';
 import { cors } from 'hono/cors';
 import type { HealthResponse } from '@sef/shared';
 import { config, errorFields, log } from '../config';
@@ -13,6 +14,32 @@ import { studentRoutes } from './routes/student';
 
 export type { EngineDeps } from './context';
 
+/**
+ * Origins allowed to call the engine with browser credentials: the Vite dev server and
+ * the Tauri webview schemes. A hostile web page can hit 127.0.0.1 but cannot produce an
+ * allowed Origin header — and the Host check additionally rejects DNS-rebound requests.
+ */
+const ALLOWED_ORIGINS = new Set(
+  [
+    'http://localhost:5173',
+    'http://127.0.0.1:5173',
+    'tauri://localhost',
+    'http://tauri.localhost',
+    'https://tauri.localhost',
+    ...(process.env.ENGINE_ALLOWED_ORIGINS ?? '').split(','),
+  ]
+    .map((o) => o.trim())
+    .filter(Boolean),
+);
+
+const LOOPBACK_HOSTS = new Set(['localhost', '127.0.0.1', '::1', '[::1]']);
+
+const hostName = (host: string | undefined): string => {
+  if (!host) return '';
+  const bracketed = host.match(/^\[(.+)\]/)?.[1];
+  return (bracketed ?? host.split(':')[0]!).toLowerCase();
+};
+
 async function uniReachable(url: string): Promise<boolean> {
   try {
     await uniFetch(url, '/health', { timeoutMs: 2500 });
@@ -24,7 +51,33 @@ async function uniReachable(url: string): Promise<boolean> {
 
 export function createApp(deps: EngineDeps) {
   const app = new Hono<EngineEnv>();
-  app.use('*', cors());
+  app.use(
+    '*',
+    cors({
+      origin: (origin) => (ALLOWED_ORIGINS.has(origin) ? origin : null),
+      allowHeaders: ['authorization', 'content-type'],
+      credentials: false,
+    }),
+  );
+
+  app.use('/api/*', async (c, next) => {
+    // The engine only ever serves loopback clients; any other Host is a rebound name.
+    if (!LOOPBACK_HOSTS.has(hostName(c.req.header('host')))) {
+      return c.json({ error: 'Forbidden host', code: 'forbidden_host' }, 403);
+    }
+    // Mutations require no Origin (curl, Tauri native) or an allowed one. A cross-site
+    // browser request always carries a forbidden Origin and dies here.
+    if (c.req.method !== 'GET' && c.req.method !== 'HEAD' && c.req.method !== 'OPTIONS') {
+      const origin = c.req.header('origin');
+      if (origin && !ALLOWED_ORIGINS.has(origin)) {
+        log.warn('forbidden_origin', { origin, path: c.req.path });
+        return c.json({ error: 'Forbidden origin', code: 'forbidden_origin' }, 403);
+      }
+    }
+    await next();
+  });
+
+  app.use('/api/*', bodyLimit({ maxSize: 20 * 1024 * 1024, onError: (c) => c.json({ error: 'Request too large' }, 413) }));
 
   app.use('/api/*', async (c, next) => {
     const started = Date.now();
