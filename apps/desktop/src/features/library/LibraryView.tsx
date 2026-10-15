@@ -1,7 +1,7 @@
 import { conceptKey, type LessonMeta, type SyncStatus } from '@sef/shared';
 import { ArrowLeft, BookOpen, CheckCircle2, Clock, CloudDownload, KeyRound, LifeBuoy, MessageCircleQuestion, RefreshCw, ShieldCheck, WifiOff } from 'lucide-react';
 import { motion } from 'motion/react';
-import { useMemo, useRef } from 'react';
+import { useMemo, useRef, useState } from 'react';
 import { Markdown } from '@/components/Markdown';
 import { Button } from '@/components/ui/button';
 import { Badge, EmptyState, Eyebrow, PageHeader, Panel } from '@/components/ui/primitives';
@@ -9,6 +9,9 @@ import { ArticleSkeleton, CardGridSkeleton } from '@/components/ui/skeletons';
 import { cn } from '@/lib/cn';
 import { useNav } from '@/lib/nav';
 import { useInstallCourses, useLesson, useLibrary, useSyncStatus } from '@/lib/queries';
+import { useStudent } from '@/lib/session';
+import { ProgrammeStructure } from '@/features/programme/ProgrammeStructure';
+import { LibraryTabs, type LibraryTab } from './LibraryTabs';
 import { useScrollToSection } from './use-scroll-to-section';
 
 type CourseRow = SyncStatus['courses'][number];
@@ -18,6 +21,8 @@ export function LibraryView() {
   const sync = useSyncStatus();
   const library = useLibrary();
   const install = useInstallCourses();
+  const { profile } = useStudent();
+  const [tab, setTab] = useState<LibraryTab>('released');
   const openLesson = nav.lessonId && library.data ? library.data.lessons.find((l) => l.id === nav.lessonId) : undefined;
   const openCourse = openLesson?.courseId ?? null;
   const openCourseAt = (courseId: string) => {
@@ -72,6 +77,8 @@ export function LibraryView() {
           }
         />
 
+        <LibraryTabs active={tab} onChange={setTab} />
+
         {sync.data?.authRequired && (
           <Panel className="mb-6 flex items-center gap-3 border-ember-400/25 p-4 text-sm text-night-300">
             <KeyRound className="size-4 text-ember-400" />
@@ -85,30 +92,51 @@ export function LibraryView() {
           </Panel>
         )}
 
-        {sync.isLoading && <CardGridSkeleton />}
-
-        {sync.data && sync.data.courses.length === 0 && (
-          <EmptyState icon={<BookOpen />} title="No courses yet" body="Nothing has been released to your cohort. Check that the university server URL in Settings is right." />
+        {sync.isError && (
+          <Panel className="mb-6 flex flex-wrap items-center justify-between gap-3 border-ember-400/25 p-4">
+            <p className="text-sm text-night-300">
+              The release list could not be read: {(sync.error as Error).message}
+            </p>
+            <Button variant="outline" size="sm" onClick={() => void sync.refetch()}>
+              Try again
+            </Button>
+          </Panel>
         )}
 
-        <div className="space-y-10">
-          {bySemester.map(([semester, courses]) => (
-            <section key={semester}>
-              <Eyebrow className="mb-3">{semester === 0 ? 'University support' : `Semester ${semester}`}</Eyebrow>
-              <div className="grid gap-3 md:grid-cols-2 lg:grid-cols-3">
-                {courses.map((course, i) => (
-                  <CourseCard
-                    key={course.id}
-                    course={course}
-                    index={i}
-                    installing={install.isPending && (install.variables === course.id || install.variables === 'all')}
-                    onInstall={() => install.mutate(course.id)}
-                    onOpen={() => openCourseAt(course.id)}
-                  />
-                ))}
-              </div>
-            </section>
-          ))}
+        {sync.isLoading && <CardGridSkeleton />}
+
+        <div role="tabpanel" id="library-panel-released" aria-labelledby="library-tab-released" hidden={tab !== 'released'}>
+          {sync.data && sync.data.courses.length === 0 && (
+            <EmptyState icon={<BookOpen />} title="No courses yet" body="Nothing has been released to your cohort. Check that the university server URL in Settings is right." />
+          )}
+
+          <div className="space-y-10">
+            {bySemester.map(([semester, courses]) => (
+              <section key={semester}>
+                <Eyebrow className="mb-3">{semester === 0 ? 'University support' : `Semester ${semester}`}</Eyebrow>
+                <div className="grid gap-3 md:grid-cols-2 lg:grid-cols-3">
+                  {courses.map((course, i) => (
+                    <CourseCard
+                      key={course.id}
+                      course={course}
+                      index={i}
+                      installing={install.isPending && (install.variables === course.id || install.variables === 'all')}
+                      onInstall={() => install.mutate(course.id)}
+                      onOpen={() => openCourseAt(course.id)}
+                    />
+                  ))}
+                </div>
+              </section>
+            ))}
+          </div>
+        </div>
+
+        <div role="tabpanel" id="library-panel-programme" aria-labelledby="library-tab-programme" hidden={tab !== 'programme'}>
+          {sync.data ? (
+            <ProgrammeStructure status={sync.data} profile={profile} onOpenCourse={openCourseAt} />
+          ) : (
+            !sync.isLoading && !sync.isError && <CardGridSkeleton />
+          )}
         </div>
       </div>
     </div>

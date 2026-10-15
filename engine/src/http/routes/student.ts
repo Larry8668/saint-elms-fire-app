@@ -40,6 +40,19 @@ export function studentRoutes(deps: EngineDeps) {
 
   // Courseware sync
   app.get('/sync/status', guard, async (c) => c.json(await c.get('ws').sync.status()));
+
+  /**
+   * The full programme manifest for an approved student. Behind `approved: true`, because
+   * the curriculum is not theirs to read before admission.
+   */
+  app.get('/programme', guard, async (c) => {
+    const programme = await c.get('ws').sync.programme().catch((error: unknown) => {
+      log.warn('programme_unavailable', { profileId: c.get('me').profile.id, ...errorFields(error) });
+      return null;
+    });
+    if (!programme) return c.json({ error: 'programme_unavailable' }, 503);
+    return c.json(programme);
+  });
   app.post('/sync/install/:courseId', guard, async (c) => c.json(await c.get('ws').sync.install(c.req.param('courseId'))));
   app.post('/sync/install-all', guard, async (c) => {
     const { sync } = c.get('ws');
