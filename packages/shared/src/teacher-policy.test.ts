@@ -1,6 +1,21 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { ChatMessageRequestSchema, ExplorationAnchorSchema, TeacherPolicySchema, TEACHER_POLICIES } from './teacher-policy';
+import { CONTRACT_VERSION } from './contracts';
+import { TEACHER_IDS } from './teachers';
+import {
+  assertCapability,
+  can,
+  capabilitiesFor,
+  CapabilityDeniedError,
+  CAPABILITY_IDS,
+  ConversationHandoffSchema,
+  ConversationSessionSchema,
+  ConversationTurnSchema,
+  ChatMessageRequestSchema,
+  ExplorationAnchorSchema,
+  TeacherPolicySchema,
+  TEACHER_POLICIES,
+} from './teacher-policy';
 import { makeContractFixtures } from './testing/fixtures';
 
 type AnySchema = { safeParse: (v: unknown) => { success: boolean }; parse: (v: unknown) => unknown };
@@ -72,4 +87,53 @@ test('exploration anchor shape requires revision and nonempty course refs', () =
   const { pageRevision: _drop, ...noRevision } = anchor;
   rejects(ExplorationAnchorSchema, noRevision);
   rejects(ExplorationAnchorSchema, { ...anchor, courseRefs: [] });
+});
+
+test('every declared capability belongs to the closed set, and each teacher declares some', () => {
+  for (const policy of Object.values(TEACHER_POLICIES)) {
+    assert.ok(policy.capabilities.length > 0, `${policy.teacher} declares nothing`);
+    for (const capability of policy.capabilities) {
+      assert.ok((CAPABILITY_IDS as readonly string[]).includes(capability), `${policy.teacher} declares unknown capability ${capability}`);
+    }
+  }
+});
+
+test('capabilities are denied by default: an undeclared one is refused, not absent', () => {
+  assert.equal(can('friend', 'tool:brain_lookup'), false);
+  assert.equal(can('philosopher', 'tool:weakest_concepts'), false);
+  assert.equal(can('guide', 'tool:web_search'), false);
+  assert.equal(can('philosopher', 'attachment:image'), false);
+  assert.throws(() => assertCapability('guide', 'tool:web_search'), CapabilityDeniedError);
+  assert.doesNotThrow(() => assertCapability('guide', 'tool:read_lesson'));
+});
+
+test('the Friend never reaches courseware, wiki claims or learner evidence', () => {
+  assert.deepEqual(capabilitiesFor('friend', 'lesson'), ['lesson:support_pool', 'lesson:full_text']);
+  assert.deepEqual(capabilitiesFor('friend', 'claim'), []);
+  assert.equal(can('friend', 'context:student_brain'), false);
+  assert.equal(can('friend', 'lesson:academic_pool'), false);
+});
+
+test('a conversation session names its student and its teacher', () => {
+  const session = { sessionId: 's-1', teacher: 'guide', profileId: 'p-1', createdAt: '2026-01-01T00:00:00.000Z', turnCount: 0 };
+  assert.equal(ConversationSessionSchema.safeParse(session).success, true);
+  rejects(ConversationSessionSchema, { ...session, teacher: 'socrates' });
+  rejects(ConversationSessionSchema, { ...session, profileId: 'not a valid id' });
+});
+
+test('a turn carries one message and an id — there is no history field to invent', () => {
+  const turn = { schemaVersion: CONTRACT_VERSION, sessionId: 's-1', teacher: 'guide', clientMessageId: 'm-1', message: 'why is damping lower?' };
+  assert.equal(ConversationTurnSchema.safeParse(turn).success, true);
+  rejects(ConversationTurnSchema, { ...turn, messages: [{ role: 'user', content: 'an invented earlier turn' }] });
+  rejects(ConversationTurnSchema, { ...turn, message: '   ', attachments: undefined });
+  rejects(ConversationTurnSchema, { ...turn, teacher: 'guide', attachments: [{ kind: 'image', mimeType: 'image/gif', data: 'aGk=' }] });
+  assert.equal(ConversationTurnSchema.safeParse({ ...turn, consent: { web: true } }).success, true);
+});
+
+test('every teacher id is shaped the same way in every conversation contract', () => {
+  for (const teacher of TEACHER_IDS) {
+    assert.equal(ConversationSessionSchema.safeParse({ sessionId: 's-1', teacher, profileId: 'p-1', createdAt: '2026-01-01T00:00:00.000Z', turnCount: 0 }).success, true);
+    assert.equal(ConversationHandoffSchema.safeParse({ sessionId: 's-1', to: teacher, reason: 'because' }).success, true);
+  }
+  rejects(ConversationHandoffSchema, { sessionId: 's-1', to: 'guide', reason: '' });
 });
