@@ -7,10 +7,12 @@ import {
   deriveContentVersion,
   courseMetadataOf,
   hasSignedMetadata,
+  ProgrammeManifestResponseSchema,
   type Catalogue,
   type CourseSummary,
   type PackageFile,
   type PackageManifest,
+  type ProgrammeManifestResponse,
   type SyncStatus,
 } from '@sef/shared';
 import { log } from '../config';
@@ -190,6 +192,34 @@ export class ContentSync {
       cohortId: catalogue?.cohortId ?? identity.cohortId,
       courses: [...rows.values()].sort((a, b) => a.semesterNumber - b.semesterNumber || a.title.localeCompare(b.title)),
     };
+  }
+
+  /**
+   * The full programme manifest: rows, semesters, derived counts and per-course availability.
+   *
+   * The uni gates this to staff or a live approved enrolment, and that gate is the point —
+   * an unapproved student gets `null` and a reason, never a curriculum they cannot use and
+   * never a fabricated empty one.
+   */
+  async programme(): Promise<ProgrammeManifestResponse | null> {
+    const { uniServerUrl } = await this.settings.get();
+    const { uniToken } = await this.identity();
+    if (!uniToken) throw new SyncAuthError('This profile has no university session. Sign in while online to see your programme.');
+    try {
+      const raw = await uniFetch<unknown>(uniServerUrl, '/v1/programme', { token: uniToken });
+      const parsed = ProgrammeManifestResponseSchema.safeParse(raw);
+      if (!parsed.success) {
+        log.error('programme_contract_mismatch', { issues: parsed.error.issues.length });
+        throw new Error('The university server returned a programme this app cannot read.');
+      }
+      return parsed.data;
+    } catch (error) {
+      if (error instanceof UniHttpError && (error.status === 403 || error.status === 401)) {
+        log.info('programme_not_visible', { status: error.status });
+        return null;
+      }
+      throw error;
+    }
   }
 
   private async trustedKey(): Promise<string> {

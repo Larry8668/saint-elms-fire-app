@@ -97,6 +97,39 @@ export const CourseAvailabilitySchema = z.strictObject({
 export type CourseAvailability = z.infer<typeof CourseAvailabilitySchema>;
 
 /**
+ * `GET /v1/programme` — the full curriculum manifest.
+ *
+ * Only reachable by staff or a live approved enrolment. Declared here because it crosses the
+ * uni → engine boundary and the engine must validate it before rendering; without this the
+ * only guard was `typeof response === 'object'`.
+ */
+export const ProgrammeSemesterSchema = z.strictObject({
+  id: IdentifierSchema,
+  name: z.string().min(1),
+  /** 0 is the cross-semester support corpus, which must not inflate degree totals. */
+  number: z.number().int(),
+  rowIds: z.array(IdentifierSchema),
+  optionGroupNote: z.string().optional(),
+});
+export type ProgrammeSemester = z.infer<typeof ProgrammeSemesterSchema>;
+
+export const ProgrammeCountsSchema = z.strictObject({
+  total: z.number().int().min(0),
+  bySemester: z.record(z.string(), z.number().int().min(0)),
+  byStatus: z.record(z.string(), z.number().int().min(0)),
+});
+export type ProgrammeCounts = z.infer<typeof ProgrammeCountsSchema>;
+
+export const ProgrammeManifestResponseSchema = z.strictObject({
+  programme: ProgrammeSchema,
+  semesters: z.array(ProgrammeSemesterSchema),
+  derivedCounts: ProgrammeCountsSchema,
+  /** Keyed by course id; a course absent here is simply not available to this student. */
+  availability: z.record(IdentifierSchema, CourseAvailabilitySchema),
+});
+export type ProgrammeManifestResponse = z.infer<typeof ProgrammeManifestResponseSchema>;
+
+/**
  * Programme identity only, for a verified applicant who has not been approved yet. It
  * carries no rows, semesters or release state, so it is not a way to read the curriculum
  * before admission.

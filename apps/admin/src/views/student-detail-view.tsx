@@ -1,7 +1,8 @@
 import { useState, type ReactNode } from 'react';
 import { ArrowLeft, Check, Download, KeyRound, UserRound } from 'lucide-react';
-import type { AdminStudentRow, EnrolmentStatus } from '@sef/shared';
+import type { AdminStudentRow, Enrolment, EnrolmentStatus } from '@sef/shared';
 import { decideEnrolment, patchStudent, sendRecoveryEmail } from '@/api/admin-api';
+import type { Cohort } from '@/api/guards';
 import { keys, useCohorts, useStudent } from '@/api/queries';
 import { useStaffMutation } from '@/api/use-staff-mutation';
 import { ErrorPanel } from '@/components/error-panel';
@@ -185,7 +186,7 @@ export function StudentDetailView({ profileId }: { profileId: string }) {
           <Fact label="Enrolment state">
             <Badge tone={STATUS_TONE[enrolment.status]}>{enrolment.status}</Badge>
           </Fact>
-          <Fact label="Cohort">{enrolment.cohortId ?? 'None assigned'}</Fact>
+          <Fact label="Cohort">{cohortName(enrolment.cohortId, cohorts.data ?? [])}</Fact>
           <Fact label="Enrolment version">{enrolment.version}</Fact>
           <Fact label="Account state">
             <Badge tone={row.status === 'active' ? 'aurora' : 'rose'}>{row.status}</Badge>
@@ -210,6 +211,8 @@ export function StudentDetailView({ profileId }: { profileId: string }) {
           </blockquote>
         )}
       </Panel>
+
+      <AcademicPlacement enrolment={enrolment} cohorts={cohorts.data ?? []} />
 
       <Panel className="p-6">
         <h2 className="text-sm font-semibold text-night-100">Admission decision</h2>
@@ -424,5 +427,61 @@ function BackLink() {
       <ArrowLeft className="size-3.5" aria-hidden />
       All students
     </a>
+  );
+}
+
+/** The cohort's published name, falling back to the id rather than to a guess. */
+function cohortName(cohortId: string | null, cohorts: Cohort[]): string {
+  if (!cohortId) return 'None assigned';
+  return cohorts.find((cohort) => cohort.id === cohortId)?.name ?? cohortId;
+}
+
+/**
+ * Where this student sits academically, read from the enrolment record this view already
+ * holds plus the published cohort list. No new endpoint: the programme's full row structure
+ * is not loaded here, and this panel does not imply that it is.
+ */
+function AcademicPlacement({ enrolment, cohorts }: { enrolment: Enrolment; cohorts: Cohort[] }) {
+  return (
+    <Panel className="p-6">
+      <h2 className="text-sm font-semibold text-night-100">Academic placement</h2>
+      <p className="mt-1 text-[13px] leading-5 text-night-400">
+        The programme, cohort and curriculum version this enrolment is held against. The cohort decides which course
+        packages the student may download.
+      </p>
+
+      <dl className="mt-4 grid gap-5 sm:grid-cols-2 lg:grid-cols-3">
+        <Fact label="Programme">
+          <span className="font-mono text-[12.5px]">{enrolment.programmeId}</span>
+        </Fact>
+        <Fact label="Cohort">
+          {enrolment.cohortId ? (
+            <>
+              {cohortName(enrolment.cohortId, cohorts)}
+              <span className="mt-0.5 block font-mono text-[12px] text-night-500">{enrolment.cohortId}</span>
+            </>
+          ) : (
+            'None assigned'
+          )}
+        </Fact>
+        <Fact label="Curriculum version">
+          <span className="font-mono text-[12.5px]">{enrolment.curriculumVersion}</span>
+        </Fact>
+        <Fact label="Enrolment id">
+          <span className="font-mono text-[12.5px]">{enrolment.id}</span>
+        </Fact>
+        <Fact label="Student id">
+          <span className="font-mono text-[12.5px]">{enrolment.studentId}</span>
+        </Fact>
+        <Fact label="Applied">
+          {formatTimestamp(enrolment.requestedAt)} · last change {formatTimestamp(enrolment.updatedAt)}
+        </Fact>
+      </dl>
+
+      <p className="mt-4 border-t border-white/[0.06] pt-4 text-[12.5px] leading-5 text-night-500">
+        This page shows the student's placement, not the programme's course rows. Listing a course in the programme does
+        not release it to this student — the cohort and the release plan do that separately.
+      </p>
+    </Panel>
   );
 }
