@@ -142,6 +142,7 @@ The sign-in screen deliberately shows no names. Type an email, or open **Explori
 - **Logging:** structured JSON lines via `log.info('event_name', { fields })` in both servers. Use snake_case event names and never log passwords, tokens or API keys. `errorFields(error)` formats caught errors.
 - **Errors:** routes return `{ error: string }` with a proper status code. The UI surfaces them through the query layer; don't swallow them silently.
 - **Contracts first:** a request or response shape that crosses packages belongs in `packages/shared`.
+- **Versioned roadmap DTOs:** `contracts.ts`, `identity.ts`, `programme.ts`, `wiki.ts`, `sharing.ts` and `teacher-policy.ts` in `packages/shared/src` add `schemaVersion: 2` shapes for admission, full academic rows, the source-backed wiki, cohort publication and message-only teacher requests. They are additive only — no route or runtime consumes them yet, and the existing auth, content and chat contracts remain the live wire formats. Shape validation proves structure, not ownership, entitlement or truth. Synthetic fixtures for tests are exposed only via `@sef/shared/testing` (never the root export), and the shared package's `node:test` suite runs under `tsx` like the engine and uni suites.
 - **Files as the database:** JSON stores are written atomically (write to a temp file, then rename). Keep it that way, since the engine can be killed at any time on a laptop.
 - **Tests:** `node:test` next to the code (`*.test.ts`). Run `pnpm test` and `pnpm typecheck` before committing.
 

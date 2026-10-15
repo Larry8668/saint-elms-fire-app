@@ -1,0 +1,255 @@
+import { z } from 'zod';
+import {
+  ContractVersionSchema,
+  HttpUrlSchema,
+  IdentifierSchema,
+  IdentifierListSchema,
+  NonemptyIdentifiersSchema,
+  ProfileIdentitySchema,
+  RevisionSchema,
+  Sha256Schema,
+  TimestampSchema,
+} from './contracts';
+import { EDGE_TYPES } from './brain';
+import { TEACHER_IDS } from './teachers';
+
+export const SourceLocatorSchema = z.discriminatedUnion('kind', [
+  z
+    .strictObject({ kind: z.literal('text'), start: z.number().int().nonnegative(), end: z.number().int().positive() })
+    .refine((v) => v.end > v.start, 'Invalid text range'),
+  z.strictObject({ kind: z.literal('pdf'), page: z.number().int().positive(), excerpt: z.string().min(1) }),
+  z.strictObject({ kind: z.literal('image'), extractionRevision: RevisionSchema, excerpt: z.string().min(1) }),
+  z
+    .strictObject({
+      kind: z.literal('session'),
+      firstTurn: z.number().int().nonnegative(),
+      lastTurn: z.number().int().nonnegative(),
+    })
+    .refine((v) => v.lastTurn >= v.firstTurn, 'Invalid inclusive turn range'),
+]);
+export type SourceLocator = z.infer<typeof SourceLocatorSchema>;
+
+export const SourceCitationSchema = z.strictObject({
+  sourceId: IdentifierSchema,
+  sourceRevision: RevisionSchema,
+  sha256: Sha256Schema,
+  locator: SourceLocatorSchema,
+});
+export type SourceCitation = z.infer<typeof SourceCitationSchema>;
+
+export const CourseConceptRefSchema = z.strictObject({
+  programmeId: IdentifierSchema,
+  courseId: IdentifierSchema,
+  conceptKey: IdentifierSchema,
+  lessonId: IdentifierSchema.optional(),
+});
+export type CourseConceptRef = z.infer<typeof CourseConceptRefSchema>;
+
+const sourceBase = z.strictObject({
+  schemaVersion: ContractVersionSchema,
+  id: IdentifierSchema,
+  profile: ProfileIdentitySchema,
+  revision: RevisionSchema,
+  title: z.string().trim().min(1).max(300),
+  createdAt: TimestampSchema,
+  mediaType: z.string().min(1).max(120),
+  sha256: Sha256Schema,
+  bytes: z.number().int().nonnegative(),
+  attribution: z.strictObject({ creator: z.string().max(300).optional(), url: HttpUrlSchema.optional() }),
+  extractions: z.array(
+    z.strictObject({
+      revision: RevisionSchema,
+      method: z.enum(['text', 'pdf', 'vision', 'student_correction']),
+      sha256: Sha256Schema,
+      createdAt: TimestampSchema,
+    }),
+  ),
+});
+
+const sessionRef = z
+  .strictObject({
+    sessionId: IdentifierSchema,
+    teacher: z.enum(TEACHER_IDS),
+    firstTurn: z.number().int().nonnegative(),
+    lastTurn: z.number().int().nonnegative(),
+  })
+  .refine((v) => v.lastTurn >= v.firstTurn, 'Invalid inclusive turn range');
+
+export const SourceRecordSchema = z.discriminatedUnion('kind', [
+  sourceBase.extend({ kind: z.literal('note'), origin: z.literal('student') }),
+  sourceBase.extend({ kind: z.literal('document'), origin: z.enum(['course', 'external']) }),
+  sourceBase.extend({ kind: z.literal('image'), origin: z.enum(['student', 'external']) }),
+  sourceBase.extend({ kind: z.literal('session'), origin: z.literal('student'), session: sessionRef }),
+  sourceBase.extend({ kind: z.literal('answer'), origin: z.literal('model'), session: sessionRef }),
+  sourceBase.extend({
+    kind: z.literal('peer'),
+    origin: z.literal('peer'),
+    share: z.strictObject({
+      id: IdentifierSchema,
+      revision: RevisionSchema,
+      senderId: IdentifierSchema,
+      cohortId: IdentifierSchema,
+    }),
+  }),
+]);
+export type SourceRecord = z.infer<typeof SourceRecordSchema>;
+
+export const WikiClaimSchema = z
+  .strictObject({
+    id: IdentifierSchema,
+    text: z.string().min(1),
+    kind: z.enum(['source_fact', 'student_belief', 'deduction', 'question']),
+    origin: z.enum(['course', 'external', 'student', 'peer', 'model']),
+    status: z.enum(['current', 'superseded', 'disputed']),
+    citations: z.array(SourceCitationSchema),
+    supersedes: IdentifierListSchema,
+  })
+  .superRefine((value, ctx) => {
+    if ((value.kind === 'source_fact' || value.kind === 'student_belief') && !value.citations.length) {
+      ctx.addIssue({ code: 'custom', path: ['citations'], message: 'Facts and student beliefs require evidence' });
+    }
+  });
+export type WikiClaim = z.infer<typeof WikiClaimSchema>;
+
+export const WikiLinkSchema = z
+  .strictObject({
+    toPageId: IdentifierSchema,
+    type: z.enum(EDGE_TYPES),
+    origin: z.enum(['course', 'student', 'peer', 'suggested']),
+    why: z.string().min(1),
+    citations: z.array(SourceCitationSchema),
+  })
+  .superRefine((value, ctx) => {
+    if (value.origin === 'student' && !value.citations.length) {
+      ctx.addIssue({ code: 'custom', path: ['citations'], message: 'Student-made connections require evidence' });
+    }
+  });
+export type WikiLink = z.infer<typeof WikiLinkSchema>;
+
+const pageBase = z.strictObject({
+  id: IdentifierSchema,
+  title: z.string().min(1).max(300),
+  summary: z.string().min(1),
+  markdown: z.string(),
+  courseRefs: z.array(CourseConceptRefSchema),
+  claims: z.array(WikiClaimSchema),
+  links: z.array(WikiLinkSchema),
+});
+
+export const WikiPageDraftSchema = z.discriminatedUnion('kind', [
+  pageBase.extend({
+    kind: z.literal('concept'),
+    learner: z.strictObject({
+      inMyWords: z.string(),
+      stuck: z.string(),
+      connections: z.string(),
+      evidenceIds: IdentifierListSchema,
+    }),
+  }),
+  pageBase.extend({ kind: z.literal('source_summary'), sourceIds: NonemptyIdentifiersSchema }),
+  pageBase.extend({ kind: z.literal('synthesis'), sourceIds: NonemptyIdentifiersSchema }),
+  pageBase.extend({ kind: z.literal('question'), sourceIds: IdentifierListSchema }),
+]);
+export type WikiPageDraft = z.infer<typeof WikiPageDraftSchema>;
+
+export const WikiPageSchema = z.strictObject({
+  schemaVersion: ContractVersionSchema,
+  profile: ProfileIdentitySchema,
+  revision: RevisionSchema,
+  state: z.literal('committed'),
+  updatedAt: TimestampSchema,
+  page: WikiPageDraftSchema,
+});
+export type WikiPage = z.infer<typeof WikiPageSchema>;
+
+export const WikiEditSchema = z.discriminatedUnion('op', [
+  z.strictObject({ op: z.literal('upsert_page'), page: WikiPageDraftSchema }),
+  z.strictObject({ op: z.literal('add_link'), fromPageId: IdentifierSchema, link: WikiLinkSchema }),
+]);
+export type WikiEdit = z.infer<typeof WikiEditSchema>;
+
+export const WikiProposalSchema = z
+  .strictObject({
+    schemaVersion: ContractVersionSchema,
+    id: IdentifierSchema,
+    profile: ProfileIdentitySchema,
+    sourceIds: NonemptyIdentifiersSchema,
+    conventionRevision: RevisionSchema,
+    createdAt: TimestampSchema,
+    baseRevisions: z.record(IdentifierSchema, RevisionSchema.nullable()),
+    operations: z.array(WikiEditSchema).min(1),
+  })
+  .superRefine((value, ctx) => {
+    value.operations.forEach((op, index) => {
+      const id = op.op === 'upsert_page' ? op.page.id : op.fromPageId;
+      if (!Object.hasOwn(value.baseRevisions, id)) {
+        ctx.addIssue({
+          code: 'custom',
+          path: ['operations', index],
+          message: 'Each edited page needs an expected base revision; null means create',
+        });
+      }
+    });
+  });
+export type WikiProposal = z.infer<typeof WikiProposalSchema>;
+
+export const WikiJobSchema = z
+  .strictObject({
+    schemaVersion: ContractVersionSchema,
+    id: IdentifierSchema,
+    profile: ProfileIdentitySchema,
+    sourceIds: NonemptyIdentifiersSchema,
+    createdAt: TimestampSchema,
+    updatedAt: TimestampSchema,
+    stage: z.enum([
+      'queued',
+      'extracting',
+      'awaiting_source_review',
+      'compiling',
+      'awaiting_review',
+      'committed',
+      'no_changes',
+      'failed',
+      'cancelled',
+    ]),
+    progress: z
+      .strictObject({ completed: z.number().int().nonnegative(), total: z.number().int().positive() })
+      .refine((v) => v.completed <= v.total, 'Progress exceeds total'),
+    proposalId: IdentifierSchema.nullable(),
+    error: z.string().min(1).max(500).nullable(),
+  })
+  .superRefine((value, ctx) => {
+    if (Date.parse(value.updatedAt) < Date.parse(value.createdAt)) {
+      ctx.addIssue({ code: 'custom', path: ['updatedAt'], message: 'Update precedes job creation' });
+    }
+    if ((value.stage === 'failed') !== (value.error !== null)) {
+      ctx.addIssue({ code: 'custom', path: ['error'], message: 'Only failed jobs carry an error' });
+    }
+    if ((value.stage === 'awaiting_review' || value.stage === 'committed') && !value.proposalId) {
+      ctx.addIssue({ code: 'custom', path: ['proposalId'], message: 'Review or commit requires a proposal' });
+    }
+  });
+export type WikiJob = z.infer<typeof WikiJobSchema>;
+
+export const LearningEventSchema = z
+  .strictObject({
+    schemaVersion: ContractVersionSchema,
+    id: IdentifierSchema,
+    profile: ProfileIdentitySchema,
+    pageId: IdentifierSchema,
+    at: TimestampSchema,
+    kind: z.enum(['encounter', 'explanation', 'struggle', 'correction', 'connection', 'application', 'review']),
+    actor: z.enum(['student', 'peer', 'model']),
+    evidence: z.array(SourceCitationSchema).min(1),
+    knowledgeOnly: z.boolean(),
+  })
+  .superRefine((value, ctx) => {
+    if (value.actor !== 'student' && !value.knowledgeOnly) {
+      ctx.addIssue({
+        code: 'custom',
+        path: ['knowledgeOnly'],
+        message: 'Imported or generated knowledge is not evidence of student mastery',
+      });
+    }
+  });
+export type LearningEvent = z.infer<typeof LearningEventSchema>;
