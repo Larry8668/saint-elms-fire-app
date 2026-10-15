@@ -62,6 +62,10 @@ const sourceBase = z.strictObject({
       method: z.enum(['text', 'pdf', 'vision', 'student_correction']),
       sha256: Sha256Schema,
       createdAt: TimestampSchema,
+      /** Characters of text the pass produced; absent on records written before it was tracked. */
+      chars: z.number().int().nonnegative().optional(),
+      /** Whether that pass stopped short of the whole source. */
+      partial: z.boolean().optional(),
     }),
   ),
 });
@@ -230,6 +234,35 @@ export const WikiJobSchema = z
     }
   });
 export type WikiJob = z.infer<typeof WikiJobSchema>;
+
+/** What the engine reports about one source to the desktop and admin apps. */
+export const SourceSummarySchema = z.strictObject({
+  id: IdentifierSchema,
+  revision: RevisionSchema,
+  title: z.string().min(1).max(300),
+  kind: z.enum(['note', 'document', 'image', 'session', 'answer', 'peer']),
+  mediaType: z.string().min(1).max(120),
+  bytes: z.number().int().nonnegative(),
+  sha256: Sha256Schema,
+  /** True once something has been read out of it; false while it is still opaque. */
+  extracted: z.boolean(),
+  /** True when the extraction stopped early — the reason travels with it. */
+  partial: z.boolean().default(false),
+  /** Human-readable explanation for a partial or failed extraction. */
+  note: z.string().max(500).optional(),
+  capturedAt: TimestampSchema,
+});
+export type SourceSummary = z.infer<typeof SourceSummarySchema>;
+
+/** The ingestion job list the UI renders. */
+export const JobListSchema = z.strictObject({
+  schemaVersion: ContractVersionSchema,
+  jobs: z.array(WikiJobSchema),
+  sources: z.array(SourceSummarySchema),
+  /** Non-terminal jobs, so a client can explain the cap without recomputing. */
+  activeJobs: z.number().int().nonnegative(),
+});
+export type JobList = z.infer<typeof JobListSchema>;
 
 export const LearningEventSchema = z
   .strictObject({

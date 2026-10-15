@@ -75,6 +75,8 @@ export interface DeviceProfile {
   name: string;
   email: string;
   cohortId: string;
+  /** Programme the enrolment is against, learned at device sign-in. Absent on legacy password profiles. */
+  programmeId?: string;
   stage?: string;
   persona?: string;
   lastOnlineAt?: string;

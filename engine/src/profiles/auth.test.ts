@@ -92,9 +92,11 @@ test('device sign-in records admission and never a password verifier', async () 
     new Date(Date.now() + 86400000).toISOString(),
     'approved',
     'cohort-a',
+    'bsc-physics',
   );
   assert.equal(profile.admission, 'approved');
   assert.equal(profile.cohortId, 'cohort-a');
+  assert.equal(profile.programmeId, 'bsc-physics', 'the programme is part of the stored identity');
   // No password path exists for this profile.
   assert.equal(await registry.verifyOffline('n@test', 'anything'), null);
   // But the uni session credential resolves.

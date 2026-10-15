@@ -11,6 +11,7 @@ import { errorStatus, friendlyError } from './errors';
 import { authRoutes } from './routes/auth';
 import { settingsRoutes } from './routes/settings';
 import { studentRoutes } from './routes/student';
+import { sourceRoutes } from './routes/sources';
 
 export type { EngineDeps } from './context';
 
@@ -107,6 +108,7 @@ export function createApp(deps: EngineDeps) {
   app.route('/api/auth', authRoutes(deps));
   app.route('/api', settingsRoutes(deps));
   app.route('/api', studentRoutes(deps));
+  app.route('/api', sourceRoutes(deps));
 
   return app;
 }

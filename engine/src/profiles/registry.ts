@@ -109,6 +109,7 @@ export class ProfileRegistry {
     sessionExpiresAt: string,
     admission: NonNullable<DeviceProfile['admission']>,
     cohortId: string,
+    programmeId?: string,
   ): Promise<DeviceProfile> {
     const profiles = await this.load();
     const existing = profiles.get(user.id);
@@ -118,6 +119,7 @@ export class ProfileRegistry {
       name: user.name,
       email: user.email,
       cohortId: cohortId || existing?.cohortId || '',
+      programmeId: programmeId || existing?.programmeId,
       stage: existing?.stage,
       persona: existing?.persona,
       lastOnlineAt: new Date().toISOString(),

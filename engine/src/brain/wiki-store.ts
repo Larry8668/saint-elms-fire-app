@@ -326,6 +326,34 @@ export class WikiStore {
     });
   }
 
+  /**
+   * Records an extraction pass on the stored record — metadata only; the frozen bytes and
+   * revision never move. Without this the ledger stays empty and a later `listSources` could
+   * not honestly say what was read.
+   */
+  async recordExtraction(id: string, entry: { method: SourceRecord['extractions'][number]['method']; sha256: string; chars: number; partial: boolean }): Promise<void> {
+    const safeId = assertRecordId(id, 'Source id');
+    await this.lock.run(async () => {
+      const record = await this.readSource(safeId);
+      if (!record) return;
+      const read = await readManifest(this.root);
+      assertWritableManifest(read);
+      const at = this.now().toISOString();
+      const manifest = read.manifest ?? emptyManifest(at);
+      const existing = manifest.sources[safeId];
+      if (!existing) return;
+      const value = SourceRecordSchema.parse({
+        ...record,
+        extractions: [...record.extractions, { revision: record.revision, createdAt: at, ...entry }],
+      });
+      const sources = { ...manifest.sources, [safeId]: { ...existing, extractions: value.extractions.length } };
+      await this.commit(`wiki.extraction:${safeId}`, [
+        { kind: 'write', path: sourceRecordStepPath(safeId), content: `${JSON.stringify(value, null, 2)}\n` },
+        { kind: 'write', path: manifestPath(this.root), content: manifestJson({ ...manifest, updatedAt: at, sources }) },
+      ]);
+    });
+  }
+
   /** Student-controlled erasure: the only path that may touch raw/. */
   async eraseSource(id: string, expectedRevision?: Revision): Promise<{ erased: boolean }> {
     const safeId = assertRecordId(id, 'Source id');
