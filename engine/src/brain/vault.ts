@@ -3,6 +3,7 @@ import path from 'node:path';
 import type { BrainLogEntry, ConceptPage } from '@sef/shared';
 import { log } from '../config';
 import { readText, writeFileAtomic } from '../lib/fs';
+import { recentLogEntries, renderLogEntry } from './log-format';
 import { computeStatus } from './mastery';
 import { parsePage, serializePage } from './page-format';
 
@@ -103,19 +104,10 @@ export class BrainVault {
   }
 
   async appendLog(entry: Omit<BrainLogEntry, 'at'>, at = new Date().toISOString()): Promise<void> {
-    const line = `## [${at.slice(0, 19).replace('T', ' ')}] ${entry.kind} | ${entry.title}\n${entry.detail ? `${entry.detail}\n` : ''}\n`;
-    await appendFile(path.join(this.root, 'log.md'), line);
+    await appendFile(path.join(this.root, 'log.md'), renderLogEntry({ ...entry, at }));
   }
 
   async readLog(limit = 50): Promise<BrainLogEntry[]> {
-    const raw = (await readText(path.join(this.root, 'log.md'))) ?? '';
-    const entries: BrainLogEntry[] = [];
-    for (const block of raw.split(/\n(?=## \[)/)) {
-      const head = block.match(/^## \[([^\]]+)\] (\S+) \| (.*)$/m);
-      if (!head) continue;
-      const detail = block.split('\n').slice(1).join('\n').trim();
-      entries.push({ at: head[1], kind: head[2], title: head[3], detail: detail || undefined });
-    }
-    return entries.reverse().slice(0, limit);
+    return recentLogEntries((await readText(path.join(this.root, 'log.md'))) ?? '', limit);
   }
 }

@@ -43,7 +43,7 @@ export function parsePage(raw: string): ConceptPage | null {
   };
 }
 
-function readSection(body: string, title: string): string {
+export function readSection(body: string, title: string): string {
   const escaped = title.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
   const match = body.match(new RegExp(`## ${escaped}\\n([\\s\\S]*?)(?=\\n## |$)`));
   const text = match?.[1].trim() ?? '';

@@ -2,6 +2,7 @@ import { mkdir } from 'node:fs/promises';
 import type { DeviceProfile } from '@sef/shared';
 import { BrainService } from '../brain/service';
 import { BrainVault } from '../brain/vault';
+import { WikiStore } from '../brain/wiki-store';
 import { log, profilePaths, type ProfilePaths } from '../config';
 import { ProfileSettingsStore } from '../settings/store';
 import { ContentStore } from '../content/store';
@@ -17,6 +18,7 @@ export interface Workspace {
   settings: ProfileSettingsStore;
   content: ContentStore;
   vault: BrainVault;
+  wiki: WikiStore;
   brain: BrainService;
   sessions: SessionStore;
   sync: ContentSync;
@@ -50,6 +52,10 @@ export class WorkspaceManager {
     await Promise.all([paths.content, paths.sessions, paths.quizzes].map((dir) => mkdir(dir, { recursive: true })));
     const settings = new ProfileSettingsStore(this.settings, paths.privateSettings);
     const content = new ContentStore(paths.content);
+    // The wiki store owns the vault layout, SCHEMA.md and recovery; the concept vault reads what it writes.
+    const wiki = new WikiStore(paths.brain);
+    await wiki.init();
+    await wiki.recover();
     const vault = new BrainVault(paths.brain);
     await vault.init();
     const workspace: Workspace = {
@@ -58,6 +64,7 @@ export class WorkspaceManager {
       settings,
       content,
       vault,
+      wiki,
       brain: new BrainService(content, vault, settings, paths.quizzes),
       sessions: new SessionStore(paths.sessions),
       sync: new ContentSync(settings, content, async () => {
