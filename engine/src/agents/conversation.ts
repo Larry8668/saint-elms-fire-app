@@ -193,6 +193,7 @@ export class ConversationRegistry {
    * A teacher never changes identity on a session, so a mid-thread role switch has no path.
    */
   async handoff(input: { sessionId: string; profileId: string; to: TeacherId; reason: string }): Promise<ConversationRecord> {
+    await this.load(input.profileId);
     const previous = this.sessions.get(input.sessionId);
     if (!previous) throw new ConversationRefused('unknown_session', refusalCopy('unknown_session'));
     if (previous.profileId !== input.profileId) throw new ConversationRefused('session_owner_mismatch', refusalCopy('session_owner_mismatch'));
