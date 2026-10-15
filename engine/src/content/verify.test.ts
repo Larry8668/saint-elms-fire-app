@@ -192,3 +192,9 @@ test('a legacy manifest cannot claim a version derived from metadata it never ca
   const forged = build({ legacy: true, tamper: (m) => { m.metadata = metadata({ credits: 7 }); } });
   assert.throws(() => check(forged), PackageVerificationError);
 });
+
+test('an empty trust anchor refuses instead of matching a blank issuer', () => {
+  // A failed anchor lookup must abort, not weaken the comparison to ''.
+  assert.throws(() => check(build({ issuer: '' }), 'waves', ''), /No pinned issuer/);
+  assert.throws(() => check(build(), 'waves', ''), /No pinned issuer/);
+});

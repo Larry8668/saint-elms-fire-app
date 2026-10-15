@@ -16,7 +16,7 @@ import {
 import { log } from '../config';
 import type { SettingsReader } from '../settings/store';
 import { uniFetch, UniHttpError } from '../uni/client';
-import { trustedUniKey } from '../uni/trust';
+import { trustedUniIssuer, trustedUniKey } from '../uni/trust';
 import type { ContentStore } from './store';
 
 export class PackageVerificationError extends Error {}
@@ -53,6 +53,10 @@ export function verifyPackage(pkg: { manifest: PackageManifest; signature: strin
   // Identity before signature: a package for a different course is not worth verifying twice.
   if (manifest.courseId !== requestedCourseId) {
     throw new PackageVerificationError(`Package is for ${manifest.courseId}, not ${requestedCourseId}`);
+  }
+  // An empty anchor would admit a package whose manifest issuer is also empty.
+  if (!expectedIssuer.trim()) {
+    throw new PackageVerificationError('No pinned issuer for this university');
   }
   if (manifest.issuer !== expectedIssuer) {
     throw new PackageVerificationError(`Package issuer ${manifest.issuer} does not match this university`);
@@ -216,11 +220,10 @@ export class ContentSync {
     return { courseId, version: verified.version, files: verified.files.length };
   }
 
-  /** The issuer this device trusts, taken from the key it already pins for the same host. */
+  /** The issuer this device trusts: pinned beside the signing key, so a network failure aborts the install. */
   private async issuer(): Promise<string> {
     const { uniServerUrl } = await this.settings.get();
-    const issuer = await uniFetch<{ issuer: string }>(uniServerUrl, '/health').catch(() => null);
-    return issuer?.issuer ?? '';
+    return trustedUniIssuer(uniServerUrl);
   }
 }
 
