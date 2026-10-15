@@ -137,7 +137,7 @@ export class AuthService {
     const me = await uniFetch<AdmissionMe>(uniServerUrl, '/v1/me', { token: sessionToken });
     const admission: NonNullable<DeviceProfile['admission']> = me.enrolment?.status ?? 'none';
     const cohortId = me.enrolment?.cohortId ?? '';
-    let profile = await this.registry.recordDeviceSignIn(me.user, sessionToken, sessionExpiresAt, admission, cohortId);
+    let profile = await this.registry.recordDeviceSignIn(me.user, sessionToken, sessionExpiresAt, admission, cohortId, me.enrolment?.programmeId);
     if (admission === 'approved') {
       await this.refreshEntitlement(uniServerUrl, sessionToken, profile.id);
       profile = (await this.registry.get(profile.id)) ?? profile;

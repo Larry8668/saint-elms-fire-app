@@ -32,15 +32,17 @@ const ingestBody = z
  * The identity a source is filed under, taken from the workspace rather than the request so
  * a client cannot file someone else's material.
  *
- * `DeviceProfile` carries no programme id of its own — it has the cohort the student is in,
- * which is what the engine can honestly assert. That is a real gap against
- * `ProfileIdentity.programmeId`, and it is named here rather than papered over.
+ * `DeviceProfile.programmeId` is learned at device sign-in from the enrolment. Profiles
+ * created before that field existed fall back to the cohort — the honest scope the engine
+ * can assert — and a profile with neither is refused rather than filed under a fake id.
  */
-const identityOf = (ws: Workspace, uniServerUrl: string): ProfileIdentity => ({
-  issuer: uniServerUrl,
-  studentId: ws.profile.id,
-  programmeId: ws.profile.cohortId,
-});
+const identityOf = (ws: Workspace, uniServerUrl: string): ProfileIdentity => {
+  const programmeId = ws.profile.programmeId ?? (ws.profile.cohortId || undefined);
+  if (!programmeId) {
+    throw new SourceRejection('This profile is not linked to a programme yet. Sign in online once more first.', 'no_programme', 409);
+  }
+  return { issuer: uniServerUrl, studentId: ws.profile.id, programmeId };
+};
 
 /**
  * Decodes a base64 envelope — standard or URL-safe alphabet, whitespace tolerated.
@@ -60,14 +62,23 @@ export function decodeSourceBytes(data: string): Uint8Array | null {
 
 export function sourceRoutes(deps: EngineDeps) {
   const app = new Hono<EngineEnv>();
-  const guard = requireProfile(deps);
+  // Workspace features are for admitted students: a pending applicant can sign in but
+  // cannot file material into a vault.
+  const guard = requireProfile(deps, { approved: true });
 
   const ingestorFor = async (ws: Workspace): Promise<SourceIngestor> => {
     const { uniServerUrl } = await ws.settings.get();
     return new SourceIngestor(ws.wiki, path.join(ws.paths.brain, 'jobs'), async () => identityOf(ws, uniServerUrl));
   };
 
-  app.get('/sources', guard, async (c) => c.json(await (await ingestorFor(c.get('ws'))).list()));
+  app.get('/sources', guard, async (c) => {
+    try {
+      return c.json(await (await ingestorFor(c.get('ws'))).list());
+    } catch (error) {
+      if (error instanceof SourceRejection) return c.json({ error: error.message, code: error.code }, error.status);
+      throw error;
+    }
+  });
 
   /**
    * Accepts a source as a JSON envelope with base64 bytes rather than a multipart upload.

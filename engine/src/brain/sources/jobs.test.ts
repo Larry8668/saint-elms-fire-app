@@ -64,6 +64,17 @@ test('one student\'s job is never reused for another', async () => {
   assert.equal(other.reused, false, 'jobs are per-student');
 });
 
+test('the concurrency cap is enforced inside createJob, not only at the route', async () => {
+  const store = await harness();
+  await createJob(store, { profile: profile(), sourceIds: ['src_a'], now: AT }, { maxActiveJobs: 1 });
+  await assert.rejects(
+    createJob(store, { profile: profile(), sourceIds: ['src_b'], now: AT }, { maxActiveJobs: 1 }),
+    JobStateError,
+  );
+  // Another student's active jobs do not count against this one.
+  await createJob(store, { profile: profile('stu_2'), sourceIds: ['src_c'], now: AT }, { maxActiveJobs: 1 });
+});
+
 test('a finished job does not block a fresh ingest of the same material', async () => {
   const store = await harness();
   const first = await createJob(store, { profile: profile(), sourceIds: ['src_a'], now: AT });

@@ -64,13 +64,15 @@ export async function createJob(store: JobStore, input: CreateJobInput, limits: 
   const rejection = checkSourceCount(input.sourceIds.length, limits);
   if (rejection) throw new JobStateError(rejection.message);
 
-  const existing = (await store.list()).find(
-    (job) => !isTerminal(job.stage) && sameSources(job.sourceIds, input.sourceIds) && job.profile.studentId === input.profile.studentId,
-  );
+  const mine = (await store.list()).filter((job) => job.profile.studentId === input.profile.studentId);
+  const existing = mine.find((job) => !isTerminal(job.stage) && sameSources(job.sourceIds, input.sourceIds));
   if (existing) {
     log.info('job_reused', { jobId: existing.id, stage: existing.stage, sources: existing.sourceIds.length });
     return { job: existing, reused: true };
   }
+
+  // The cap lives here, not only at the call site: any future caller gets it for free.
+  assertJobCapacity(mine.filter((job) => !isTerminal(job.stage)).length, limits);
 
   const at = (input.now ?? new Date()).toISOString();
   const job = WikiJobSchema.parse({
