@@ -84,7 +84,7 @@ export async function loadCourseware(root: string): Promise<CoursewareIndex> {
     lessons.sort((a, b) => a.moduleId.localeCompare(b.moduleId) || a.order - b.order);
     const first = lessons[0]!;
     const row = rowFor.get(courseId);
-    const support = row?.courseType === 'Administrative Support';
+    const support = row ? row.courseType === 'Administrative Support' : first.subjectId === 'university-support';
     courses.set(courseId, {
       files,
       lessons: lessons.map(({ markdown: _body, ...meta }) => meta),
