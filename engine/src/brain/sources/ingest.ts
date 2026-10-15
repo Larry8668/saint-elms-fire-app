@@ -1,0 +1,199 @@
+import { randomUUID } from 'node:crypto';
+import {
+  CONTRACT_VERSION,
+  JobListSchema,
+  SourceRecordSchema,
+  SourceSummarySchema,
+  type JobList,
+  type ProfileIdentity,
+  type SourceRecord,
+  type SourceSummary,
+} from '@sef/shared';
+import type { ContentfulStatusCode } from 'hono/utils/http-status';
+import { log } from '../../config';
+import { extractPdf, extractText, sha256, type ExtractionResult } from './extract';
+import { assertJobCapacity, advanceJob, cancelJob, createJob, jobStore, JobConflictError, JobStateError, listProfileJobs, retryJob } from './jobs';
+import { checkBytes, sanitiseTitle, titleIsSafe, type Limits } from './limits';
+import { openPdf, PdfParseError } from './pdf';
+import type { WikiStore } from '../wiki-store';
+
+/**
+ * Source ingestion: the student hands over bytes, the engine keeps them, and only then reads
+ * anything out of them. The original is stored before extraction starts, so a failure
+ * mid-read never costs the material and a retry re-reads the same bytes.
+ */
+
+export class SourceRejection extends Error {
+  constructor(
+    message: string,
+    readonly code: string,
+    readonly status: ContentfulStatusCode,
+  ) {
+    super(message);
+  }
+}
+
+export type IngestKind = 'note' | 'document' | 'image';
+
+export interface IngestInput {
+  kind: IngestKind;
+  title: string;
+  mediaType: string;
+  bytes: Uint8Array;
+}
+
+export interface IngestResult {
+  source: SourceSummary;
+  extraction: ExtractionResult | null;
+  jobId: string;
+  reused: boolean;
+}
+
+const newSourceId = (): string => `src_${randomUUID().replace(/-/g, '').slice(0, 20)}`;
+
+const ORIGIN: Record<IngestKind, 'student' | 'external'> = {
+  note: 'student',
+  document: 'external',
+  image: 'student',
+};
+
+export class SourceIngestor {
+  private readonly jobs;
+
+  constructor(
+    private readonly store: WikiStore,
+    private readonly jobsRoot: string,
+    private readonly profile: () => Promise<ProfileIdentity>,
+  ) {
+    this.jobs = jobStore(jobsRoot);
+  }
+
+  /**
+   * Validates, stores, then extracts — in that order. Every rejection happens before the
+   * bytes touch disk, so a refused upload leaves nothing behind.
+   */
+  async ingest(input: IngestInput, limits: Limits = {}): Promise<IngestResult> {
+    if (!titleIsSafe(input.title)) throw new SourceRejection('That title cannot be used.', 'unsafe_title', 400);
+    const rejection = checkBytes(input.bytes, limits);
+    if (rejection) throw new SourceRejection(rejection.message, rejection.code, rejection.code === 'empty' ? 400 : 413);
+
+    const identity = await this.profile();
+    const { active } = await listProfileJobs(this.jobs, identity);
+    assertJobCapacity(active, limits);
+
+    const record = SourceRecordSchema.parse({
+      schemaVersion: CONTRACT_VERSION,
+      id: newSourceId(),
+      profile: identity,
+      revision: 'r1',
+      kind: input.kind,
+      origin: ORIGIN[input.kind],
+      title: sanitiseTitle(input.title),
+      createdAt: new Date().toISOString(),
+      mediaType: input.mediaType,
+      sha256: sha256(input.bytes),
+      bytes: input.bytes.byteLength,
+      attribution: {},
+      extractions: [],
+    });
+
+    // The original is durable before anything is read out of it.
+    const { record: stored, alreadyPresent } = await this.store.putSource(record, input.bytes);
+    log.info('source_stored', { sourceId: stored.id, kind: stored.kind, bytes: stored.bytes, alreadyPresent });
+
+    const extraction = await this.extract(stored, input.bytes, limits);
+    const job = await this.track(stored.id, limits);
+
+    return {
+      source: this.summaryOf(stored, extraction),
+      extraction,
+      jobId: job.id,
+      reused: alreadyPresent || job.reused,
+    };
+  }
+
+  /** Reads the source. A failure is reported in the result, never thrown: the original is safe. */
+  private async extract(record: SourceRecord, bytes: Uint8Array, limits: Limits): Promise<ExtractionResult | null> {
+    try {
+      if (record.mediaType.startsWith('application/pdf')) {
+        const reader = await openPdf(bytes, limits);
+        try {
+          const outcome = await extractPdf(bytes, reader, limits);
+          if (!outcome.ok) return this.readFailure(record, outcome.rejection.message);
+          return outcome.result;
+        } finally {
+          await reader.close().catch(() => {});
+        }
+      }
+      if (record.mediaType.startsWith('image/')) {
+        // Local vision is not wired yet. Say so rather than inventing a reading.
+        return this.readFailure(record, 'No text has been read from this image yet.');
+      }
+      const outcome = extractText(bytes, limits);
+      return outcome.ok ? outcome.result : this.readFailure(record, outcome.rejection.message);
+    } catch (error) {
+      const message = error instanceof PdfParseError ? error.message : `That source could not be read: ${(error as Error).message}`;
+      return this.readFailure(record, message);
+    }
+  }
+
+  /** An unreadable source keeps its bytes and reports why, rather than looking intact. */
+  private readFailure(record: SourceRecord, note: string): ExtractionResult {
+    log.warn('source_extraction_failed', { sourceId: record.id, mediaType: record.mediaType, note });
+    return { method: 'text', text: '', sha256: record.sha256, partial: true, note };
+  }
+
+  private summaryOf(record: SourceRecord, extraction: ExtractionResult | null): SourceSummary {
+    return SourceSummarySchema.parse({
+      id: record.id,
+      revision: record.revision,
+      title: record.title,
+      kind: record.kind,
+      mediaType: record.mediaType,
+      bytes: record.bytes,
+      sha256: record.sha256,
+      extracted: extraction !== null && extraction.text !== '',
+      partial: extraction?.partial ?? false,
+      ...(extraction?.note ? { note: extraction.note } : {}),
+      capturedAt: record.createdAt,
+    });
+  }
+
+  /** Joins the source to a durable job. Re-ingesting the same material reuses the live job. */
+  private async track(sourceId: string, limits: Limits): Promise<{ id: string; reused: boolean }> {
+    const { job, reused } = await createJob(
+      this.jobs,
+      { profile: await this.profile(), sourceIds: [sourceId], now: new Date() },
+      limits,
+    );
+    if (job.stage === 'queued') {
+      await advanceJob(this.jobs, job.id, 'extracting', { progress: { completed: 1, total: 1 } });
+    }
+    return { id: job.id, reused };
+  }
+
+  async list(): Promise<JobList> {
+    const identity = await this.profile();
+    const { jobs, active } = await listProfileJobs(this.jobs, identity);
+    const records = Object.values(await this.store.listSources()).sort(
+      (a, b) => Date.parse(b.createdAt) - Date.parse(a.createdAt),
+    );
+    return JobListSchema.parse({
+      schemaVersion: CONTRACT_VERSION,
+      jobs,
+      // Summaries only: this endpoint never returns source bodies.
+      sources: records.map((record) => this.summaryOf(record, null)),
+      activeJobs: active,
+    });
+  }
+
+  async cancel(id: string): Promise<void> {
+    await cancelJob(this.jobs, id);
+  }
+
+  async retry(id: string): Promise<void> {
+    await retryJob(this.jobs, id);
+  }
+}
+
+export { JobConflictError, JobStateError };
