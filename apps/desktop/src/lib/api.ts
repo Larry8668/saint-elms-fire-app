@@ -32,6 +32,8 @@ import type {
   PublishedShare,
   PublishShareRequest,
   PublishShareResult,
+  RestorePageRequest,
+  SaveAnswerRequest,
   SemanticReviewResult,
   SessionDetail,
   SessionSummary,
@@ -44,6 +46,8 @@ import type {
   SourceReceipt,
   SyncStatus,
   TeacherId,
+  WikiIndex,
+  WikiPageView,
   WikiProposalRecord,
 } from '@sef/shared';
 import { log } from './log';
@@ -162,6 +166,14 @@ export const api = {
   page: (key: string) => request<ConceptPage>(`/api/brain/pages/${encodeURIComponent(key)}`),
   pageRevisions: (key: string) => request<PageRevisionList>(`/api/brain/pages/${encodeURIComponent(key)}/revisions`),
   pageRevision: (key: string, revision: string) => request<PageRevisionContent>(`/api/brain/pages/${encodeURIComponent(key)}/revisions/${encodeURIComponent(revision)}`),
+  /** Writes the named revision back as a new one, on top of what the caller read. 409 = stale base. */
+  restorePage: (key: string, body: RestorePageRequest) => post<ProposalAcceptance>(`/api/brain/pages/${encodeURIComponent(key)}/restore`, body),
+
+  // The compiled wiki: catalogue, one page's permitted view, and save-an-answer.
+  wikiIndex: () => request<WikiIndex>('/api/wiki/pages'),
+  wikiPage: (id: string) => request<WikiPageView>(`/api/wiki/pages/${encodeURIComponent(id)}`),
+  /** Freezes one answer turn as a model-provenance source and queues its compile job. */
+  saveAnswer: (body: SaveAnswerRequest) => post<SourceReceipt>('/api/wiki/save', body),
   brainLog: () => request<BrainLogEntry[]>('/api/brain/log'),
   lint: () => request<LintFinding[]>('/api/brain/lint'),
 

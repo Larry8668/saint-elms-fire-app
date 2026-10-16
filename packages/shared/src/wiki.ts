@@ -438,6 +438,115 @@ export const PageRevisionContentSchema = z.strictObject({
 });
 export type PageRevisionContent = z.infer<typeof PageRevisionContentSchema>;
 
+/**
+ * One catalogue row of the compiled wiki, for GET /api/wiki/pages. Metadata only — the
+ * page body comes from the view endpoint, so an index read stays cheap on a large vault.
+ */
+export const WikiPageEntrySchema = z.strictObject({
+  id: IdentifierSchema,
+  kind: z.enum(['concept', 'source_summary', 'synthesis', 'question']),
+  title: z.string(),
+  summary: z.string(),
+  revision: RevisionSchema,
+  updatedAt: TimestampSchema.nullable(),
+  /** 'out_of_band' or 'malformed' means the file on disk no longer matches its frontmatter. */
+  state: z.enum(['ok', 'out_of_band', 'malformed', 'newer_schema']),
+  sourceIds: IdentifierListSchema,
+  claims: z.number().int().nonnegative(),
+  links: z.number().int().nonnegative(),
+});
+export type WikiPageEntry = z.infer<typeof WikiPageEntrySchema>;
+
+export const WikiIndexSchema = z.strictObject({
+  schemaVersion: ContractVersionSchema,
+  counts: z.strictObject({
+    pages: z.number().int().nonnegative(),
+    sources: z.number().int().nonnegative(),
+    byKind: z.record(z.enum(['concept', 'source_summary', 'synthesis', 'question']), z.number().int().nonnegative()),
+  }),
+  pages: z.array(WikiPageEntrySchema),
+});
+export type WikiIndex = z.infer<typeof WikiIndexSchema>;
+
+/**
+ * One claim as the engine judges it right now: assertable means its provenance resolves
+ * against the vault's current sources; a withheld claim may be named, never asserted.
+ */
+export const WikiClaimViewSchema = z.strictObject({
+  id: IdentifierSchema,
+  text: z.string(),
+  kind: z.enum(['source_fact', 'student_belief', 'deduction', 'question']),
+  origin: z.enum(['course', 'external', 'student', 'peer', 'model']),
+  status: z.enum(['current', 'superseded', 'disputed']),
+  assertable: z.boolean(),
+  reason: z.string().optional(),
+  citations: z.array(SourceCitationSchema),
+});
+export type WikiClaimView = z.infer<typeof WikiClaimViewSchema>;
+
+/** The source a page's claims and links rest on, resolved to its record for display. */
+export const WikiPageSourceSchema = z.strictObject({
+  id: IdentifierSchema,
+  title: z.string(),
+  kind: z.enum(['note', 'document', 'image', 'session', 'answer', 'peer']),
+  origin: z.enum(['course', 'external', 'student', 'peer', 'model']),
+});
+export type WikiPageSource = z.infer<typeof WikiPageSourceSchema>;
+
+/** GET /api/wiki/pages/:id — one page through the permitted view, claims judged live. */
+export const WikiPageViewSchema = z.strictObject({
+  schemaVersion: ContractVersionSchema,
+  id: IdentifierSchema,
+  kind: z.enum(['concept', 'source_summary', 'synthesis', 'question']),
+  title: z.string(),
+  summary: z.string(),
+  revision: RevisionSchema,
+  updatedAt: TimestampSchema.nullable(),
+  state: z.enum(['ok', 'out_of_band', 'malformed', 'newer_schema']),
+  body: z.string(),
+  claims: z.array(WikiClaimViewSchema),
+  links: z.array(WikiLinkSchema),
+  /** Sources the page rests on, resolved where a record still exists. */
+  sources: z.array(WikiPageSourceSchema),
+  /** Source ids named on the page that no longer resolve — shown, not hidden. */
+  missingSourceIds: IdentifierListSchema,
+  courseRefs: z.array(CourseConceptRefSchema),
+});
+export type WikiPageView = z.infer<typeof WikiPageViewSchema>;
+
+/**
+ * POST /api/wiki/save — freeze one assistant answer as an 'answer' source and queue its
+ * job. `saveKind` is a hint the keeper reads from the retained document; code never trusts
+ * it to decide the page kind.
+ */
+export const SaveAnswerRequestSchema = z
+  .strictObject({
+    sessionId: IdentifierSchema,
+    /** Index into the session's turns; must point at an assistant message. Defaults to the latest one. */
+    turnIndex: z.number().int().nonnegative().optional(),
+    /**
+     * The answer text as the student saw it. Sent alongside turnIndex because a failed turn
+     * leaves a message in the UI without a stored turn, drifting the index: when both are
+     * given, the engine finds the last stored assistant turn with this exact content rather
+     * than trusting the position.
+     */
+    content: z.string().min(1).max(200_000).optional(),
+    title: z.string().trim().min(1).max(300).optional(),
+    saveKind: z.enum(['synthesis', 'question']).optional(),
+  })
+  .strict();
+export type SaveAnswerRequest = z.infer<typeof SaveAnswerRequestSchema>;
+
+/**
+ * POST /api/brain/pages/:key/restore — writes the named historical revision as a NEW
+ * revision on top of the page the caller read at `baseRevision`. History is append-only.
+ */
+export const RestorePageRequestSchema = z.strictObject({
+  revision: z.string().min(1).max(160),
+  baseRevision: z.string().min(1).max(160),
+});
+export type RestorePageRequest = z.infer<typeof RestorePageRequestSchema>;
+
 export const LearningEventSchema = z
   .strictObject({
     schemaVersion: ContractVersionSchema,

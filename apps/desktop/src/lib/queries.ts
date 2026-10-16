@@ -21,6 +21,8 @@ export const keys = {
     page: (p: string, key: string) => ['profile', p, 'page', key] as const,
     pageRevisions: (p: string, key: string) => ['profile', p, 'page-revisions', key] as const,
     pageRevision: (p: string, key: string, revision: string) => ['profile', p, 'page-revisions', key, revision] as const,
+    wikiIndex: (p: string) => ['profile', p, 'wiki-index'] as const,
+    wikiPage: (p: string, id: string) => ['profile', p, 'wiki-page', id] as const,
     brainLog: (p: string) => ['profile', p, 'brain-log'] as const,
     lint: (p: string) => ['profile', p, 'lint'] as const,
     maintenance: (p: string) => ['profile', p, 'maintenance'] as const,
@@ -44,6 +46,9 @@ export const setActiveProfile = (profileId: string | null) => {
 
 const profile = () => activeProfile ?? NO_PROFILE;
 
+/** The bucket every scoped key starts with — for targeted prefix invalidation. */
+export const activeProfileKey = () => ['profile', profile()] as const;
+
 /** Everything that changes when the brain changes, for the current profile. */
 const brainKeys = () => {
   const p = profile();
@@ -56,6 +61,7 @@ const brainKeys = () => {
     keys.scoped.sessions(p, 'all'),
     keys.scoped.jobBoard(p),
     keys.scoped.proposals(p),
+    keys.scoped.wikiIndex(p),
   ];
 };
 
@@ -122,6 +128,9 @@ export const usePageRevision = (key: string | null, revision: string | null) =>
     enabled: Boolean(key && revision),
     retry: false,
   });
+export const useWikiIndex = () => useQuery({ queryKey: keys.scoped.wikiIndex(profile()), queryFn: api.wikiIndex });
+export const useWikiPage = (id: string | null) =>
+  useQuery({ queryKey: keys.scoped.wikiPage(profile(), id ?? ''), queryFn: () => api.wikiPage(id!), enabled: Boolean(id), retry: false });
 
 /** The bounded semantic pass — slow, so the button tells the truth about waiting. */
 export function useMaintenanceReview() {

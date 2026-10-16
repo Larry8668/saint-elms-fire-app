@@ -35,7 +35,7 @@ export class SourceRejection extends Error {
   }
 }
 
-export type IngestKind = 'note' | 'document' | 'image' | 'session' | 'peer';
+export type IngestKind = 'note' | 'document' | 'image' | 'session' | 'answer' | 'peer';
 
 /** The committed transcript range a session source covers — the checkpoint written with it. */
 export interface SessionRef {
@@ -58,15 +58,16 @@ export interface IngestInput {
   title: string;
   mediaType: string;
   bytes: Uint8Array;
-  /** Required for kind 'session'; ignored otherwise. */
+  /** Required for kinds 'session' and 'answer'; ignored otherwise. */
   session?: SessionRef;
   /** Required for kind 'peer'; carries the share attribution verbatim. */
   share?: PeerShareRef;
   /**
    * Who the student says wrote this. Kinds restrict the choice: a note is always the
-   * student's own words, a document always external; only an image can be either.
+   * student's own words, a document always external, an answer always a model's;
+   * only an image can be either of the first two.
    */
-  origin?: 'student' | 'external';
+  origin?: 'student' | 'external' | 'model';
   /** Who made it and where it came from, when the student knows. */
   attribution?: { creator?: string; url?: string };
   /**
@@ -85,20 +86,22 @@ export interface IngestResult {
 
 const newSourceId = (): string => `src_${randomUUID().replace(/-/g, '').slice(0, 20)}`;
 
-const ORIGIN: Record<IngestKind, 'student' | 'external' | 'peer'> = {
+const ORIGIN: Record<IngestKind, 'student' | 'external' | 'peer' | 'model'> = {
   note: 'student',
   document: 'external',
   image: 'student',
   session: 'student',
+  answer: 'model',
   peer: 'peer',
 };
 
 /** Which provenance claims each kind will carry — the record schema refuses the rest. */
-const ALLOWED_ORIGIN: Record<IngestKind, ReadonlyArray<'student' | 'external' | 'peer'>> = {
+const ALLOWED_ORIGIN: Record<IngestKind, ReadonlyArray<'student' | 'external' | 'peer' | 'model'>> = {
   note: ['student'],
   document: ['external'],
   image: ['student', 'external'],
   session: ['student'],
+  answer: ['model'],
   peer: ['peer'],
 };
 
@@ -126,8 +129,8 @@ export class SourceIngestor {
     const { active } = await listProfileJobs(this.jobs, identity);
     assertJobCapacity(active, limits);
 
-    if (input.kind === 'session' && !input.session) {
-      throw new SourceRejection('A session source must name the session and turns it covers.', 'missing_session_ref', 400);
+    if ((input.kind === 'session' || input.kind === 'answer') && !input.session) {
+      throw new SourceRejection(`A ${input.kind} source must name the session and turns it covers.`, 'missing_session_ref', 400);
     }
     if (input.kind === 'peer' && !input.share) {
       throw new SourceRejection('A peer source must name the share it came from.', 'missing_share_ref', 400);
@@ -150,7 +153,7 @@ export class SourceIngestor {
       bytes: input.bytes.byteLength,
       attribution: input.attribution ?? {},
       extractions: [],
-      ...(input.kind === 'session' ? { session: input.session } : {}),
+      ...(input.kind === 'session' || input.kind === 'answer' ? { session: input.session } : {}),
       ...(input.kind === 'peer' ? { share: input.share } : {}),
     });
 

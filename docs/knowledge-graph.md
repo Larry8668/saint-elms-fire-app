@@ -221,6 +221,37 @@ under `dropped`, and a semantic finding expires when a cited page moves or a cit
 is no longer current. Nothing it produces writes a page until the student accepts a
 code-built proposal for it.
 
+### Wiki-first answers, saved syntheses and restores
+
+The compiled wiki is the first place a question is looked up, not the last
+(`engine/src/brain/query.ts → WikiQuery`):
+
+- **Search** is the same weighted keyword scorer the lesson pool uses, pointed at page
+  titles, summaries, claims and bodies. The Guide and Philosopher get the top hits in a
+  `WIKI PAGES` block before the model runs, and can call `search_wiki` / `read_wiki_page`
+  for more — so a repeated question reuses the saved synthesis instead of being
+  re-derived from raw sources.
+- **A page read is a permitted view, not a dump.** `pageView` judges every claim live
+  against the current source catalogue (`claim-evidence.ts`), so a claim whose provenance
+  went stale reads as withheld. And because a source_summary, synthesis or question page
+  is generated prose, `read_wiki_page` marks it **withheld in the turn's evidence set** —
+  citable as context, never assertable. That is what stops a saved model answer from
+  laundering itself into course evidence by being compiled.
+- **Save to wiki** (`POST /api/wiki/save`) freezes one assistant answer as a
+  `kind: 'answer'`, `origin: 'model'` source — pinned to the session and turn, carrying
+  the sources and tool trace that produced it — and queues its job. The compile files a
+  proposal like any other contribution; only the student's accept writes a page. An
+  `answer` source can never carry `student` provenance and never counts as mastery
+  evidence.
+- **The catalogue** (`GET /api/wiki/pages`, `GET /api/wiki/pages/:id`) backs the Wiki tab:
+  index summaries, per-kind counts, claims with live verdicts, links and the sources each
+  page rests on — including source ids that no longer resolve, shown rather than hidden.
+- **Restore is a write, and writes go through proposals.** `POST /api/brain/pages/:key/restore`
+  reads the named `.history/` revision, rebuilds it as a code draft and applies it against
+  the `baseRevision` the caller read — a stale base answers 409 instead of silently
+  overwriting newer work. The current page is archived to `.history/` first, so restoring
+  can never lose the version it replaced; history is append-only.
+
 ### Peer material runs the same pipeline
 
 Cohort sharing lives in `engine/src/shares/` behind `/api/shares/*` (`routes/shares.ts`),
