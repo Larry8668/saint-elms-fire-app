@@ -409,6 +409,7 @@ export class BrainService {
       `Teacher: ${teacher.name} (${session.teacher})`,
       `Model: ${verification?.model ?? 'local rules'} via ${verification?.provider ?? 'unknown provider'}`,
       `Session: ${session.id} · turn ${index + 1}`,
+      verification?.anchor ? `Anchored to: ${verification.anchor.title} — ${verification.anchor.pageId} @ ${verification.anchor.pageRevision}` : null,
       input.saveKind ? `Requested shape: ${input.saveKind}` : null,
       '',
       turn.content.trim(),

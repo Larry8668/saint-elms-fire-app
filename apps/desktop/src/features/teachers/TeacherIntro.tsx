@@ -1,14 +1,15 @@
-import { TEACHERS, type TeacherId } from '@sef/shared';
+import { TEACHERS, type AnchorCandidate, type TeacherId } from '@sef/shared';
 import { ArrowUpRight } from 'lucide-react';
 import { motion } from 'motion/react';
 import { Eyebrow } from '@/components/ui/primitives';
 import { cn } from '@/lib/cn';
 import { useSessions } from '@/lib/queries';
+import { AnchorPicker } from './AnchorBar';
 import { SessionList } from './ConversationHistory';
 import { TEACHER_LOOK } from './teacher-meta';
 
 /** Empty-thread state: who this teacher is and three ways to start. */
-export function TeacherIntro({ teacher, onPick }: { teacher: TeacherId; onPick: (prompt: string) => void }) {
+export function TeacherIntro({ teacher, onPick, anchor, onAnchor }: { teacher: TeacherId; onPick: (prompt: string) => void; anchor?: AnchorCandidate | null; onAnchor?: (a: AnchorCandidate) => void }) {
   const look = TEACHER_LOOK[teacher];
   const profile = TEACHERS[teacher];
   return (
@@ -19,6 +20,12 @@ export function TeacherIntro({ teacher, onPick }: { teacher: TeacherId; onPick: 
       </div>
       <h2 className="relative font-display text-4xl text-night-100">{profile.voice}</h2>
       <p className="relative mx-auto mt-3 max-w-lg text-[15px] leading-7 text-night-400">{look.greeting}</p>
+      {teacher === 'philosopher' && onAnchor && (
+        <div className="relative mx-auto mt-8 max-w-lg text-left">
+          <Eyebrow className="mb-2.5">Explore from a page in your wiki</Eyebrow>
+          <AnchorPicker selected={anchor?.pageId ?? null} onPick={onAnchor} />
+        </div>
+      )}
       <div className="relative mt-8 grid gap-2 sm:grid-cols-3">
         {profile.samplePrompts.map((p, i) => (
           <motion.button

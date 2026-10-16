@@ -1,4 +1,4 @@
-import { ExplorationAnchorSchema, teacherPolicy, type ExplorationAnchor, type TeacherId } from '@sef/shared';
+import { ExplorationAnchorSchema, teacherPolicy, type AnchorCandidate, type ExplorationAnchor, type TeacherId } from '@sef/shared';
 
 /**
  * An anchor has to be a concept this student has actually committed to their own wiki, at a
@@ -24,7 +24,15 @@ export interface AnchorRequest {
   committed: Map<string, AnchorTarget>;
 }
 
-export type AnchorResolution = { ok: true; anchor: ExplorationAnchor; courseRefs: string[] } | { ok: false; reason: AnchorFailure };
+export type AnchorResolution =
+  | {
+      ok: true;
+      anchor: ExplorationAnchor;
+      courseRefs: string[];
+      /** The catalogue row behind the anchor — present when the resolver read a real page, so the turn can record and display it. */
+      candidate?: AnchorCandidate;
+    }
+  | { ok: false; reason: AnchorFailure };
 
 export type AnchorFailure = 'no_anchor' | 'syllabus_concept_not_an_anchor' | 'uncommitted_page' | 'stale_revision' | 'not_a_course_concept';
 

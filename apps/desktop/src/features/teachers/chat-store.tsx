@@ -1,4 +1,4 @@
-import { TEACHER_IDS, type ChatAttachment, type ChatStreamEvent, type SessionDetail, type TeacherId, type Verification } from '@sef/shared';
+import { TEACHER_IDS, type AnchorCandidate, type ChatAttachment, type ChatStreamEvent, type SessionDetail, type TeacherId, type Verification } from '@sef/shared';
 import { useQueryClient } from '@tanstack/react-query';
 import { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 import { toast } from 'sonner';
@@ -38,11 +38,23 @@ export interface Thread {
   busy: boolean;
   /** A saved conversation is being loaded from the engine. */
   loading?: boolean;
+  /** The wiki page this conversation explores from — the claim the engine re-verifies each turn. */
+  anchor?: AnchorCandidate | null;
+  /** Ambiguity the engine handed back instead of guessing — the student picks, the turn retries. */
+  anchorChoices?: AnchorCandidate[] | null;
+  /** Per-turn web consent; resets to off after each send so a later turn never inherits it. */
+  webConsent?: boolean;
 }
 
 interface ChatStore {
   threads: Record<TeacherId, Thread>;
   send: (teacher: TeacherId, text: string, attachments?: ChatMessage['attachments']) => Promise<void>;
+  /** Chooses (or clears) the exploration anchor for a Philosopher thread. */
+  setAnchor: (teacher: TeacherId, anchor: AnchorCandidate | null) => void;
+  /** Arms the one-turn web consent. Nothing leaves the device until a turn sends with it. */
+  setWebConsent: (teacher: TeacherId, on: boolean) => void;
+  /** Dismisses an ambiguity choice without retrying. */
+  clearAnchorChoices: (teacher: TeacherId) => void;
   /** Drops the last exchange and asks the same question again. */
   retry: (teacher: TeacherId) => Promise<void>;
   stop: (teacher: TeacherId) => void;
@@ -122,7 +134,7 @@ export function ChatProvider({ profileId, children }: { profileId: string; child
       update(teacher, () => ({ sessionId, messages: [], busy: false, loading: true }));
       try {
         const session = await api.session(sessionId);
-        update(teacher, (t) => (t.sessionId === sessionId ? { ...t, messages: fromSession(session), loading: false } : t));
+        update(teacher, (t) => (t.sessionId === sessionId ? { ...t, messages: fromSession(session), loading: false, anchor: session.anchor ?? null } : t));
         active.set(teacher, sessionId);
       } catch (error) {
         log.warn('chat_session_load_failed', { teacher, sessionId, error: String(error) });
@@ -169,6 +181,8 @@ export function ChatProvider({ profileId, children }: { profileId: string; child
             break;
           case 'done':
             patchMessage(teacher, assistantId, (m) => ({ ...m, content: event.text, pending: false, finishedAt: Date.now(), verification: event.verification }));
+            // The anchor the engine actually served under wins — it re-read the page this turn.
+            if (event.verification.anchor) update(teacher, (t) => ({ ...t, anchor: event.verification.anchor ?? t.anchor }));
             active.set(teacher, sessionId);
             void queryClient.invalidateQueries({ queryKey: keys.scoped.sessions(profileId, teacher) });
             break;
@@ -192,7 +206,18 @@ export function ChatProvider({ profileId, children }: { profileId: string; child
       try {
         let sessionId = await ensureSession();
         log.info('chat_send', { teacher, sessionId, images: attachments?.length ?? 0 });
-        const turn = { sessionId, teacher, clientMessageId: userMsg.id, message: text, attachments: attachments?.map(({ preview: _p, ...a }) => a) };
+        const anchor = threadsRef.current[teacher].anchor;
+        const turn = {
+          sessionId,
+          teacher,
+          clientMessageId: userMsg.id,
+          message: text,
+          attachments: attachments?.map(({ preview: _p, ...a }) => a),
+          // The anchor travels as a claim — page plus the revision it was picked at — and the
+          // consent is exactly this turn's: nothing else leaves the device with it.
+          ...(teacher === 'philosopher' && anchor ? { anchorPageId: anchor.pageId, anchorRevision: anchor.pageRevision } : {}),
+          ...(teacher === 'philosopher' && threadsRef.current[teacher].webConsent ? { consent: { web: true } } : {}),
+        };
         try {
           await streamTurn(turn, onEvent(sessionId), controller.signal);
         } catch (error) {
@@ -203,15 +228,37 @@ export function ChatProvider({ profileId, children }: { profileId: string; child
           await streamTurn({ ...turn, sessionId }, onEvent(sessionId), controller.signal);
         }
       } catch (error) {
-        const message = error instanceof TurnRefused ? error.message : 'Could not send that message.';
-        log.warn('chat_send_refused', { teacher, code: error instanceof TurnRefused ? error.code : 'request_failed' });
-        patchMessage(teacher, assistantId, (m) => ({ ...m, pending: false, finishedAt: Date.now(), error: message }));
+        if (error instanceof TurnRefused && error.code === 'anchor_ambiguous' && error.anchors?.length) {
+          // The engine refused to guess: hand the candidates back for the student to pick.
+          update(teacher, (t) => ({ ...t, anchorChoices: error.anchors ?? null }));
+          patchMessage(teacher, assistantId, (m) => ({ ...m, pending: false, finishedAt: Date.now(), error: error.message }));
+        } else {
+          const message = error instanceof TurnRefused ? error.message : 'Could not send that message.';
+          log.warn('chat_send_refused', { teacher, code: error instanceof TurnRefused ? error.code : 'request_failed' });
+          patchMessage(teacher, assistantId, (m) => ({ ...m, pending: false, finishedAt: Date.now(), error: message }));
+        }
       }
 
       patchMessage(teacher, assistantId, (m) => (m.pending ? { ...m, pending: false, finishedAt: Date.now(), stopped: controller.signal.aborted } : m));
-      update(teacher, (t) => ({ ...t, busy: false }));
+      // Consent is one turn's: it does not quietly roll into the next question.
+      update(teacher, (t) => ({ ...t, busy: false, webConsent: false }));
     },
     [active, patchMessage, queryClient, update],
+  );
+
+  const setAnchor = useCallback<ChatStore['setAnchor']>(
+    (teacher, anchor) => update(teacher, (t) => ({ ...t, anchor, anchorChoices: null })),
+    [update],
+  );
+
+  const setWebConsent = useCallback<ChatStore['setWebConsent']>(
+    (teacher, on) => update(teacher, (t) => ({ ...t, webConsent: on })),
+    [update],
+  );
+
+  const clearAnchorChoices = useCallback<ChatStore['clearAnchorChoices']>(
+    (teacher) => update(teacher, (t) => ({ ...t, anchorChoices: null })),
+    [update],
   );
 
   const retry = useCallback<ChatStore['retry']>(
@@ -282,7 +329,10 @@ export function ChatProvider({ profileId, children }: { profileId: string; child
     [queryClient, reset],
   );
 
-  const value = useMemo(() => ({ threads, send, retry, stop, reset, handoff, open, remove }), [threads, send, retry, stop, reset, handoff, open, remove]);
+  const value = useMemo(
+    () => ({ threads, send, retry, stop, reset, handoff, open, remove, setAnchor, setWebConsent, clearAnchorChoices }),
+    [threads, send, retry, stop, reset, handoff, open, remove, setAnchor, setWebConsent, clearAnchorChoices],
+  );
   return <ChatContext.Provider value={value}>{children}</ChatContext.Provider>;
 }
 

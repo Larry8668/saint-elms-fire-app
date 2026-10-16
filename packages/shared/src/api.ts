@@ -1,4 +1,5 @@
 import type { BrainDiffEntry, ConceptStatus, EdgeOrigin, EdgeType, IngestResult, SkyNodeKind } from './brain';
+import type { AnchorCandidate } from './teacher-policy';
 import type { TeacherId } from './teachers';
 import type { CourseConceptRef, ProposalReport, WikiClaim, WikiLink, WikiProposalRecord } from './wiki';
 
@@ -31,7 +32,9 @@ export interface ChatRequest {
   consent?: { web: boolean };
   /** Page the Philosopher is asked to explore from. Unverified until the anchor seam resolves it. */
   anchorPageId?: string;
-  /** A released syllabus concept offered as a starting point. Never an anchor on its own. */
+  /** The catalogue revision the client anchored to. A mismatch against the page on disk is a stale anchor. */
+  anchorRevision?: string;
+  /** A released syllabus concept offered as a starting point. Resolves to the student's own page for it, if one exists. */
   syllabusConceptKey?: string;
 }
 
@@ -91,6 +94,8 @@ export interface Verification {
   segments?: AnswerSegment[];
   /** Statements the evidence checks withheld before display. The count is honest; the text is not kept. */
   withheld?: number;
+  /** The committed wiki page an exploring turn was anchored to, resolved from disk this turn. */
+  anchor?: AnchorCandidate;
 }
 
 /** A persisted chat turn. Assistant turns keep the verification they were served with. */
@@ -121,6 +126,8 @@ export interface SessionDetail {
   updatedAt: string;
   turns: StoredTurn[];
   ingestedTurns: number;
+  /** The exploration origin of an anchored session — the page it was last served under. */
+  anchor?: AnchorCandidate;
 }
 
 /** Server-sent events emitted by POST /api/chat/turn. */

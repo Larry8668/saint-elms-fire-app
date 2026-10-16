@@ -1,5 +1,8 @@
 import { CONTRACT_VERSION } from '@sef/shared';
 import type {
+  AnchorCandidate,
+  AnchorCatalog,
+  AnchorMatchResult,
   BrainLogEntry,
   CatalogueRepairResult,
   ChatStreamEvent,
@@ -53,6 +56,7 @@ import type {
   SourceReceipt,
   SyncStatus,
   TeacherId,
+  WebPreview,
   WikiIndex,
   WikiPageView,
   WikiProposalRecord,
@@ -192,6 +196,13 @@ export const api = {
   /** One page in full — works for concepts, syntheses, questions and legacy pages alike. */
   pageRecord: (id: string) => request<PageRecordView>(`/api/brain/pages/${encodeURIComponent(id)}/record`),
 
+  // The Philosopher's starting points: the committed, course-linked pages of this student's wiki.
+  anchors: () => request<AnchorCatalog>('/api/anchors'),
+  /** Free text against the catalogue — 'ambiguous' returns the candidates to choose between. */
+  anchorMatch: (q: string) => request<AnchorMatchResult>(`/api/anchors/match?q=${encodeURIComponent(q)}`),
+  /** What consenting to the web this turn would send: a topic-only query, derived in code. */
+  anchorWebPreview: (pageId: string) => request<WebPreview>(`/api/anchors/${encodeURIComponent(pageId)}/web-preview`),
+
   // Wiki maintenance: reads and suggestions only — repairs file as ordinary proposals.
   maintenance: () => request<MaintenanceReport>('/api/brain/maintenance'),
   runMaintenanceReview: () => post<SemanticReviewResult>('/api/brain/maintenance/review'),
@@ -259,6 +270,8 @@ export class TurnRefused extends Error {
     readonly code: string,
     message: string,
     readonly status: number,
+    /** Anchor candidates a 409 'anchor_ambiguous' refusal returned for the student to pick from. */
+    readonly anchors?: AnchorCandidate[],
   ) {
     super(message);
     this.name = 'TurnRefused';
@@ -278,6 +291,13 @@ export interface TurnPayload {
   message: string;
   attachments?: Array<{ kind: 'image'; mimeType: string; data: string; name?: string; altText?: string }>;
   consent?: { web: boolean };
+  /** The committed wiki page to explore from, with the catalogue revision it was picked at. */
+  anchorPageId?: string;
+  anchorRevision?: string;
+  /** Free text naming a page — the engine resolves it; an ambiguous answer is a 409, never a guess. */
+  anchorQuery?: string;
+  /** A released syllabus concept offered as a start — resolves to the student's own page only. */
+  syllabusConceptKey?: string;
 }
 
 /**
@@ -302,8 +322,8 @@ export async function streamTurn(turn: TurnPayload, onEvent: (event: ChatStreamE
     return;
   }
   if (!res.ok || !res.body) {
-    const body = (await res.json().catch(() => ({}))) as { error?: string; code?: string };
-    if (body.code) throw new TurnRefused(body.code, body.error ?? `Turn refused (${res.status})`, res.status);
+    const body = (await res.json().catch(() => ({}))) as { error?: string; code?: string; anchors?: AnchorCandidate[] };
+    if (body.code) throw new TurnRefused(body.code, body.error ?? `Turn refused (${res.status})`, res.status, body.anchors);
     onEvent({ type: 'error', message: body.error ?? `Chat failed (${res.status})` });
     return;
   }

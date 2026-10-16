@@ -4,7 +4,7 @@ import { motion } from 'motion/react';
 import { Markdown } from '@/components/Markdown';
 import { Skeleton, SkeletonText } from '@/components/ui/primitives';
 import { cn } from '@/lib/cn';
-import { AnswerActions, SourceChips, TrailheadCard } from './AnswerFooter';
+import { AnchorChip, AnswerActions, SourceChips, TrailheadCard } from './AnswerFooter';
 import { QUICK_REPLIES, splitTrailhead, uniqueSources } from './answer-parts';
 import type { ChatMessage } from './chat-store';
 import { TEACHER_LOOK } from './teacher-meta';
@@ -113,6 +113,11 @@ export function AssistantMessage({ message, teacher, isLatest, onHandoff, onRetr
 
         {trailhead && <TrailheadCard question={trailhead} onExplore={onFollowUp} />}
         {settled && <SourceChips sources={sources} />}
+        {settled && message.verification?.anchor && (
+          <div className="mt-2">
+            <AnchorChip anchor={message.verification.anchor} />
+          </div>
+        )}
 
         {handoff && (
           <button

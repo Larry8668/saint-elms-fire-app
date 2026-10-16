@@ -3,7 +3,9 @@ import { streamSSE } from 'hono/streaming';
 import { ConversationHandoffSchema, ConversationTurnSchema, CONTRACT_VERSION, IdentifierSchema, RestorePageRequestSchema, SourceReceiptSchema, TEACHER_IDS, type ChatRequest, type ChatStreamEvent, type TeacherId } from '@sef/shared';
 import { z } from 'zod';
 import { ConversationRefused, ConversationRegistry, refusalCopy, serverTranscript } from '../../agents/conversation';
+import { anchorCatalog, matchAnchorPages, profileAnchors } from '../../agents/anchors';
 import { runChatTurn } from '../../agents/harness';
+import { anchorContext } from './anchors';
 import { SourceRejection } from '../../brain/sources/ingest';
 import { VaultConflictError } from '../../brain/vault-errors';
 import { errorFields, log } from '../../config';
@@ -116,6 +118,33 @@ export function studentRoutes(deps: EngineDeps, conversations: ConversationRegis
     const turn = parsed.data;
     const ws = c.get('ws');
 
+    /**
+     * Anchor selection is resolved before admission, so an ambiguous query never holds a
+     * conversation turn open and the catalogue the client picked from is re-judged here.
+     * A resolved query pins the page at the revision the catalogue just served — that
+     * becomes the claim the seam verifies against disk inside the turn.
+     */
+    let anchorPageId = turn.anchorPageId;
+    let anchorRevision = turn.anchorRevision;
+    const anchors = turn.teacher === 'philosopher' ? await anchorContext(ws) : null;
+    if (anchors && turn.anchorQuery) {
+      const match = matchAnchorPages(await anchorCatalog(anchors), turn.anchorQuery);
+      if (match.outcome === 'ambiguous') {
+        return c.json({ error: 'Several wiki pages match — pick the page to explore from.', code: 'anchor_ambiguous', anchors: match.anchors }, 409);
+      }
+      if (match.outcome === 'resolved') {
+        anchorPageId = match.anchors[0]!.pageId;
+        anchorRevision = match.anchors[0]!.pageRevision;
+      }
+      // 'none' falls through: the harness refuses with no_anchor, a named refusal like the rest.
+    }
+
+    const stored = await ws.sessions.get(turn.sessionId);
+    // Session continuation: a later turn with no selector inherits the page the last turn was
+    // served under. The page id is the server's own record; its revision is deliberately not
+    // claimed so the seam re-verifies the page as it sits on disk now.
+    if (anchors && !anchorPageId && !turn.syllabusConceptKey && stored?.anchor) anchorPageId = stored.anchor.pageId;
+
     let admitted;
     try {
       admitted = await conversations.admit({ sessionId: turn.sessionId, profileId: ws.profile.id, teacher: turn.teacher, clientMessageId: turn.clientMessageId });
@@ -123,14 +152,26 @@ export function studentRoutes(deps: EngineDeps, conversations: ConversationRegis
       return refuseResponse(c, error, ws.profile.id);
     }
 
-    const stored = await ws.sessions.get(turn.sessionId);
     const req: ChatRequest = {
       teacher: turn.teacher,
       sessionId: turn.sessionId,
       messages: serverTranscript(stored, { role: 'user', content: turn.message, attachments: turn.attachments }),
       consent: turn.consent,
+      anchorPageId,
+      anchorRevision,
+      syllabusConceptKey: turn.syllabusConceptKey,
     };
-    const harness = { settings: ws.settings, content: ws.content, brain: ws.brain, sessions: ws.sessions, studentName: ws.profile.name, claims: ws.wiki, wiki: ws.wiki, logistics: ws.logistics };
+    const harness = {
+      settings: ws.settings,
+      content: ws.content,
+      brain: ws.brain,
+      sessions: ws.sessions,
+      studentName: ws.profile.name,
+      claims: ws.wiki,
+      wiki: ws.wiki,
+      logistics: ws.logistics,
+      ...(anchors ? { anchors: profileAnchors(anchors) } : {}),
+    };
     return streamSSE(c, async (stream) => {
       const emit = (event: ChatStreamEvent) => void stream.writeSSE({ data: JSON.stringify(event) });
       try {
