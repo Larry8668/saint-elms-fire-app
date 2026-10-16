@@ -19,6 +19,10 @@ import type {
   Lesson,
   LessonMeta,
   LintFinding,
+  LogisticsList,
+  LogisticsRecord,
+  LogisticsRecordResult,
+  LogisticsWriteInput,
   OwnSharesResponse,
   PageRevisionContent,
   PageRevisionList,
@@ -194,6 +198,18 @@ export const api = {
   withdrawShare: (id: string) => post<PublishedShare>(`/api/shares/${encodeURIComponent(id)}/withdraw`),
   ignoreShare: (id: string, ignored: boolean) => post<void>(`/api/shares/${encodeURIComponent(id)}/ignore`, { ignored }),
   importShare: (id: string) => post<ShareImportResult>(`/api/shares/${encodeURIComponent(id)}/import`),
+
+  // Personal logistics — private to this profile; proposals move only by the student's own click.
+  logistics: () => request<LogisticsList>('/api/logistics'),
+  createLogistics: (body: LogisticsWriteInput) => post<LogisticsRecordResult>('/api/logistics', body),
+  updateLogistics: (id: string, patch: Partial<LogisticsWriteInput>) =>
+    request<LogisticsRecordResult>(`/api/logistics/${encodeURIComponent(id)}`, { method: 'PUT', body: JSON.stringify(patch) }),
+  confirmLogistics: (id: string, patch?: Partial<LogisticsWriteInput>) => post<LogisticsRecordResult>(`/api/logistics/${encodeURIComponent(id)}/confirm`, patch ?? {}),
+  dismissLogistics: (id: string) => post<LogisticsRecordResult>(`/api/logistics/${encodeURIComponent(id)}/dismiss`, {}),
+  deleteLogistics: (id: string) => request<void>(`/api/logistics/${encodeURIComponent(id)}`, { method: 'DELETE' }),
+  /** A notice photo becomes proposed records — never confirmed; a failure answers honestly. */
+  extractLogistics: (image: { mimeType: 'image/png' | 'image/jpeg'; data: string }, note?: string) =>
+    post<LogisticsList>('/api/logistics/extract', { image, note }),
 
 };
 

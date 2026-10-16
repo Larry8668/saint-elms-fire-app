@@ -322,3 +322,113 @@ test('the served answer carries its evidence map and the provider is disclosed',
   assert.equal(fact?.support, 'supported');
   assert.deepEqual(fact?.sources, ['damped']);
 });
+
+const confirmedRecord = {
+  id: 'log-fees',
+  title: 'Semester fees — instalment 2',
+  kind: 'deadline' as const,
+  state: 'confirmed' as const,
+  dueAt: '2026-03-14',
+  allDay: true,
+  timeZone: 'Asia/Kolkata',
+  details: 'Pay through the student portal.',
+  provenance: { kind: 'manual' as const },
+  createdAt: '2026-01-01T00:00:00.000Z',
+  updatedAt: '2026-01-01T00:00:00.000Z',
+};
+const proposedRecord = { ...confirmedRecord, id: 'log-draft', title: 'Exam timetable draft', state: 'proposed' as const, dueAt: null, details: '', provenance: { kind: 'friend_extraction' as const } };
+
+const logisticsStub = (records = [confirmedRecord], proposed = [proposedRecord]) => ({
+  confirmed: async () => records,
+  proposed: async () => proposed,
+  propose: async () => proposed,
+});
+
+test('the Friend is shown confirmed logistics as citable, and proposals as unconfirmable', async () => {
+  const h = harness('Your semester fees instalment is due on 2026-03-14 in Asia/Kolkata [logistics: log-fees].');
+  h.deps.logistics = logisticsStub() as never;
+  await runChatTurn(turn({ teacher: 'friend', messages: [{ role: 'user', content: 'when are my fees due?' }] }), h.deps, (e) => h.events.push(e));
+  const block = h.instructions();
+  assert.match(block, /YOUR LOGISTICS/);
+  assert.match(block, /Semester fees — instalment 2.*due 2026-03-14 \(Asia\/Kolkata\)/);
+  assert.match(block, /UNCONFIRMED LOGISTICS/);
+  const finished = done(h.events);
+  assert.match(finished.text, /due on 2026-03-14/, 'a confirmed record backed the statement');
+  const fact = finished.verification.segments?.find((s) => s.kind === 'fact');
+  assert.deepEqual(fact?.sources, ['log-fees']);
+});
+
+test('an answer asserting an unconfirmed extraction has its statement withheld', async () => {
+  const h = harness('The exam timetable says your physics paper is on the 14th. [logistics: log-draft]');
+  h.deps.logistics = logisticsStub() as never;
+  await runChatTurn(turn({ teacher: 'friend', messages: [{ role: 'user', content: 'what is my exam date?' }] }), h.deps, (e) => h.events.push(e));
+  const finished = done(h.events);
+  assert.doesNotMatch(finished.text, /physics paper is on the 14th/, 'unconfirmed contents cannot be served as fact');
+  assert.equal(finished.verification.withheld, 1);
+});
+
+test('Guide and Philosopher never see the logistics ledger even when it is wired in', async () => {
+  const { committedPageAnchors } = await import('./anchor');
+  for (const teacher of ['guide', 'philosopher'] as const) {
+    const h = harness('unused');
+    h.deps.logistics = logisticsStub() as never;
+    if (teacher === 'philosopher') {
+      h.deps.anchors = committedPageAnchors;
+      h.deps.committedAnchors = new Map([['page-1', { pageId: 'page-1', revision: 'r1', courseConceptKey: 'damping', courseRefs: ['mech'] }]]);
+    }
+    const request =
+      teacher === 'philosopher'
+        ? turn({ teacher, messages: [{ role: 'user', content: 'fees?' }], anchorPageId: 'page-1' })
+        : turn({ teacher, messages: [{ role: 'user', content: 'fees?' }] });
+    await runChatTurn(request, h.deps, (e) => h.events.push(e));
+    assert.equal(h.agentCalls(), 1, `${teacher} reached the model — the boundary held by policy, not by absence`);
+    assert.doesNotMatch(h.instructions(), /YOUR LOGISTICS|Semester fees/, `${teacher} must not read the student's logistics`);
+  }
+});
+
+test('a Friend image turn proposes an extraction that lands behind confirmation', async () => {
+  const filed: string[] = [];
+  const h = harness('I read the notice for you.');
+  h.deps.logistics = logisticsStub() as never;
+  h.deps.extractImage = (async (_image: unknown, _model: unknown, store: { propose: (d: unknown[]) => Promise<unknown> }) => {
+    const proposed = await store.propose([{ title: 'Exam timetable draft' }]);
+    filed.push('done');
+    return { ok: true, proposed };
+  }) as never;
+  await runChatTurn(
+    turn({ teacher: 'friend', messages: [{ role: 'user', content: 'what does this notice say?', attachments: [{ kind: 'image', mimeType: 'image/png', data: 'iVBORw0KGgo=', name: 'notice.png' }] }] }),
+    h.deps,
+    (e) => h.events.push(e),
+  );
+  const finished = done(h.events);
+  assert.deepEqual(filed, ['done'], 'the extraction ran alongside the answer');
+  assert.equal(finished.verification.toolCalls.some((t) => t.tool === 'logistics_extract'), true);
+  const check = finished.verification.checks.find((c) => c.id === 'logistics');
+  assert.match(check?.detail ?? '', /proposal.*confirm/i);
+  assert.equal(check?.passed, true);
+});
+
+test('a privacy verdict on the extraction files nothing and says so', async () => {
+  const h = harness('I read the notice for you.');
+  h.deps.logistics = logisticsStub() as never;
+  h.deps.extractImage = (async () => ({ ok: false, reason: 'privacy', message: 'personal details' })) as never;
+  await runChatTurn(
+    turn({ teacher: 'friend', messages: [{ role: 'user', content: 'what is in this?', attachments: [{ kind: 'image', mimeType: 'image/png', data: 'iVBORw0KGgo=', name: 'notice.png' }] }] }),
+    h.deps,
+    (e) => h.events.push(e),
+  );
+  const check = done(h.events).verification.checks.find((c) => c.id === 'logistics');
+  assert.match(check?.detail ?? '', /privacy rule.*nothing filed/i);
+});
+
+test('a text-only Friend turn never reaches for the extraction seam', async () => {
+  let calls = 0;
+  const h = harness('Fees are due in week 6.');
+  h.deps.logistics = logisticsStub() as never;
+  h.deps.extractImage = (async () => {
+    calls += 1;
+    return { ok: true, proposed: [] };
+  }) as never;
+  await runChatTurn(turn({ teacher: 'friend', messages: [{ role: 'user', content: 'when are fees due?' }] }), h.deps, (e) => h.events.push(e));
+  assert.equal(calls, 0, 'no image, no extraction');
+});

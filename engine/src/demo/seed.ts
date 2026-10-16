@@ -170,6 +170,21 @@ export async function seedPersona(ws: Workspace, persona: DemoPersona, coursewar
   logEntries.sort((a, b) => a.at.localeCompare(b.at));
   for (const { at, ...entry } of logEntries) await ws.vault.appendLog(entry, at);
 
+  // Demo logistics: confirmed records the Friend can cite, and one proposal left pending
+  // so the confirmation flow has something to show. Fully local, like the real feature.
+  await ws.logistics.create(
+    { title: 'Semester fees — instalment 2', kind: 'deadline', dueAt: iso(-21).slice(0, 10), allDay: true, timeZone: 'Asia/Kolkata', details: 'Pay through the student portal; late fee applies after the due date.' },
+    { kind: 'manual' },
+  );
+  await ws.logistics.create(
+    { title: 'Hostel allotment lists out', kind: 'notice', dueAt: iso(-7).slice(0, 10), allDay: true, timeZone: 'Asia/Kolkata', details: 'Check the notice board outside the registrar’s office.' },
+    { kind: 'manual' },
+  );
+  await ws.logistics.propose(
+    [{ title: 'Physics lab exam timetable', kind: 'timetable', dueAt: iso(-14).slice(0, 10), allDay: true, timeZone: 'Asia/Kolkata', details: 'Draft read from a photo of the exam notice — confirm before relying on it.' }],
+    { kind: 'friend_extraction', extractedFrom: 'image', note: 'photo of the exam notice' },
+  );
+
   if (missing.length) log.warn('demo_seed_unknown_concepts', { profileId: persona.id, missing });
   const report = { courses, pages: pages.size, links, sessions: script.sessions.length };
   log.info('demo_persona_seeded', { profileId: persona.id, ...report, ms: Date.now() - started });

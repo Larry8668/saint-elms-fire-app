@@ -36,7 +36,7 @@ export interface ChatRequest {
 }
 
 export interface SourceRef {
-  kind: 'lesson' | 'brain' | 'web' | 'support';
+  kind: 'lesson' | 'brain' | 'web' | 'support' | 'logistics';
   id: string;
   title: string;
   url?: string;

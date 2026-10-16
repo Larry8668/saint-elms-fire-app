@@ -1,5 +1,5 @@
 import type { SourceRef } from '@sef/shared';
-import { ArrowRight, BookOpen, Brain, Check, ChevronDown, Copy, ExternalLink, Globe, LifeBuoy, RotateCcw, Telescope } from 'lucide-react';
+import { ArrowRight, BookOpen, Brain, CalendarClock, Check, ChevronDown, Copy, ExternalLink, Globe, LifeBuoy, RotateCcw, Telescope } from 'lucide-react';
 import { AnimatePresence, motion } from 'motion/react';
 import { useState, type ReactNode } from 'react';
 import { toast } from 'sonner';
@@ -16,6 +16,7 @@ const SOURCE_STYLE: Record<SourceRef['kind'], { Icon: typeof BookOpen; tone: str
   brain: { Icon: Brain, tone: 'text-gold-300' },
   web: { Icon: Globe, tone: 'text-aurora-300' },
   support: { Icon: LifeBuoy, tone: 'text-ember-300' },
+  logistics: { Icon: CalendarClock, tone: 'text-rose-300' },
 };
 
 const hostOf = (url: string) => {
@@ -58,6 +59,15 @@ function SourceChip({ source, expanded, muted, onToggle }: { source: SourceRef; 
     return (
       <Tooltip content="Your own page for this concept. Opens its star in the sky.">
         <button onClick={() => go('sky', { conceptKey: source.id })} className={cn(cls, 'cursor-pointer')}>
+          {body}
+        </button>
+      </Tooltip>
+    );
+  }
+  if (source.kind === 'logistics') {
+    return (
+      <Tooltip content="A confirmed record from your private logistics. Opens the ledger.">
+        <button onClick={() => go('logistics')} className={cn(cls, 'cursor-pointer')}>
           {body}
         </button>
       </Tooltip>

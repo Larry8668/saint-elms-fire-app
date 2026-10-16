@@ -4,6 +4,9 @@ import type { BrainService } from '../brain/service';
 import { errorFields, log } from '../config';
 import { searchLessons, type LessonHit } from '../content/search';
 import type { ContentStore } from '../content/store';
+import { logisticsContext } from '../logistics/context';
+import { extractLogistics } from '../logistics/extract';
+import type { LogisticsAccess } from '../logistics/store';
 import { resolveModel, type ResolvedModel } from '../models/registry';
 import type { SessionStore } from '../sessions/store';
 import type { SettingsReader } from '../settings/store';
@@ -35,6 +38,10 @@ export interface HarnessDeps {
   makeAgent?: typeof makeAgent;
   /** Injectable so tests can prove no web call was made on a refused turn. */
   searchWeb?: typeof webSearch;
+  /** The student's private logistics ledger — read only under the declared capability. */
+  logistics?: LogisticsAccess;
+  /** Injectable so tests can drive the extraction seam without a vision model. */
+  extractImage?: typeof extractLogistics;
 }
 
 const MAX_STEPS = 4;
@@ -148,6 +155,9 @@ export async function runChatTurn(req: ChatRequest, deps: HarnessDeps, emit: (ev
   const blocks: string[] = [];
   if (req.teacher === 'friend') {
     blocks.push(lessonBlock('UNIVERSITY NOTES', hits));
+    // The student's own logistics join only under the declared capability — Guide and
+    // Philosopher never reach this store.
+    if (can(req.teacher, 'context:logistics') && deps.logistics) await logisticsContext(deps.logistics, ctx);
   } else {
     blocks.push(lessonBlock('RELEASED LESSONS', hits));
     const keys = hits.flatMap((h) => h.lesson.concepts.map(conceptKey));
@@ -177,6 +187,21 @@ export async function runChatTurn(req: ChatRequest, deps: HarnessDeps, emit: (ev
   const build = deps.makeAgent ?? makeAgent;
   const agent = build(req.teacher, instructions, resolved, buildTools(req.teacher, { content: deps.content, brain: deps.brain, searxngUrl: settings.searxngUrl, claims: deps.claims, webConsented }, ctx));
 
+  /**
+   * A Friend image turn also proposes a logistics extraction from the attachment, in
+   * parallel with the answer. The capability is declared like any other tool's; the
+   * result is proposal-only — nothing it finds can touch a confirmed schedule until
+   * the student confirms it. The rejection is caught here so a store failure mid-turn
+   * can never crash the answer that was already earned.
+   */
+  const extraction =
+    req.teacher === 'friend' && hasImage && can(req.teacher, 'tool:logistics') && deps.logistics
+      ? (deps.extractImage ?? extractLogistics)(attachments.find((a) => a.kind === 'image')!, resolved, deps.logistics).catch((error) => {
+          log.warn('logistics_extract_failed', { sessionId: req.sessionId, ...errorFields(error) });
+          return null;
+        })
+      : null;
+
   ctx.status(`${TEACHERS[req.teacher].name} is thinking…`);
   const prompt = hasImage && !question ? 'What is in this image, and how does it connect to my lessons?' : question;
   const stream = await agent.stream(toModelMessages(req.messages, prompt) as never, {
@@ -192,9 +217,11 @@ export async function runChatTurn(req: ChatRequest, deps: HarnessDeps, emit: (ev
   text = text.trim() || "I couldn't put an answer together just now. Could you rephrase that?";
 
   // 4. What the model read out of an image is untrusted input. Re-classified, and never served
-  //    if it reads out someone else's details.
+  //    if it reads out someone else's details. The parallel extraction judges its own text
+  //    the same way; whatever it still files sits behind the student's confirmation.
   if (req.teacher === 'friend' && hasImage && extractedTextLane(text) === 'privacy') {
     log.warn('friend_image_text_refused', { sessionId: req.sessionId });
+    void extraction;
     return finish(PRIVACY_REFUSAL, resolved, [{ id: 'privacy', label: 'Text extracted from the image refused by the privacy rule', passed: true }], 'refused');
   }
 
@@ -206,6 +233,7 @@ export async function runChatTurn(req: ChatRequest, deps: HarnessDeps, emit: (ev
     claimVerdicts: ctx.claimVerdicts,
     contextBlocks: ctx.contextBlocks,
     shieldedBlocks: ctx.shieldedBlocks,
+    proposedLogistics: ctx.proposedLogistics,
     foreignIds: (await deps.content.allLessons()).map((l) => l.id).filter((id) => !permitted.has(`lesson:${id}`) && !permitted.has(`support:${id}`)),
   });
   const assessed = assessAnswer(text, question, evidence, { teacher: req.teacher, hasImage });
@@ -215,6 +243,20 @@ export async function runChatTurn(req: ChatRequest, deps: HarnessDeps, emit: (ev
   for (const s of sources) if (verified.has(s.id)) s.cited = true;
 
   const checks: VerificationCheck[] = [...assessed.checks];
+  if (extraction) {
+    const outcome = await extraction;
+    const detail = !outcome
+      ? 'extraction failed — nothing filed'
+      : outcome.ok
+        ? `${outcome.proposed.length} proposal${outcome.proposed.length === 1 ? '' : 's'} filed — confirm them under Logistics`
+        : outcome.reason === 'privacy'
+          ? 'image read-out refused by the privacy rule — nothing filed'
+          : outcome.reason === 'nothing_found'
+            ? 'no schedule entries readable — nothing filed'
+            : 'extraction unavailable — nothing filed';
+    ctx.recordTool('logistics_extract', detail);
+    checks.push({ id: 'logistics', label: 'Notice extraction lands as a proposal until confirmed', passed: true, detail });
+  }
   if (req.teacher === 'philosopher') {
     checks.push({
       id: 'web',

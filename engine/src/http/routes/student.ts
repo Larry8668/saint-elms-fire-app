@@ -128,7 +128,7 @@ export function studentRoutes(deps: EngineDeps, conversations: ConversationRegis
       messages: serverTranscript(stored, { role: 'user', content: turn.message, attachments: turn.attachments }),
       consent: turn.consent,
     };
-    const harness = { settings: ws.settings, content: ws.content, brain: ws.brain, sessions: ws.sessions, studentName: ws.profile.name, claims: ws.wiki };
+    const harness = { settings: ws.settings, content: ws.content, brain: ws.brain, sessions: ws.sessions, studentName: ws.profile.name, claims: ws.wiki, logistics: ws.logistics };
     return streamSSE(c, async (stream) => {
       const emit = (event: ChatStreamEvent) => void stream.writeSSE({ data: JSON.stringify(event) });
       try {

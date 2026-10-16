@@ -8,7 +8,7 @@ export const TEACHER_LOOK: Record<TeacherId, { Icon: LucideIcon; accent: string;
     accent: 'text-ember-300',
     ring: 'border-ember-400/40',
     glow: 'from-ember-500/25',
-    greeting: 'The fire is banked for you. Fees, calendars, offices, campus life — ask away.',
+    greeting: 'The fire is banked for you. Fees, calendars, offices, campus life — and your confirmed Logistics, when they matter.',
   },
   guide: {
     Icon: Navigation,

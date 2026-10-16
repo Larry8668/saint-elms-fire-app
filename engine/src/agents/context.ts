@@ -24,6 +24,11 @@ export class TurnContext {
   readonly shieldedBlocks: string[] = [];
   /** Wiki-claim verdicts the prompt showed: assertable claims may be cited, withheld ones only named. */
   claimVerdicts: ClaimVerdict[] = [];
+  /**
+   * Unconfirmed logistics records the prompt named. They enter the evidence set as
+   * withheld items — the Friend may name one but never assert its contents as fact.
+   */
+  proposedLogistics: Array<{ id: string; title: string; text: string }> = [];
   /** Capabilities this teacher asked for and was refused, in order. Surfaced on the verification panel. */
   readonly denied: CapabilityId[] = [];
   handoff?: { to: TeacherId; reason: string };

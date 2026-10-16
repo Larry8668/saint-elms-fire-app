@@ -1,4 +1,4 @@
-import { Brain, FilePlus2, Library, MessagesSquare, Settings, Sparkles, Users, type LucideIcon } from 'lucide-react';
+import { Brain, CalendarClock, FilePlus2, Library, MessagesSquare, Settings, Sparkles, Users, type LucideIcon } from 'lucide-react';
 import { motion } from 'motion/react';
 import { Tooltip } from '@/components/ui/overlays';
 import { StatusDot } from '@/components/ui/primitives';
@@ -13,6 +13,7 @@ const ITEMS: Array<{ view: View; label: string; Icon: LucideIcon }> = [
   { view: 'contribute', label: 'Add to my wiki', Icon: FilePlus2 },
   { view: 'brain', label: 'Brain', Icon: Brain },
   { view: 'peers', label: 'Peers', Icon: Users },
+  { view: 'logistics', label: 'Logistics', Icon: CalendarClock },
   { view: 'library', label: 'Library', Icon: Library },
 ];
 
