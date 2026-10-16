@@ -89,9 +89,12 @@ const ENROLMENT_COLUMNS = `
   id, student_profile_id, programme_code, curriculum_version, cohort_code, status, version,
   requested_at, updated_at, decision_actor_subject, decision_at, decision_reason`;
 
+/** Every column a `StudentProfileRow` carries — the lock read and the RETURNING must agree. */
+const PROFILE_COLUMNS = 'id, account_user_id, legal_name, preferred_name, status, version, created_at';
+
 async function readProfile(client: PoolClient, profileId: string): Promise<StudentProfileRow | null> {
   const result = await client.query<StudentProfileRow>(
-    'SELECT id, account_user_id, legal_name, preferred_name, status, version, created_at FROM student_profiles WHERE id = $1',
+    `SELECT ${PROFILE_COLUMNS} FROM student_profiles WHERE id = $1`,
     [profileId],
   );
   return result.rows[0] ?? null;
@@ -99,7 +102,7 @@ async function readProfile(client: PoolClient, profileId: string): Promise<Stude
 
 export async function profileForUser(client: Pool | PoolClient, accountUserId: string): Promise<StudentProfileRow | null> {
   const result = await client.query<StudentProfileRow>(
-    'SELECT id, account_user_id, legal_name, preferred_name, status, version, created_at FROM student_profiles WHERE account_user_id = $1',
+    `SELECT ${PROFILE_COLUMNS} FROM student_profiles WHERE account_user_id = $1`,
     [accountUserId],
   );
   return result.rows[0] ?? null;
@@ -152,7 +155,7 @@ export async function applyForAdmission(pool: Pool, input: ApplyInput): Promise<
     if (!profile) {
       const created = await client.query<StudentProfileRow>(
         `INSERT INTO student_profiles (account_user_id, legal_name) VALUES ($1, $2)
-         RETURNING id, account_user_id, legal_name, preferred_name, status, version, created_at`,
+         RETURNING ${PROFILE_COLUMNS}`,
         [input.accountUserId, input.legalName],
       );
       profile = created.rows[0]!;
@@ -386,13 +389,17 @@ export async function getStudentDetail(pool: Pool, profileId: string): Promise<A
   };
 }
 
-/** Optimistic-versioned profile patch; account suspension severs all sessions. */
+/** Optimistic-versioned profile patch under a row lock; account suspension severs all sessions. */
 export async function updateStudentProfile(
   pool: Pool,
   input: { profileId: string; actor: string; legalName?: string; preferredName?: string | null; status?: 'active' | 'suspended'; expectedVersion: number; reason: string; revokeSessions?: SessionRevoker },
 ): Promise<StudentProfileRow> {
   return withTransaction(pool, async (client) => {
-    const row = await readProfile(client, input.profileId);
+    const current = await client.query<StudentProfileRow>(
+      `SELECT ${PROFILE_COLUMNS} FROM student_profiles WHERE id = $1 FOR UPDATE`,
+      [input.profileId],
+    );
+    const row = current.rows[0];
     if (!row) throw new AdmissionError('not_found', 'Student profile not found');
     if (row.version !== input.expectedVersion) {
       throw new AdmissionError('version_conflict', `Profile is at version ${row.version}`);
@@ -403,7 +410,7 @@ export async function updateStudentProfile(
     const updated = await client.query<StudentProfileRow>(
       `UPDATE student_profiles SET legal_name = $2, preferred_name = $3, status = $4,
          updated_at = now(), version = version + 1
-       WHERE id = $1 RETURNING id, account_user_id, legal_name, preferred_name, status, version, created_at`,
+       WHERE id = $1 RETURNING ${PROFILE_COLUMNS}`,
       [input.profileId, legalName, preferredName, status],
     );
     if (status === 'suspended' && row.status !== 'suspended' && row.account_user_id) {

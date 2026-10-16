@@ -17,6 +17,7 @@ import {
   verifyEmail,
   withAuthSchema,
 } from './testing/auth-fixture';
+import { grantStaffMembership } from './staff';
 
 // These account-authentication integration tests only run inside the disposable Compose test
 // workflow (`pnpm --filter @sef/uni-server db:test:integration`), against a throwaway database.
@@ -397,6 +398,47 @@ test('device authorization and staff MFA primitives are mounted', testOptions, a
 
     const mfa = await jsonPost(context, '/two-factor/get-totp-uri', { password: 'not-a-session' });
     assert.equal(mfa.status, 401);
+  });
+});
+
+test('a staff account can never approve a device code; a student account can', testOptions, async () => {
+  await withAuthSchema(async (context) => {
+    const { pool } = context;
+    const studentCookie = await signUpVerified(context, 'device-student@example.test');
+    const staffCookie = await signUpVerified(context, 'device-staff@example.test');
+    await grantStaffMembership(pool, { email: 'device-staff@example.test', role: 'registrar', actor: 'bootstrap' });
+
+    const issueCode = async () => {
+      const res = await jsonPost(context, '/device/code', { client_id: 'sef-integration-test' });
+      assert.equal(res.status, 200);
+      return ((await res.json()) as { user_code: string }).user_code;
+    };
+    const claim = (userCode: string, cookie: string) =>
+      authPath(context, `/device?user_code=${encodeURIComponent(userCode)}`, { headers: { cookie } });
+    const approve = (userCode: string, cookie: string) =>
+      jsonPost(context, '/device/approve', { userCode }, { cookie });
+
+    // A staff session is refused even on the fully claimed, valid code path.
+    const staffCode = await issueCode();
+    assert.equal((await claim(staffCode, staffCookie)).status, 200);
+    const refused = await approve(staffCode, staffCookie);
+    assert.equal(refused.status, 403);
+    assert.equal(((await refused.json()) as { error: string }).error, 'staff_cannot_approve_devices');
+    const audited = await pool.query<{ n: string }>(
+      `SELECT count(*)::text AS n FROM audit_events WHERE event_type = 'device_approval.refused_staff'`,
+    );
+    assert.equal(audited.rows[0]!.n, '1', 'the refusal is written to the audit trail');
+    const stillPending = await authPath(context, `/device?user_code=${encodeURIComponent(staffCode)}`, {
+      headers: { cookie: staffCookie },
+    });
+    assert.equal(((await stillPending.json()) as { status: string }).status, 'pending', 'the code is not approved');
+
+    // A plain student session approves the same way the /device page does.
+    const studentCode = await issueCode();
+    assert.equal((await claim(studentCode, studentCookie)).status, 200);
+    const approved = await approve(studentCode, studentCookie);
+    assert.equal(approved.status, 200);
+    assert.deepEqual(await approved.json(), { success: true });
   });
 });
 

@@ -1,6 +1,7 @@
 import { Hono } from 'hono';
 import { bodyLimit } from 'hono/body-limit';
 import { cors } from 'hono/cors';
+import { HTTPException } from 'hono/http-exception';
 import { config } from './config';
 import type { UniDeps } from './deps';
 import { errorFields, log } from './logger';
@@ -32,9 +33,10 @@ export function createApp(deps: UniDeps) {
     origin: (origin) => ((deps.accountAuth?.trustedOrigins ?? []).includes(origin) ? origin : undefined),
     credentials: true,
   });
-  const accountBodyLimit = bodyLimit({ maxSize: 64 * 1024 });
+  const authBodyLimit = bodyLimit({ maxSize: 64 * 1024 });
   app.use('*', async (c, next) => (isAccountAuthPath(c.req.path) ? accountCors(c, next) : defaultCors(c, next)));
-  app.use('/v1/auth/*', async (c, next) => (isAccountAuthPath(c.req.path) ? accountBodyLimit(c, next) : next()));
+  // Every auth path carries credentials, legacy ones included: all get the same 64KB cap.
+  app.use('/v1/auth/*', authBodyLimit);
 
   app.use('*', async (c, next) => {
     const started = Date.now();
@@ -43,12 +45,15 @@ export function createApp(deps: UniDeps) {
   });
 
   app.onError((error, c) => {
+    // Thrown HTTPExceptions (the body cap's 413 above all) keep their own status.
+    if (error instanceof HTTPException) return error.getResponse();
     if (c.req.path.startsWith('/v1/auth/')) {
       log.error('request_failed', { path: loggablePath(c.req.path) });
       return c.json({ error: 'internal_error' }, 500);
     }
+    // Internals stay in the server log; clients get the same generic body everywhere.
     log.error('request_failed', { path: c.req.path, ...errorFields(error) });
-    return c.json({ error: 'internal_error', message: error.message }, 500);
+    return c.json({ error: 'internal_error' }, 500);
   });
 
   app.get('/health', (c) =>
