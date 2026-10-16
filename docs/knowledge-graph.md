@@ -137,7 +137,9 @@ entitlement or network:
   unless the student names them in `overwritePageIds`; an overwrite first preserves the live
   revision to `.history/`. Derived state (manifest, `index.md`) is rebuilt from the imported
   bytes; `log.md` merges entry-wise; immutable files that disagree (`raw/`, history, events,
-  records) are reported, never forced. A restore never touches the profile registry: it cannot
+  records) are reported, never forced. A source record declaring a media type this engine
+  would never serve is skipped with a warning — its original bytes still land, as an orphan
+  no live record can serve. A restore never touches the profile registry: it cannot
   grant admission, and `exportedBy` stays provenance.
 
 Export and preview sit behind the local sign-in alone, so an expired entitlement or a
@@ -233,12 +235,18 @@ uploads), **Reflect** (freezing a chat's fresh turns) and the
 
 1. **Freeze.** The material becomes a source: the original bytes are stored immutably, the
    extraction (transcript, transcription, parsed text) is frozen beside the record under
-   `.meta/sources/<id>/extracted/`, and a durable job tracks it. Each source declares its
+   `.meta/sources/<id>/extracted/`, and a durable job tracks it. Ingest accepts only the
+   allowlisted media types (Markdown, plain text, PDF, PNG, JPEG — `ACCEPTED_MEDIA` in
+   `brain/sources/limits.ts`); anything else is a typed 415 refusal before a byte is
+   written, and byte and pixel limits are enforced the same way. Each source declares its
    **origin** (`student` or `external`) and optional attribution (creator, URL), and waits at
    `awaiting_source_review` until the student compiles it — before that they can fix a bad
    read with a *correction*, which appends a new `student_correction` extraction revision
    instead of overwriting the original. Reflect freezes exactly the turns that had not been
-   reflected on before; the transcript range travels with the source.
+   reflected on before; the transcript range travels with the source. The `/raw` route serves
+   an original back with `X-Content-Type-Options: nosniff`: PNG/JPEG inline for preview,
+   everything else as an `application/octet-stream` download, so a stored type can never
+   render active content in the engine origin.
 2. **Context** (`context.ts`). The keeper sees the conventions revision, `index.md`, the
    pages this material plausibly touches (source citations, title and concept matches, one
    hop of links — capped at 10), and the source text itself. Nothing else enters the prompt.

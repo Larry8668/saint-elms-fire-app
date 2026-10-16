@@ -4,6 +4,7 @@ import type { ChatRequest, ChatStreamEvent, WikiClaim } from '@sef/shared';
 import type { StoredSettings } from '../settings/store';
 import { runChatTurn, type HarnessDeps } from './harness';
 import { ACADEMIC_REDIRECT, PRIVACY_REFUSAL } from './lanes';
+import { UNTRUSTED_CONTENT_NOTE } from './prompts';
 import type { ClaimReader } from '../brain/claim-evidence';
 
 const settings = {
@@ -186,6 +187,43 @@ test('an image capability a teacher was not granted is refused, not silently dro
   assert.equal(h.agentCalls(), 0);
 });
 
+/** A PNG header carrying the given dimensions, as the client would base64 it. */
+const pngData = (width: number, height: number): string => {
+  const ihdr = Buffer.alloc(13);
+  ihdr.writeUInt32BE(width, 0);
+  ihdr.writeUInt32BE(height, 4);
+  const length = Buffer.alloc(4);
+  length.writeUInt32BE(13, 0);
+  return Buffer.concat([Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]), length, Buffer.from('IHDR'), ihdr, Buffer.alloc(4)]).toString('base64');
+};
+
+test('an image too large to read on this device is refused before any model is built', async () => {
+  const h = harness('unused — the model must not be asked');
+  await runChatTurn(
+    turn({ teacher: 'guide', messages: [{ role: 'user', content: 'what does this diagram say?', attachments: [{ kind: 'image', mimeType: 'image/png', data: pngData(9000, 9000), name: 'huge.png' }] }] }),
+    h.deps,
+    (e) => h.events.push(e),
+  );
+  const finished = done(h.events);
+  assert.equal(finished.verification.lane, 'refused');
+  assert.match(finished.text, /9000×9000/);
+  const check = finished.verification.checks.find((c) => c.id === 'image_size');
+  assert.equal(check?.passed, true);
+  assert.equal(check?.detail, 'image_too_large');
+  assert.equal(h.agentCalls(), 0, 'no model was built');
+});
+
+test('a right-sized image passes the size gate and reaches the model', async () => {
+  const h = harness('I can read that diagram.');
+  await runChatTurn(
+    turn({ teacher: 'guide', messages: [{ role: 'user', content: 'what does this diagram say?', attachments: [{ kind: 'image', mimeType: 'image/png', data: pngData(800, 600), name: 'diagram.png' }] }] }),
+    h.deps,
+    (e) => h.events.push(e),
+  );
+  assert.equal(h.agentCalls(), 1, 'the turn went ahead');
+  assert.equal(done(h.events).verification.lane, 'answered');
+});
+
 test('the Philosopher refuses without a committed anchor and makes no web call', async () => {
   const h = harness('[course] …');
   await runChatTurn(turn({ teacher: 'philosopher', messages: [{ role: 'user', content: 'where else does resonance show up?' }], consent: { web: true } }), h.deps, (e) => h.events.push(e));
@@ -244,8 +282,32 @@ test('an anchored Philosopher turn searches the concept, never the student’s w
   );
   assert.deepEqual(queries, ['damping'], 'the topic-only query — chat text never leaves the device');
   assert.match(h.instructions(), /WEB RESULTS/);
+  assert.ok(h.instructions().includes(UNTRUSTED_CONTENT_NOTE), 'the web results are marked as untrusted data');
   const finished = done(h.events);
   assert.equal(finished.verification.toolCalls.find((t) => t.tool === 'web_search')?.summary?.includes('Priya'), false, 'the tool record names the query, not the message');
+});
+
+test('compiled wiki pages reach the prompt marked as untrusted data', async () => {
+  const h = harness('Damping drains amplitude. [lesson: damped]');
+  h.deps.wiki = {
+    listPages: async () => [
+      {
+        id: 'page-1',
+        kind: 'synthesis',
+        state: 'ok',
+        revision: 'r1',
+        metadata: { title: 'Damping synthesis', summary: 'Damping, drawn together.', claims: [], links: [], updatedAt: '2026-01-01T00:00:00.000Z' },
+        body: 'Damping, drawn together.',
+      },
+    ],
+    readPage: async () => null,
+    listSources: async () => ({}),
+    readSource: async () => null,
+  } as never;
+  await runChatTurn(turn({ teacher: 'guide', messages: [{ role: 'user', content: 'explain damping' }] }), h.deps, (e) => h.events.push(e));
+  const block = h.instructions();
+  assert.match(block, /WIKI PAGES THAT ALREADY COVER THIS/);
+  assert.ok(block.includes(UNTRUSTED_CONTENT_NOTE), 'the wiki pages block carries the untrusted-content line');
 });
 
 test('the anchor reaches the prompt as context and the answer as provenance', async () => {

@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict';
+import { createHash } from 'node:crypto';
 import { test } from 'node:test';
-import type { CompileResult, EngineSettings, JobList, ProposalAcceptance, SourceDetail, SourceReceipt } from '@sef/shared';
+import { CONTRACT_VERSION, SourceRecordSchema, type CompileResult, type EngineSettings, type JobList, type ProposalAcceptance, type SourceDetail, type SourceReceipt } from '@sef/shared';
 import type { ContentStore } from '../../content/store';
 import type { SettingsReader } from '../../settings/store';
 import { SessionStore, type Session } from '../../sessions/store';
@@ -127,10 +128,13 @@ test('a source is filed, read back in detail, corrected and previewed — all ov
   assert.equal(corrected.status, 200);
   assert.equal(((await corrected.json()) as SourceDetail).extraction?.method, 'student_correction');
 
-  // The raw route serves the frozen original, not the correction.
+  // The raw route serves the frozen original, not the correction — and only as a download:
+  // a non-image type is never rendered inside the engine origin.
   const raw = await app.request(`/sources/${receipt.source.id}/raw`, { headers: AUTH });
   assert.equal(raw.status, 200);
-  assert.equal(raw.headers.get('content-type'), 'text/markdown');
+  assert.equal(raw.headers.get('content-type'), 'application/octet-stream');
+  assert.match(raw.headers.get('content-disposition') ?? '', /^attachment;/);
+  assert.equal(raw.headers.get('x-content-type-options'), 'nosniff');
   assert.equal(await raw.text(), 'Force changes momentum over time.');
 
   const compiled = await post(app, `/sources/${jobId}/compile`, {});
@@ -260,4 +264,57 @@ test('a malformed envelope answers 400 with a code, never a crash', async () => 
   assert.equal((await post(app, '/sources', { kind: 'note', title: 'x', mediaType: 'text/plain', data: '%%%' })).status, 400);
   assert.equal((await post(app, '/sources', { kind: 'session', title: 'x', mediaType: 'text/plain', data: 'eA==' })).status, 400, 'sessions cannot be smuggled over the contribute route');
   assert.equal((await post(app, '/sources', { kind: 'note', title: 'x', mediaType: 'text/plain', data: 'eA==', sneaky: true })).status, 400);
+});
+
+test('a media type outside the allowlist is a typed 415, not a stored source', async () => {
+  const { app, store } = await routeHarness('route-media');
+  const refused = await post(app, '/sources', {
+    kind: 'document',
+    title: 'Page',
+    mediaType: 'text/html',
+    data: Buffer.from('<html><script>alert(1)</script></html>', 'utf8').toString('base64'),
+  });
+  assert.equal(refused.status, 415);
+  const body = (await refused.json()) as { error: string; code: string };
+  assert.equal(body.code, 'unsupported_media');
+  assert.deepEqual(Object.keys(await store.listSources()), [], 'nothing was kept');
+});
+
+test('only PNG and JPEG render inline; a planted text/html record downloads as opaque bytes', async () => {
+  const store = await vault('route-raw-vault');
+  const pngBytes = Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]);
+  const planted = (id: string, mediaType: string, bytes: Buffer, kind: 'document' | 'image' = 'document') =>
+    SourceRecordSchema.parse({
+      schemaVersion: CONTRACT_VERSION,
+      id,
+      profile: PROFILE,
+      revision: 'rev-1',
+      kind,
+      origin: 'external',
+      title: id,
+      createdAt: T0,
+      mediaType,
+      sha256: createHash('sha256').update(bytes).digest('hex'),
+      bytes: bytes.length,
+      attribution: {},
+      extractions: [],
+    });
+  // A record an older or tampered vault could still hold: ingest refuses this type today,
+  // but the raw route must stay safe against what is already on disk.
+  await store.putSource(planted('planted-html', 'text/html', Buffer.from('<script>alert(1)</script>', 'utf8')), Buffer.from('<script>alert(1)</script>', 'utf8'));
+  await store.putSource(planted('photo-1', 'image/png', pngBytes, 'image'), pngBytes);
+  const { app } = await routeHarness('route-raw', { store });
+
+  const html = await app.request('/sources/planted-html/raw', { headers: AUTH });
+  assert.equal(html.status, 200);
+  assert.equal(html.headers.get('content-type'), 'application/octet-stream', 'the planted type never reaches the browser');
+  assert.equal(html.headers.get('x-content-type-options'), 'nosniff', 'and cannot be sniffed back');
+  assert.match(html.headers.get('content-disposition') ?? '', /^attachment;/);
+  assert.equal(await html.text(), '<script>alert(1)</script>', 'the bytes themselves are still served');
+
+  const png = await app.request('/sources/photo-1/raw', { headers: AUTH });
+  assert.equal(png.status, 200);
+  assert.equal(png.headers.get('content-type'), 'image/png', 'the preview types still render');
+  assert.equal(png.headers.get('x-content-type-options'), 'nosniff');
+  assert.equal(png.headers.get('content-disposition'), null);
 });

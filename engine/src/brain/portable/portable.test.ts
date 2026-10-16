@@ -117,6 +117,35 @@ test('a full export round-trips pages, history, sources, events and tombstones b
   assert.match(log, /Restored a vault export/);
 });
 
+test('a source record declaring a media type the engine does not accept is refused on restore', async () => {
+  const source = await seededVault('media-src');
+  const archive = await portable(source).exportVault();
+  // Tamper: the same valid record, but its media type swapped for one that must never be
+  // served — exactly what a hostile export would plant. The file's own checksum is kept
+  // honest so only the media-type rule decides.
+  const recordFile = archive.files.find((file) => file.path === '.meta/sources/note-1.json');
+  assert.ok(recordFile);
+  const record = JSON.parse(recordFile.content) as { mediaType: string };
+  record.mediaType = 'text/html';
+  recordFile.content = JSON.stringify(record, null, 2);
+  recordFile.sha256 = sha256Hex(recordFile.content);
+  recordFile.bytes = Buffer.byteLength(recordFile.content);
+
+  const destination = await vault('media-dst');
+  const service = portable(destination);
+  const preview = await service.previewImport(archive);
+  assert.ok(preview.warnings.some((warning) => warning.includes("media type 'text/html'")), 'the preview names the refused type');
+
+  const result = await service.restore(archive);
+  assert.ok(result.skipped.some((skip) => skip.path === '.meta/sources/note-1.json'), 'the record is listed as skipped, not silently dropped');
+  assert.equal(await destination.readSource('note-1'), null, 'the record is not re-admitted');
+  const manifest = (await readManifest(destination.root)).manifest;
+  assert.equal(manifest?.sources['note-1'], undefined, 'and never reaches the catalogue');
+  // The student's own bytes still land — as an orphan original no live record can serve.
+  assert.equal(await exists(path.join(destination.root, 'raw/note-1/rev-1.markdown')), true);
+  assert.ok((await destination.readSource('peer-doc'))?.id, 'a valid record in the same archive restores normally');
+});
+
 test('the export carries only student-owned vault state — no credentials, in-flight or derived files', async () => {
   const store = await seededVault('excl-src');
   // Plant material that must never travel: a pending journal, a proposal, the writer lock,
