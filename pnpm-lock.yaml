@@ -11,6 +11,9 @@ importers:
       '@playwright/test':
         specifier: 1.64.0
         version: 1.64.0
+      '@types/node':
+        specifier: ^24.7.0
+        version: 24.19.2
       concurrently:
         specifier: ^9.2.1
         version: 9.2.5

@@ -13,6 +13,7 @@ import {
   type ErasureRequest,
   type LegacySharePage,
 } from '@sef/shared';
+import { TokenError, verifyToken } from '@sef/shared/node';
 import { requireAdmission, type AppEnv } from '../authorization';
 import { recentAuditEvents } from '../audit-events';
 import type { UniDeps } from '../deps';
@@ -79,10 +80,25 @@ function admissionError(error: unknown, c: { json: (body: unknown, status?: numb
 export function staffRoutes(deps: UniDeps) {
   const app = new Hono<AppEnv>();
   // adminRoutes shares this prefix and claims sef1 bearer tokens; session
-  // requests (cookie or better-auth bearer) are the admission domain.
+  // requests (cookie or better-auth bearer) are the admission domain. A sef1
+  // token still has to verify and carry the admin role — a student token must
+  // not read the roster, staff list, erasure queue or audit trail below.
   app.use('*', async (c, next) => {
     const token = c.req.header('authorization')?.match(/^Bearer\s+(.+)$/i)?.[1];
-    if (token?.startsWith('sef1')) return next();
+    if (token?.startsWith('sef1')) {
+      try {
+        const claims = verifyToken(token, deps.keys.publicKeyPem);
+        if (claims.role !== 'admin') {
+          log.warn('staff_forbidden_legacy_role', { sub: claims.sub, role: claims.role, path: c.req.path });
+          return c.json({ error: 'forbidden' }, 403);
+        }
+        c.set('claims', claims);
+        return next();
+      } catch (error) {
+        if (error instanceof TokenError) return c.json({ error: 'unauthenticated' }, 401);
+        throw error;
+      }
+    }
     return requireAdmission(deps, { staff: 'any' })(c, next);
   });
   const actor = (c: { get: (k: 'principal') => { userId: string } }) => c.get('principal').userId;
