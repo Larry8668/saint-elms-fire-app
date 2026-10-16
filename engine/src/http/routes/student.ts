@@ -1,9 +1,11 @@
 import { Hono, type Context } from 'hono';
 import { streamSSE } from 'hono/streaming';
-import { ConversationHandoffSchema, ConversationTurnSchema, CONTRACT_VERSION, IdentifierSchema, SourceReceiptSchema, TEACHER_IDS, type ChatRequest, type ChatStreamEvent, type TeacherId } from '@sef/shared';
+import { ConversationHandoffSchema, ConversationTurnSchema, CONTRACT_VERSION, IdentifierSchema, RestorePageRequestSchema, SourceReceiptSchema, TEACHER_IDS, type ChatRequest, type ChatStreamEvent, type TeacherId } from '@sef/shared';
 import { z } from 'zod';
 import { ConversationRefused, ConversationRegistry, refusalCopy, serverTranscript } from '../../agents/conversation';
 import { runChatTurn } from '../../agents/harness';
+import { SourceRejection } from '../../brain/sources/ingest';
+import { VaultConflictError } from '../../brain/vault-errors';
 import { errorFields, log } from '../../config';
 import { requireProfile, type EngineDeps, type EngineEnv } from '../context';
 import { friendlyError } from '../errors';
@@ -128,7 +130,7 @@ export function studentRoutes(deps: EngineDeps, conversations: ConversationRegis
       messages: serverTranscript(stored, { role: 'user', content: turn.message, attachments: turn.attachments }),
       consent: turn.consent,
     };
-    const harness = { settings: ws.settings, content: ws.content, brain: ws.brain, sessions: ws.sessions, studentName: ws.profile.name, claims: ws.wiki, logistics: ws.logistics };
+    const harness = { settings: ws.settings, content: ws.content, brain: ws.brain, sessions: ws.sessions, studentName: ws.profile.name, claims: ws.wiki, wiki: ws.wiki, logistics: ws.logistics };
     return streamSSE(c, async (stream) => {
       const emit = (event: ChatStreamEvent) => void stream.writeSSE({ data: JSON.stringify(event) });
       try {
@@ -186,6 +188,24 @@ export function studentRoutes(deps: EngineDeps, conversations: ConversationRegis
     if (!key.success) return c.json({ error: 'No page for this concept yet' }, 404);
     const revision = await c.get('ws').wiki.readPageRevision(key.data, c.req.param('rev'));
     return revision ? c.json(revision) : c.json({ error: 'Revision not found' }, 404);
+  });
+  /**
+   * Restore-as-new-revision: the old revision's content is proposed on top of the page
+   * the caller read, through the same journaled proposal write path everything else uses.
+   * A stale baseRevision answers 409 rather than silently overwriting someone's newer work.
+   */
+  app.post('/brain/pages/:key/restore', guard, async (c) => {
+    const key = IdentifierSchema.safeParse(c.req.param('key'));
+    if (!key.success) return c.json({ error: 'No page for this concept yet', code: 'not_found' }, 404);
+    const body = RestorePageRequestSchema.safeParse(await c.req.json().catch(() => null));
+    if (!body.success) return c.json({ error: 'Send the revision to restore and the baseRevision you read', code: 'invalid_request' }, 400);
+    try {
+      return c.json(await c.get('ws').brain.restorePageRevision(key.data, body.data.revision, body.data.baseRevision));
+    } catch (error) {
+      if (error instanceof SourceRejection) return c.json({ error: error.message, code: error.code }, error.status);
+      if (error instanceof VaultConflictError) return c.json({ error: error.message, code: 'stale_revision', details: error.details }, 409);
+      throw error;
+    }
   });
   app.get('/brain/log', guard, async (c) => c.json(await c.get('ws').brain.log(Number(c.req.query('limit') ?? 50))));
   app.get('/brain/lint', guard, async (c) => c.json(await c.get('ws').brain.lint()));

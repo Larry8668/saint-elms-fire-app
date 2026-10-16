@@ -162,6 +162,12 @@ export interface EvidenceInput {
   /** Blocks the model saw but may never assert (e.g. the claims block carrying withheld claim text). */
   shieldedBlocks?: string[];
   /**
+   * Source keys (`${kind}:${id}`) that exist in the set but are withheld: real, citable,
+   * never assertable. A generated wiki page lands here so its model prose cannot launder
+   * itself into evidence by being compiled.
+   */
+  withheldSources?: ReadonlySet<string>;
+  /**
    * Unconfirmed logistics records the prompt named. They are real and citable so the
    * Friend may acknowledge them, but their support is withheld until the student confirms.
    */
@@ -175,12 +181,16 @@ export function buildEvidenceSet(input: EvidenceInput): EvidenceSet {
   const items: EvidenceItem[] = [];
   let webIndex = 0;
   for (const source of input.sources) {
-    const text = input.evidenceText?.get(`${source.kind}:${source.id}`) ?? source.title;
+    const key = `${source.kind}:${source.id}`;
+    const text = input.evidenceText?.get(key) ?? source.title;
+    const withheld = input.withheldSources?.has(key) === true;
+    const base = { id: source.id, title: source.title, text, assertable: !withheld, citable: true };
+    if (withheld) Object.assign(base, { withheldReason: 'a generated page — citable as context, never evidence' });
     if (source.kind === 'web') {
       webIndex += 1;
-      items.push({ id: source.id, kind: 'web', title: source.title, text, assertable: true, citable: true, aliases: [`w${webIndex}`, `${webIndex}`] });
+      items.push({ ...base, kind: 'web', aliases: [`w${webIndex}`, `${webIndex}`] });
     } else {
-      items.push({ id: source.id, kind: source.kind, title: source.title, text, assertable: true, citable: true });
+      items.push({ ...base, kind: source.kind });
     }
   }
 

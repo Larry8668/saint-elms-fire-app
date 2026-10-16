@@ -1,10 +1,11 @@
 import type { SourceRef } from '@sef/shared';
-import { ArrowRight, BookOpen, Brain, CalendarClock, Check, ChevronDown, Copy, ExternalLink, Globe, LifeBuoy, RotateCcw, Telescope } from 'lucide-react';
+import { ArrowRight, BookmarkPlus, BookOpen, Brain, CalendarClock, Check, ChevronDown, Copy, ExternalLink, Globe, LifeBuoy, RotateCcw, Telescope } from 'lucide-react';
 import { AnimatePresence, motion } from 'motion/react';
 import { useState, type ReactNode } from 'react';
 import { toast } from 'sonner';
 import { Markdown } from '@/components/Markdown';
 import { Button } from '@/components/ui/button';
+import { WorkingLabel } from '@/components/ui/loading';
 import { Tooltip } from '@/components/ui/overlays';
 import { cn } from '@/lib/cn';
 import { log } from '@/lib/log';
@@ -182,8 +183,8 @@ function ActionButton({ label, onClick, children }: { label: string; onClick: ()
   );
 }
 
-/** Copy / retry, plus one-tap follow-ups. Only the latest answer gets retry and follow-ups. */
-export function AnswerActions({ content, onRetry, followUps, onFollowUp }: { content: string; onRetry?: () => void; followUps?: string[]; onFollowUp?: (text: string) => void }) {
+/** Copy / retry / save, plus one-tap follow-ups. Only the latest answer gets retry and follow-ups. */
+export function AnswerActions({ content, onRetry, onSave, saving, followUps, onFollowUp }: { content: string; onRetry?: () => void; onSave?: () => void; saving?: boolean; followUps?: string[]; onFollowUp?: (text: string) => void }) {
   const [copied, setCopied] = useState(false);
   const copy = async () => {
     try {
@@ -201,6 +202,12 @@ export function AnswerActions({ content, onRetry, followUps, onFollowUp }: { con
       <ActionButton label={copied ? 'Copied' : 'Copy answer'} onClick={() => void copy()}>
         {copied ? <Check className="text-aurora-400" /> : <Copy />}
       </ActionButton>
+      {onSave && (
+        <ActionButton label="Save to wiki — kept as a source and drafted into a proposal; nothing lands until you accept it" onClick={onSave}>
+          <BookmarkPlus />
+        </ActionButton>
+      )}
+      {saving && <WorkingLabel label="Drafting a proposal from the saved answer…" className="ml-1 text-[11.5px] text-beacon-300" />}
       {onRetry && (
         <ActionButton label="Ask again" onClick={onRetry}>
           <RotateCcw />

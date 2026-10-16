@@ -25,6 +25,12 @@ export class TurnContext {
   /** Wiki-claim verdicts the prompt showed: assertable claims may be cited, withheld ones only named. */
   claimVerdicts: ClaimVerdict[] = [];
   /**
+   * Source keys (`${kind}:${id}`) the teacher may name but never assert — e.g. a generated
+   * page (synthesis, question, source summary) the read_wiki_page tool showed. Its prose is
+   * model text: citably real, never evidence.
+   */
+  readonly withheldSourceIds = new Set<string>();
+  /**
    * Unconfirmed logistics records the prompt named. They enter the evidence set as
    * withheld items — the Friend may name one but never assert its contents as fact.
    */
@@ -35,10 +41,11 @@ export class TurnContext {
 
   constructor(private readonly emit: (event: ChatStreamEvent) => void) {}
 
-  addSource(source: SourceRef, evidenceText?: string) {
+  addSource(source: SourceRef, evidenceText?: string, opts?: { assertable?: boolean }) {
     const key = `${source.kind}:${source.id}`;
     this.sources.set(key, source);
     if (evidenceText) this.evidenceText.set(key, evidenceText);
+    if (opts?.assertable === false) this.withheldSourceIds.add(key);
     if (source.kind === 'lesson') this.lessonIds.add(source.id);
   }
 

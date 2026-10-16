@@ -1,5 +1,6 @@
 import { can, conceptKey, TEACHERS, teacherPolicy, type CapabilityId, type ChatRequest, type ChatStreamEvent, type SourceRef, type Verification, type VerificationCheck } from '@sef/shared';
 import type { ClaimReader } from '../brain/claim-evidence';
+import { WikiQuery, type WikiReader } from '../brain/query';
 import type { BrainService } from '../brain/service';
 import { errorFields, log } from '../config';
 import { searchLessons, type LessonHit } from '../content/search';
@@ -30,6 +31,8 @@ export interface HarnessDeps {
   studentName: string;
   /** The student's wiki, so wiki claims can be filtered claim by claim. */
   claims?: ClaimReader;
+  /** The same wiki under the compiled-page view the query tools and the up-front hits use. */
+  wiki?: WikiReader;
   /** Defaults to the seam that resolves nothing: the Philosopher fails closed until PR-21. */
   anchors?: AnchorResolver;
   /** Committed, course-linked pages the anchor resolver may choose from. */
@@ -163,6 +166,20 @@ export async function runChatTurn(req: ChatRequest, deps: HarnessDeps, emit: (ev
     const keys = hits.flatMap((h) => h.lesson.concepts.map(conceptKey));
     if (can(req.teacher, 'context:student_brain')) ctx.contextBlocks.push(await deps.brain.contextFor(keys));
     if (can(req.teacher, 'claim:wiki_claims')) await claimBlock(req.teacher, { claims: deps.claims }, ctx);
+    // Wiki-first: the compiled pages are searched before the model improvises an answer —
+    // a saved synthesis is a page like any other, so a repeated question reuses it. Only
+    // metadata is shown; bodies come through read_wiki_page, which marks generated pages
+    // withheld so their model prose can never count as evidence.
+    if (can(req.teacher, 'context:wiki_index') && deps.wiki) {
+      const wikiHits = await new WikiQuery(deps.wiki).search(question, 3);
+      ctx.contextBlocks.push(
+        wikiHits.length
+          ? `WIKI PAGES THAT ALREADY COVER THIS (read one with read_wiki_page before leaning on it; a source_summary, synthesis or question page is generated text, citable as context but never evidence):\n${wikiHits
+              .map((hit) => `- [${hit.kind}] ${hit.id} — ${hit.title}: ${hit.summary}`)
+              .join('\n')}`
+          : 'WIKI PAGES THAT ALREADY COVER THIS: none matched — the wiki holds no worked answer for this yet.',
+      );
+    }
   }
   blocks.push(...ctx.contextBlocks, ...ctx.shieldedBlocks);
 
@@ -185,7 +202,7 @@ export async function runChatTurn(req: ChatRequest, deps: HarnessDeps, emit: (ev
   const resolved = resolveModel(settings, hasImage ? 'vision' : 'tutor');
   const instructions = `${teacherInstructions(req.teacher, deps.studentName)}\n\n---\n${blocks.join('\n\n')}`;
   const build = deps.makeAgent ?? makeAgent;
-  const agent = build(req.teacher, instructions, resolved, buildTools(req.teacher, { content: deps.content, brain: deps.brain, searxngUrl: settings.searxngUrl, claims: deps.claims, webConsented }, ctx));
+  const agent = build(req.teacher, instructions, resolved, buildTools(req.teacher, { content: deps.content, brain: deps.brain, searxngUrl: settings.searxngUrl, claims: deps.claims, wiki: deps.wiki, webConsented }, ctx));
 
   /**
    * A Friend image turn also proposes a logistics extraction from the attachment, in
@@ -233,6 +250,7 @@ export async function runChatTurn(req: ChatRequest, deps: HarnessDeps, emit: (ev
     claimVerdicts: ctx.claimVerdicts,
     contextBlocks: ctx.contextBlocks,
     shieldedBlocks: ctx.shieldedBlocks,
+    withheldSources: ctx.withheldSourceIds,
     proposedLogistics: ctx.proposedLogistics,
     foreignIds: (await deps.content.allLessons()).map((l) => l.id).filter((id) => !permitted.has(`lesson:${id}`) && !permitted.has(`support:${id}`)),
   });
