@@ -163,6 +163,39 @@ test('unauthenticated callers get 401 on every admission surface', testOptions, 
   });
 });
 
+test('legacy student tokens cannot read staff surfaces; admin tokens can', testOptions, async () => {
+  await withAuthSchema(async (context) => {
+    const extra = await staticDeps();
+    mount(context.app, deps(context, extra));
+    const now = Math.floor(Date.now() / 1000);
+    const mint = (role: 'student' | 'admin') =>
+      signToken(
+        { iss: 'test', sub: `legacy-${role}`, role, name: 'Legacy', email: `${role}@example.test`, cohortId: 'c1', iat: now, exp: now + 3600 },
+        extra.keys.privateKey,
+      );
+    const bearer = (token: string) => ({ authorization: `Bearer ${token}` });
+    // The staff router shares /v1/admin with the legacy admin surface; a student-role
+    // sef1 token must not turn that sharing into read access to rosters or audit data.
+    for (const path of ['/v1/admin/students', '/v1/admin/staff', '/v1/admin/erasure-requests', '/v1/admin/audit-events']) {
+      const res = await context.app.request(`${context.origin}${path}`, { headers: bearer(mint('student')) });
+      assert.equal(res.status, 403, path);
+    }
+    const ok = await context.app.request(`${context.origin}/v1/admin/students`, { headers: bearer(mint('admin')) });
+    assert.equal(ok.status, 200);
+    const forged = await context.app.request(`${context.origin}/v1/admin/students`, {
+      headers: bearer(`${mint('admin')}x`),
+    });
+    assert.equal(forged.status, 401);
+    // Mutations still demand a live staff session; a legacy admin token alone is not enough.
+    const mutate = await context.app.request(`${context.origin}/v1/admin/students/anything`, {
+      method: 'PATCH',
+      headers: { ...bearer(mint('admin')), 'content-type': 'application/json' },
+      body: '{}',
+    });
+    assert.equal(mutate.status, 401);
+  });
+});
+
 test('verified applicants apply once, see pending state, and cannot self-approve', testOptions, async () => {
   await withAuthSchema(async (context) => {
     const extra = await staticDeps();

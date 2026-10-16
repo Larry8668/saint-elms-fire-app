@@ -17,6 +17,7 @@
     "desktop": "pnpm --filter @sef/desktop tauri dev",
     "desktop:build": "pnpm --filter @sef/desktop tauri build",
     "build": "pnpm -r build",
+    "build:hosted": "pnpm --filter @sef/desktop build:portal && pnpm --filter @sef/admin build",
     "typecheck": "pnpm -r typecheck",
     "test": "pnpm -r test",
     "preflight": "bash scripts/preflight.sh",

@@ -55,6 +55,21 @@ export function createApp(deps: UniDeps) {
     c.json({ ok: true, service: 'uni', issuer: config.issuer, courses: deps.courseware.courses.size }),
   );
 
+  /**
+   * Readiness, distinct from liveness: 200 only while the account layer this server
+   * was configured to run is actually usable — database answering and account auth
+   * mounted. A deployment without a database is honestly not-ready (503), because every
+   * account surface fails closed the same way.
+   */
+  app.get('/ready', async (c) => {
+    const checks: Record<string, boolean> = { accountAuth: Boolean(deps.accountAuth) };
+    if (deps.pool) {
+      checks.database = await deps.pool.query('SELECT 1').then(() => true, () => false);
+    }
+    const ready = Object.values(checks).every(Boolean);
+    return c.json({ ok: ready, checks }, ready ? 200 : 503);
+  });
+
   app.get('/v1/keys', (c) => c.json({ issuer: config.issuer, algorithm: 'ed25519', publicKeyPem: deps.keys.publicKeyPem }));
 
   app.get('/v1/cohorts', (c) => c.json(deps.releases.cohorts().map(({ id, name }) => ({ id, name }))));

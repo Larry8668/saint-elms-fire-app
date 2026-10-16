@@ -37,6 +37,7 @@ services:
       context: .
       dockerfile: infra/docker/node-service.Dockerfile
       args: { SERVICE: "@sef/uni-server" }
+      target: uni
     environment:
       UNI_PORT: "4200"
       UNI_HOST: 0.0.0.0
@@ -47,13 +48,17 @@ services:
       UNI_TRUSTED_ORIGINS: ${UNI_TRUSTED_ORIGINS:-}
       BETTER_AUTH_SECRET: ${BETTER_AUTH_SECRET:-}
       MAIL_SMTP_URL: ${MAIL_SMTP_URL:-}
+      # The compose stack is the demo surface, so the seeded admin password defaults here
+      # explicitly; a real deployment sets DEMO_PASSWORD (and usually SEED_DEMO=false).
+      DEMO_PASSWORD: ${DEMO_PASSWORD:-harbor-lantern}
+      SEED_DEMO: ${SEED_DEMO:-true}
       UNI_DATABASE_URL: postgresql://sef:${UNI_DB_PASSWORD:-sef-uni-local-dev-only}@postgres:5432/sef_uni
     volumes:
       - ./courseware:/courseware:ro
       - uni-data:/data
     ports: ["4200:4200"]
     healthcheck:
-      test: ["CMD", "node", "-e", "fetch('http://127.0.0.1:4200/health').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"]
+      test: ["CMD", "node", "-e", "fetch('http://127.0.0.1:4200/ready').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"]
       interval: 15s
       timeout: 5s
       retries: 5
@@ -99,6 +104,11 @@ services:
       - engine-data:/data
       - ./courseware:/courseware:ro
     ports: ["127.0.0.1:4100:4100"]
+    healthcheck:
+      test: ["CMD", "node", "-e", "fetch('http://127.0.0.1:4100/api/health').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"]
+      interval: 15s
+      timeout: 5s
+      retries: 5
     depends_on:
       uni: { condition: service_healthy }
 

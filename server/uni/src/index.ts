@@ -54,7 +54,7 @@ async function main() {
   const availability = programme ? await programmeAvailability(programme) : undefined;
   const deps: UniDeps = { courseware, programme, availability, keys, releases, shares, accounts, audit, dispersal, accountAuth, pool };
   const firstBoot = await accounts.load();
-  if (firstBoot) await seedUniDemo(deps);
+  if (firstBoot && config.seedDemo) await seedUniDemo(deps);
 
   const app = createApp(deps);
   serve({ fetch: app.fetch, port: config.port, hostname: config.host }, (info) => {

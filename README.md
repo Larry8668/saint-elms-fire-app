@@ -10,7 +10,7 @@ Saint Elms Fire is the university of the future. It gives every student their ow
 
 Together, they teach from a living map of your personal learning journey. Every concept you touch becomes a star, and the constellation of your knowledge grows with you over the course.
 
-Built to GDPR/DPDP standards, open-weight models do the work, so the Elms brain runs on your own device. Your knowledge stays under your control, and it is yours to keep forever, long after the course ends.
+Designed around GDPR/DPDP-style data minimisation — a technical posture, not a legal certification — the open-weight models do the work, so the Elms brain runs on your own device. Your knowledge stays under your control, and it is yours to keep forever, long after the course ends.
 
 **In technical terms:** an offline-first study companion with three Socratic AI teachers running on Gemma 4, and a second brain that maps what *you* understand onto your university's course sky.
 
@@ -98,7 +98,7 @@ flowchart LR
 **Best Open-Source AI Project**
 - Fully self-hostable: `docker compose up` runs the uni server, SearXNG and the engine; the Ollama profile adds the model.
 - No vendor lock-in for data: the brain is a plain markdown vault, and courseware is plain markdown.
-- Privacy by design (GDPR/DPDP): the brain, chat history and note photos stay on the student's device. The university sees only accounts, releases and which course versions are installed, never what a student wrote or asked (the only exception is a brain page the student explicitly chooses to share with a classmate).
+- Privacy by design, aligned with GDPR/DPDP data-minimisation (this is an engineering posture, not a compliance certification): the brain, chat history and note photos stay on the student's device. The university sees only accounts, releases and which course versions are installed, never what a student wrote or asked (the only exception is a brain page the student explicitly chooses to share with a classmate).
 - Trust is explicit. Course packages are ed25519-signed and hash-checked, and the university key is pinned on first use. Every teacher answer comes with a verification panel listing its sources, tool calls and contract checks.
 
 ## Repository commands

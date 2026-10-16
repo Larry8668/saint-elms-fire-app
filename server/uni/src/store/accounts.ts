@@ -17,44 +17,61 @@ const idFromEmail = (email: string) => email.split('@')[0]!.replace(/[^a-z0-9-]/
 export class AccountStore {
   private accounts = new Map<string, StoredAccount>();
   private readonly file: string;
+  private readonly seedDemo: boolean;
 
-  constructor(dataDir = config.dataDir) {
+  constructor(dataDir = config.dataDir, opts: { seedDemo?: boolean } = {}) {
     this.file = path.join(dataDir, 'accounts.json');
+    this.seedDemo = opts.seedDemo ?? config.seedDemo;
   }
 
-  /** Loads accounts; on first boot seeds the admin and the three demo students. Returns true if seeded. */
+  /**
+   * Loads accounts; on first boot seeds the operator admin and — while SEED_DEMO holds —
+   * the three demo students. Returns true only when the file did not exist, so callers
+   * can tell a first boot apart from an established store.
+   */
   async load(): Promise<boolean> {
     const rows = await readJson<StoredAccount[] | null>(this.file, null);
     if (rows) {
       this.accounts = new Map(rows.map((a) => [a.id, a]));
       return false;
     }
-    await this.seedDemo();
+    await this.seed();
     return true;
   }
 
-  private async seedDemo(): Promise<void> {
+  private async seed(): Promise<void> {
+    // The admin is the bootstrap credential for the release-management API, so it seeds
+    // even without demo mode. Seeding it with the publicly known password on a real
+    // deployment is a credential leak, so production refuses to continue rather than
+    // booting a server anyone can administer.
+    if (process.env.NODE_ENV === 'production' && config.demoPassword === DEMO_PASSWORD_DEFAULT) {
+      throw new Error(
+        'Refusing to seed accounts with the public demo password in production. Set DEMO_PASSWORD to a private value (or accept demo-only use).',
+      );
+    }
     if (config.demoPassword === DEMO_PASSWORD_DEFAULT) {
       log.warn('demo_password_default', { hint: 'Seeded accounts use the public demo password. Set DEMO_PASSWORD before exposing this server.' });
     }
     const passwordHash = await hashPassword(config.demoPassword);
     const createdAt = new Date().toISOString();
     this.accounts.set(DEMO_ADMIN.id, { ...DEMO_ADMIN, role: 'admin', createdAt, passwordHash });
-    for (const p of DEMO_PERSONAS) {
-      this.accounts.set(p.id, {
-        id: p.id,
-        email: p.email,
-        name: p.name,
-        role: 'student',
-        cohortId: p.cohortId,
-        stage: p.stage,
-        persona: p.persona,
-        createdAt,
-        passwordHash,
-      });
+    if (this.seedDemo) {
+      for (const p of DEMO_PERSONAS) {
+        this.accounts.set(p.id, {
+          id: p.id,
+          email: p.email,
+          name: p.name,
+          role: 'student',
+          cohortId: p.cohortId,
+          stage: p.stage,
+          persona: p.persona,
+          createdAt,
+          passwordHash,
+        });
+      }
     }
     await this.persist();
-    log.info('accounts_seeded', { count: this.accounts.size });
+    log.info('accounts_seeded', { count: this.accounts.size, demo: this.seedDemo });
   }
 
   private persist(): Promise<void> {

@@ -113,7 +113,9 @@ export function devicePageHtml({ nonce, publicUrl }: DevicePageOptions): string 
   inputEl.addEventListener('input', refresh);
   refresh();
 
-  if (!fromLink) say('Open the link shown on your device, or type the code it shows.');
+  // A prefilled link claims the code for this session at page load; a typed code is
+  // claimed inside the click. Either way approve only sees a claimed code.
+  if (fromLink) claim(fromLink); else say('Open the link shown on your device, or type the code it shows.');
 
   function describe(payload, fallback) {
     if (!payload) return fallback;
@@ -123,18 +125,32 @@ export function devicePageHtml({ nonce, publicUrl }: DevicePageOptions): string 
     return fallback;
   }
 
+  /**
+   * Approve/deny only act on a code this signed-in session has claimed — the claim is the
+   * same GET the error message names. Running it inside the click keeps typed codes and
+   * prefilled links on one path; a second claim by the same session is a no-op.
+   */
+  function claim(code) {
+    return fetch('${DEVICE_PATH}?user_code=' + encodeURIComponent(code), { credentials: 'include' })
+      .then(function (res) { return res.json().catch(function () { return {}; }); })
+      .catch(function () { return {}; });
+  }
+
   function decide(action, busyMessage, goodMessage) {
     return function () {
       var code = currentCode();
       if (!code) return;
       approveEl.disabled = true; denyEl.disabled = true;
       say(busyMessage);
-      fetch('${DEVICE_PATH}/' + action, {
-        method: 'POST',
-        credentials: 'include',
-        headers: { 'content-type': 'application/json' },
-        body: JSON.stringify({ userCode: code })
-      })
+      claim(code)
+        .then(function () {
+          return fetch('${DEVICE_PATH}/' + action, {
+            method: 'POST',
+            credentials: 'include',
+            headers: { 'content-type': 'application/json' },
+            body: JSON.stringify({ userCode: code })
+          });
+        })
         .then(function (res) {
           return res.json().catch(function () { return {}; }).then(function (payload) {
             return { ok: res.ok, payload: payload };

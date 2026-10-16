@@ -2,6 +2,7 @@ import { createHash } from 'node:crypto';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { createLogger, DEMO_PASSWORD_DEFAULT } from '@sef/shared';
+import { envInt, envPort } from '@sef/shared/node';
 
 export { errorFields } from '@sef/shared';
 
@@ -44,7 +45,7 @@ export const profilePaths = (profileId: string, rootDir = dataDir): ProfilePaths
 };
 
 export const config = {
-  port: Number(env('ENGINE_PORT', '4100')),
+  port: envPort('ENGINE_PORT', 4100),
   host: env('ENGINE_HOST', '127.0.0.1'),
   version: '0.2.0',
   /** Device-level files, shared by every profile on this machine. */
@@ -56,7 +57,7 @@ export const config = {
     authSessions: path.join(dataDir, 'auth-sessions.json'),
   },
   /** Engine session lifetime on this device; offline sign-in issues the same kind of session. */
-  sessionHours: Number(env('ENGINE_SESSION_HOURS', String(24 * 14))),
+  sessionHours: envInt('ENGINE_SESSION_HOURS', 24 * 14),
   /** Seed demo profiles (offline-ready) on first boot so the app works without the uni server. */
   seedDemo: env('SEED_DEMO', 'true') === 'true',
   demoPassword: env('DEMO_PASSWORD', DEMO_PASSWORD_DEFAULT),
