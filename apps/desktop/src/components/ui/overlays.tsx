@@ -47,7 +47,20 @@ export function Dialog({
   );
 }
 
-export function Sheet({ open, onOpenChange, children, className }: { open: boolean; onOpenChange: (open: boolean) => void; children: ReactNode; className?: string }) {
+export function Sheet({
+  open,
+  onOpenChange,
+  title,
+  children,
+  className,
+}: {
+  open: boolean;
+  onOpenChange: (open: boolean) => void;
+  /** Every sheet names itself for assistive tech — the visible header inside is not always text. */
+  title: ReactNode;
+  children: ReactNode;
+  className?: string;
+}) {
   return (
     <DialogPrimitive.Root open={open} onOpenChange={onOpenChange} modal={false}>
       <DialogPrimitive.Portal>
@@ -58,7 +71,7 @@ export function Sheet({ open, onOpenChange, children, className }: { open: boole
             className,
           )}
         >
-          <DialogPrimitive.Title className="sr-only">Details</DialogPrimitive.Title>
+          <DialogPrimitive.Title className="sr-only">{title}</DialogPrimitive.Title>
           {children}
         </DialogPrimitive.Content>
       </DialogPrimitive.Portal>

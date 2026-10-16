@@ -77,7 +77,7 @@ export function QuizDialog({ conceptKey, conceptLabel, open, onOpenChange }: { c
             return (
               <div key={qi}>
                 <Markdown variant="chat" className="mb-2 font-medium text-night-100">{`${qi + 1}. ${q.question}`}</Markdown>
-                <div className="grid gap-2">
+                <div className="grid gap-2" role="radiogroup" aria-label={`Question ${qi + 1}`}>
                   {q.options.map((option, oi) => {
                     const chosen = answers[qi] === oi;
                     const correct = review && review.correct === oi;
@@ -85,6 +85,8 @@ export function QuizDialog({ conceptKey, conceptLabel, open, onOpenChange }: { c
                     return (
                       <button
                         key={oi}
+                        role="radio"
+                        aria-checked={chosen}
                         disabled={Boolean(result)}
                         onClick={() => setAnswers((a) => a.map((v, i) => (i === qi ? oi : v)))}
                         className={cn(

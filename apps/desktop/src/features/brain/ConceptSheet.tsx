@@ -43,7 +43,7 @@ export function ConceptSheet({ node, graph, onSelect }: { node: GraphNode | null
 
   return (
     <>
-      <Sheet open={Boolean(node)} onOpenChange={(open) => !open && onSelect(null)}>
+      <Sheet open={Boolean(node)} onOpenChange={(open) => !open && onSelect(null)} title={node.label}>
         <div className="flex items-start justify-between gap-3 border-b border-white/[0.07] p-5">
           <div className="min-w-0">
             <Eyebrow>{kindLabel} · {node.courseName}</Eyebrow>

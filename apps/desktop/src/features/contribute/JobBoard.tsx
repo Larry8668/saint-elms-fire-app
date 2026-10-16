@@ -4,6 +4,7 @@ import { motion } from 'motion/react';
 import { toast } from 'sonner';
 import type { JobList, SourceSummary, WikiJob } from '@sef/shared';
 import { Button } from '@/components/ui/button';
+import { ConfirmButton } from '@/components/ui/confirm-button';
 import { WorkingLabel } from '@/components/ui/loading';
 import { Badge, EmptyState, Eyebrow, Panel } from '@/components/ui/primitives';
 import { SOURCE_KIND_ICON } from '@/features/brain/SourceDetail';
@@ -89,9 +90,9 @@ function JobRow({ job, sources, onInspect, onReviewProposal, busy, onCompile, on
           </Button>
         )}
         {(job.stage === 'queued' || job.stage === 'extracting' || job.stage === 'awaiting_source_review') && (
-          <Button size="sm" variant="ghost" onClick={() => onCancel(job)}>
+          <ConfirmButton size="sm" variant="ghost" confirmLabel="Withdraw?" onConfirm={() => onCancel(job)}>
             Withdraw
-          </Button>
+          </ConfirmButton>
         )}
       </div>
     </motion.div>

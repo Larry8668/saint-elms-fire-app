@@ -3,6 +3,7 @@ import { Ban, Download, Eye, EyeOff, Paperclip, Undo2 } from 'lucide-react';
 import { useState } from 'react';
 import { Markdown } from '@/components/Markdown';
 import { Button } from '@/components/ui/button';
+import { ConfirmButton } from '@/components/ui/confirm-button';
 import { Badge, Panel } from '@/components/ui/primitives';
 import { timeAgo } from '@/lib/time';
 
@@ -82,9 +83,9 @@ export function ShareCard({
         )}
         {item.mine ? (
           item.state === 'published' && (
-            <Button variant="danger" size="sm" loading={withdrawing} onClick={onWithdraw}>
+            <ConfirmButton variant="danger" size="sm" confirmLabel="Withdraw?" loading={withdrawing} onConfirm={onWithdraw}>
               <Undo2 /> Withdraw
-            </Button>
+            </ConfirmButton>
           )
         ) : (
           <Button
