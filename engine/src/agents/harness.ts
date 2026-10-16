@@ -11,12 +11,13 @@ import { webSearch, type WebResult } from '../web/searxng';
 import { ANCHOR_FAILURE_COPY, unresolvableAnchors, type AnchorResolver, type AnchorTarget } from './anchor';
 import { attributeLessons } from './attribution';
 import { TurnContext } from './context';
+import { buildEvidenceSet } from './evidence';
 import { makeAgent } from './factory';
 import { ACADEMIC_REDIRECT, classifyFriendInput, declaredAttachmentText, extractedTextLane, PRIVACY_REFUSAL } from './lanes';
 import { toModelMessages } from './messages';
 import { teacherInstructions } from './prompts';
 import { buildTools, claimBlock } from './tools';
-import { checkGrounding, checkPhilosopherFormat, repairPhilosopherFormat } from './validators';
+import { assessAnswer } from './validators';
 
 export interface HarnessDeps {
   settings: SettingsReader;
@@ -81,15 +82,24 @@ export async function runChatTurn(req: ChatRequest, deps: HarnessDeps, emit: (ev
   const attachments = latest.attachments ?? [];
   const hasImage = attachments.length > 0;
 
-  const finish = async (text: string, resolved: ResolvedModel | null, checks: VerificationCheck[], lane?: Verification['lane'], sources: SourceRef[] = [...ctx.sources.values()]) => {
+  const finish = async (
+    text: string,
+    resolved: ResolvedModel | null,
+    checks: VerificationCheck[],
+    lane?: Verification['lane'],
+    sources: SourceRef[] = [...ctx.sources.values()],
+    extra?: Pick<Verification, 'segments' | 'withheld'>,
+  ) => {
     const verification: Verification = {
       model: resolved?.modelId ?? 'rules',
       provider: resolved?.provider.label ?? 'Deterministic lane check',
+      providerKind: resolved?.provider.kind,
       sources,
       checks: [...capabilityChecks(ctx.denied), ...checks],
       toolCalls: ctx.toolCalls,
       handoff: ctx.handoff,
       lane,
+      ...extra,
     };
     await deps.sessions.appendTurn(req.sessionId, req.teacher, latest, text, verification, [...ctx.lessonIds]);
     emit({ type: 'done', text, verification });
@@ -133,7 +143,7 @@ export async function runChatTurn(req: ChatRequest, deps: HarnessDeps, emit: (ev
   const pool = can(req.teacher, 'lesson:support_pool') ? await deps.content.supportLessons() : await deps.content.academicLessons();
   const hits = searchLessons(pool, question, 3);
   const sourceKind = can(req.teacher, 'lesson:support_pool') ? 'support' : 'lesson';
-  for (const h of hits) ctx.addSource({ kind: sourceKind, id: h.lesson.id, title: h.lesson.title });
+  for (const h of hits) ctx.addSource({ kind: sourceKind, id: h.lesson.id, title: h.lesson.title }, `${h.lesson.title}\n${h.excerpt}`);
 
   const blocks: string[] = [];
   if (req.teacher === 'friend') {
@@ -141,9 +151,10 @@ export async function runChatTurn(req: ChatRequest, deps: HarnessDeps, emit: (ev
   } else {
     blocks.push(lessonBlock('RELEASED LESSONS', hits));
     const keys = hits.flatMap((h) => h.lesson.concepts.map(conceptKey));
-    if (can(req.teacher, 'context:student_brain')) blocks.push(await deps.brain.contextFor(keys));
-    if (can(req.teacher, 'claim:wiki_claims')) blocks.push(await claimBlock(req.teacher, { claims: deps.claims }, ctx));
+    if (can(req.teacher, 'context:student_brain')) ctx.contextBlocks.push(await deps.brain.contextFor(keys));
+    if (can(req.teacher, 'claim:wiki_claims')) await claimBlock(req.teacher, { claims: deps.claims }, ctx);
   }
+  blocks.push(...ctx.contextBlocks, ...ctx.shieldedBlocks);
 
   let webResults: WebResult[] | null = null;
   const webConsented = req.consent?.web === true;
@@ -152,7 +163,7 @@ export async function runChatTurn(req: ChatRequest, deps: HarnessDeps, emit: (ev
     try {
       webResults = await (deps.searchWeb ?? webSearch)((await deps.settings.get()).searxngUrl, question, 4);
       ctx.recordTool('web_search', `"${question.slice(0, 60)}" → ${webResults.length} results`);
-      for (const r of webResults) ctx.addSource({ kind: 'web', id: r.url, title: r.title, url: r.url });
+      for (const r of webResults) ctx.addSource({ kind: 'web', id: r.url, title: r.title, url: r.url }, `${r.title}\n${r.snippet}`);
     } catch (error) {
       log.warn('web_search_unavailable', errorFields(error));
       ctx.recordTool('web_search', 'unavailable — answering from the course only');
@@ -174,11 +185,10 @@ export async function runChatTurn(req: ChatRequest, deps: HarnessDeps, emit: (ev
     modelSettings: { temperature: 0.4 },
   });
 
+  // Factual content is held back until its checks pass: progress (statuses, tool calls) streams
+  // immediately, the model's text does not — it is buffered, checked, then served once.
   let text = '';
-  for await (const chunk of stream.textStream) {
-    text += chunk;
-    emit({ type: 'delta', text: chunk });
-  }
+  for await (const chunk of stream.textStream) text += chunk;
   text = text.trim() || "I couldn't put an answer together just now. Could you rephrase that?";
 
   // 4. What the model read out of an image is untrusted input. Re-classified, and never served
@@ -188,25 +198,43 @@ export async function runChatTurn(req: ChatRequest, deps: HarnessDeps, emit: (ev
     return finish(PRIVACY_REFUSAL, resolved, [{ id: 'privacy', label: 'Text extracted from the image refused by the privacy rule', passed: true }], 'refused');
   }
 
-  const sources = await attributeSources(text, question, [...ctx.sources.values()], deps.content);
-  const citedLessons = sources.filter((s) => (s.kind === 'lesson' || s.kind === 'support') && s.cited).length;
+  ctx.status('Checking every statement against the evidence…');
+  const permitted = new Set([...ctx.sources.keys()]);
+  const evidence = buildEvidenceSet({
+    sources: [...ctx.sources.values()],
+    evidenceText: ctx.evidenceText,
+    claimVerdicts: ctx.claimVerdicts,
+    contextBlocks: ctx.contextBlocks,
+    shieldedBlocks: ctx.shieldedBlocks,
+    foreignIds: (await deps.content.allLessons()).map((l) => l.id).filter((id) => !permitted.has(`lesson:${id}`) && !permitted.has(`support:${id}`)),
+  });
+  const assessed = assessAnswer(text, question, evidence, { teacher: req.teacher, hasImage });
 
-  const checks: VerificationCheck[] = [];
+  const sources = await attributeSources(assessed.text, question, [...ctx.sources.values()], deps.content);
+  const verified = new Set(assessed.segments.flatMap((s) => s.sources ?? []));
+  for (const s of sources) if (verified.has(s.id)) s.cited = true;
+
+  const checks: VerificationCheck[] = [...assessed.checks];
   if (req.teacher === 'philosopher') {
-    let format = checkPhilosopherFormat(text);
-    if (format.some((c) => !c.passed)) {
-      text = repairPhilosopherFormat(text, Boolean(webResults?.length));
-      format = checkPhilosopherFormat(text).map((c) => ({ ...c, detail: c.passed ? 'Repaired by validator' : c.detail }));
-    }
-    checks.push(...format);
-    checks.push({ id: 'web', label: 'Web search reachable', passed: webResults !== null, detail: webResults ? `${webResults.length} results` : 'not consented this turn' });
-  } else {
-    checks.push(checkGrounding(citedLessons, text, ctx.lessonIds.size));
-    checks.push({ id: 'released-only', label: 'Only released lessons were searched', passed: true, detail: 'Unreleased lessons are never on this device' });
+    checks.push({
+      id: 'web',
+      label: 'Web search reachable',
+      passed: !webConsented || webResults !== null,
+      detail: !webConsented ? 'not consented this turn' : webResults ? `${webResults.length} results` : 'unreachable this turn',
+    });
   }
+  checks.push({ id: 'released-only', label: 'Only released lessons were searched', passed: true, detail: 'Unreleased lessons are never on this device' });
   if (hasImage) checks.push({ id: 'vision', label: 'Image read on-device', passed: resolved.provider.kind === 'ollama', detail: resolved.label });
+  checks.push({
+    id: 'provider',
+    label: resolved.provider.kind === 'ollama' ? 'Answered by a model on this device' : 'Answered by a hosted provider — the question left this device',
+    passed: true,
+    detail: resolved.label,
+  });
 
-  await finish(text, resolved, checks, 'answered', sources);
+  // Only now does the verified text stream: the delta and the done event carry the same answer.
+  emit({ type: 'delta', text: assessed.text });
+  await finish(assessed.text, resolved, checks, 'answered', sources, { segments: assessed.segments, withheld: assessed.withheld });
 }
 
 /**

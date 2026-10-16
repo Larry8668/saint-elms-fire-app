@@ -112,7 +112,6 @@ async function ollamaStructured<T extends z.ZodTypeAny>(req: StructuredRequest<T
     reason: stopReason,
     chars: content.length,
     recovered: recovered !== null,
-    stalledAt: content.trimEnd().slice(-160),
   });
   if (recovered === null) throw new StructuredOutputError(`Model output was cut off (${stopReason}) and could not be recovered`);
   return recovered;
