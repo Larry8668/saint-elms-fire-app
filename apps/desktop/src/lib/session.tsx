@@ -1,5 +1,5 @@
 import { useQueryClient } from '@tanstack/react-query';
-import { type DevicePollResult, type DeviceProfile, type DeviceSignInStart, type EngineLoginResponse, type SessionMode } from '@sef/shared';
+import { type DevicePollResult, type DeviceProfile, type DeviceSignInStart, type EngineLoginResponse, type SessionAccess, type SessionMode } from '@sef/shared';
 import { createContext, useCallback, useContext, useEffect, useMemo, useState, type ReactNode } from 'react';
 import { toast } from 'sonner';
 import { api, setEngineSession } from './api';
@@ -11,6 +11,7 @@ export interface Session {
   token: string;
   profile: DeviceProfile;
   mode: SessionMode;
+  access?: SessionAccess;
 }
 
 type SessionState = { status: 'checking' } | { status: 'signed-out' } | { status: 'signed-in'; session: Session };
@@ -93,7 +94,7 @@ export function SessionProvider({ children }: { children: ReactNode }) {
     setEngineSession(stored.token);
     api
       .me()
-      .then((me) => activate({ ...stored, profile: me.profile, mode: me.mode }))
+      .then((me) => activate({ ...stored, profile: me.profile, mode: me.mode, access: me.access }))
       .catch((error) => {
         log.warn('session_restore_failed', { error: String(error) });
         clear('restore_failed');
@@ -102,7 +103,7 @@ export function SessionProvider({ children }: { children: ReactNode }) {
 
   const studentSession = useCallback(
     (res: EngineLoginResponse): Session => {
-      const session: Session = { kind: 'student', token: res.token, profile: res.profile, mode: res.mode };
+      const session: Session = { kind: 'student', token: res.token, profile: res.profile, mode: res.mode, access: res.access };
       log.info('signed_in', { kind: 'student', mode: res.mode, admission: res.profile.admission ?? 'legacy' });
       return session;
     },
@@ -152,7 +153,7 @@ export function SessionProvider({ children }: { children: ReactNode }) {
     if (state.status !== 'signed-in') return null;
     try {
       const me = await api.me();
-      const next = { ...state.session, profile: me.profile, mode: me.mode };
+      const next = { ...state.session, profile: me.profile, mode: me.mode, access: me.access };
       activate(next);
       return next;
     } catch (error) {

@@ -48,6 +48,8 @@ import { admissionErrorStatus } from './me';
 /** Sensitive staff mutations need a session created within the last 30 minutes. */
 const FRESH_MINUTES = 30;
 const MUTATION = { staff: 'any' as const, maxSessionAgeMinutes: FRESH_MINUTES };
+/** Staff membership administration is owner-only; the session must also be fresh. */
+const OWNER_MUTATION = { staff: 'owner' as const, maxSessionAgeMinutes: FRESH_MINUTES };
 
 function toRow(data: AdminStudentRowData): AdminStudentRow {
   return {
@@ -169,12 +171,9 @@ export function staffRoutes(deps: UniDeps) {
     return c.json(rows.map(rowToMembership));
   });
 
-  app.post('/staff', requireAdmission(deps, { staff: 'any', maxSessionAgeMinutes: FRESH_MINUTES }), async (c) => {
+  app.post('/staff', requireAdmission(deps, OWNER_MUTATION), async (c) => {
     const parsed = StaffInviteRequestSchema.safeParse(await c.req.json().catch(() => null));
     if (!parsed.success) return c.json({ error: 'invalid_request', issues: parsed.error.issues }, 400);
-    if (parsed.data.role === 'owner' && !c.get('admission').staffRoles.includes('owner')) {
-      return c.json({ error: 'forbidden', message: 'Only an owner can grant the owner role' }, 403);
-    }
     try {
       const membership = await grantStaffMembership(deps.pool!, {
         email: parsed.data.email,
@@ -187,14 +186,11 @@ export function staffRoutes(deps: UniDeps) {
     }
   });
 
-  app.patch('/staff/:id', requireAdmission(deps, { staff: 'any', maxSessionAgeMinutes: FRESH_MINUTES }), async (c) => {
+  app.patch('/staff/:id', requireAdmission(deps, OWNER_MUTATION), async (c) => {
     const parsed = StaffUpdateRequestSchema.safeParse(await c.req.json().catch(() => null));
     if (!parsed.success) return c.json({ error: 'invalid_request', issues: parsed.error.issues }, 400);
     const target = await getStaffMembership(deps.pool!, c.req.param('id'));
     if (!target) return c.json({ error: 'not_found' }, 404);
-    if (target.role === 'owner' && !c.get('admission').staffRoles.includes('owner')) {
-      return c.json({ error: 'forbidden', message: 'Only an owner can change an owner membership' }, 403);
-    }
     try {
       const membership = await updateStaffStatus(deps.pool!, {
         membershipId: target.id,
@@ -238,7 +234,7 @@ export function staffRoutes(deps: UniDeps) {
     return c.json(body);
   });
 
-  app.post('/erasure-requests/:id/confirm', requireAdmission(deps, { staff: 'owner', maxSessionAgeMinutes: FRESH_MINUTES }), async (c) => {
+  app.post('/erasure-requests/:id/confirm', requireAdmission(deps, OWNER_MUTATION), async (c) => {
     try {
       await confirmErasure(deps.pool!, {
         requestId: c.req.param('id'),

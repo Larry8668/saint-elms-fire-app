@@ -378,33 +378,33 @@ test('withdrawal and reapplication keep one row per programme', testOptions, asy
   });
 });
 
-test('staff capabilities: last-owner protection, role gates and fresh-session requirement', testOptions, async () => {
+test('staff capabilities: last-owner protection, owner-only administration and fresh-session requirement', testOptions, async () => {
   await withAuthSchema(async (context) => {
     const extra = await staticDeps();
     mount(context.app, deps(context, extra));
     const { cookie: ownerCookie, userId: ownerId } = await staffToken(context, 'the-owner@example.test');
-    const { cookie: registrarCookie, userId: registrarId } = await staffToken(context, 'reg@example.test', 'registrar');
+    const { cookie: registrarCookie } = await staffToken(context, 'reg@example.test', 'registrar');
 
-    // Non-owner staff cannot grant the owner role.
-    const escalate = await authed(context, '/v1/admin/staff', registrarCookie, {
-      method: 'POST',
-      headers: { 'content-type': 'application/json' },
-      body: JSON.stringify({ schemaVersion: CONTRACT_VERSION, email: 'reg@example.test', role: 'owner' }),
-    });
-    assert.equal(escalate.status, 403);
+    const inviteAs = (cookie: string, email: string, role: string) =>
+      authed(context, '/v1/admin/staff', cookie, {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ schemaVersion: CONTRACT_VERSION, email, role }),
+      });
+
+    // Staff administration is owner-only: a registrar cannot grant any role.
+    assert.equal((await inviteAs(registrarCookie, 'reg@example.test', 'owner')).status, 403);
+    assert.equal((await inviteAs(registrarCookie, 'plain@example.test', 'support')).status, 403);
 
     // A plain student session cannot touch staff APIs at all.
     const studentCookie = await signUpVerified(context, 'plain@example.test');
     const asStudent = await authed(context, '/v1/admin/staff', studentCookie);
     assert.equal(asStudent.status, 403);
 
-    // Registrar grants registrar — allowed.
-    const invite = await authed(context, '/v1/admin/staff', registrarCookie, {
-      method: 'POST',
-      headers: { 'content-type': 'application/json' },
-      body: JSON.stringify({ schemaVersion: CONTRACT_VERSION, email: 'plain@example.test', role: 'support' }),
-    });
+    // The owner grants support — allowed.
+    const invite = await inviteAs(ownerCookie, 'plain@example.test', 'support');
     assert.equal(invite.status, 201);
+    const supportMembership = (await invite.json()) as { id: string };
 
     // The last owner cannot be suspended.
     const ownerMembership = await context.pool.query<{ id: string }>(
@@ -417,25 +417,61 @@ test('staff capabilities: last-owner protection, role gates and fresh-session re
     });
     assert.equal(lastOwner.status, 409);
 
-    // Registrar cannot modify the owner's membership even when more owners exist.
+    // A registrar cannot modify any membership — an owner's or a plain staff one.
     await signUpVerified(context, 'second-owner@example.test');
     await grantStaffMembership(context.pool, { email: 'second-owner@example.test', role: 'owner', actor: 'bootstrap' });
-    const asRegistrar = await authed(context, `/v1/admin/staff/${ownerMembership.rows[0]!.id}`, registrarCookie, {
-      method: 'PATCH',
-      headers: { 'content-type': 'application/json' },
-      body: JSON.stringify({ schemaVersion: CONTRACT_VERSION, status: 'suspended', reason: 'test' }),
-    });
-    assert.equal(asRegistrar.status, 403);
+    const patchAs = (cookie: string, id: string) =>
+      authed(context, `/v1/admin/staff/${id}`, cookie, {
+        method: 'PATCH',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ schemaVersion: CONTRACT_VERSION, status: 'suspended', reason: 'test' }),
+      });
+    assert.equal((await patchAs(registrarCookie, ownerMembership.rows[0]!.id)).status, 403);
+    assert.equal((await patchAs(registrarCookie, supportMembership.id)).status, 403);
+    // The owner can, once more than one owner exists.
+    assert.equal((await patchAs(ownerCookie, supportMembership.id)).status, 200);
 
     // Aged sessions must re-authenticate before mutating.
-    await context.pool.query(`UPDATE session SET "createdAt" = now() - interval '1 hour' WHERE "userId" = $1`, [registrarId]);
-    const stale = await authed(context, '/v1/admin/staff', registrarCookie, {
+    await context.pool.query(`UPDATE session SET "createdAt" = now() - interval '1 hour' WHERE "userId" = $1`, [ownerId]);
+    const stale = await authed(context, '/v1/admin/staff', ownerCookie, {
       method: 'POST',
       headers: { 'content-type': 'application/json' },
       body: JSON.stringify({ schemaVersion: CONTRACT_VERSION, email: 'plain@example.test', role: 'lecturer' }),
     });
     assert.equal(stale.status, 403);
     assert.equal(((await stale.json()) as { error: string }).error, 'reauthentication_required');
+  });
+});
+
+test('concurrent profile patches conflict instead of silently losing an update', testOptions, async () => {
+  await withAuthSchema(async (context) => {
+    const extra = await staticDeps();
+    mount(context.app, deps(context, extra));
+    const { cookie: ownerCookie } = await staffToken(context, 'owner-patch@example.test');
+    const studentCookie = await signUpVerified(context, 'patched@example.test', 'Patch Me');
+    await apply(context, studentCookie);
+
+    const list = await authed(context, '/v1/admin/students?search=patched@example', ownerCookie);
+    const page = (await list.json()) as { rows: Array<{ profileId: string; version: number }> };
+    const target = page.rows[0]!;
+
+    const patch = (preferredName: string) =>
+      authed(context, `/v1/admin/students/${target.profileId}`, ownerCookie, {
+        method: 'PATCH',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({
+          schemaVersion: CONTRACT_VERSION,
+          preferredName,
+          reason: 'rename',
+          expectedVersion: target.version,
+        }),
+      });
+    const [a, b] = await Promise.all([patch('First'), patch('Second')]);
+    assert.deepEqual([a.status, b.status].sort(), [200, 409], 'exactly one concurrent patch lands');
+
+    const after = await authed(context, `/v1/admin/students/${target.profileId}`, ownerCookie);
+    const row = (await after.json()) as { version: number };
+    assert.equal(row.version, target.version + 1, 'the version moved exactly once');
   });
 });
 

@@ -13,7 +13,13 @@ import { ENGINE_URL, MAILPIT_URL, UNI_URL, type E2EStatus } from './support';
  *   device sign-in → course install → source ingest → keeper compile → review/accept →
  *   tutor turn (live local model) → save the answer → explore from the wiki →
  *   publish to the cohort → a second student imports → vault export → restore →
- *   account switching and offline unlock on the same engine.
+ *   source erasure with an honest tombstone → account switching and offline unlock
+ *   on the same engine.
+ *
+ * Only the steps that genuinely need a local model — keeper compile, the tutor turn,
+ * save-to-wiki, anchored explore, and publish/import (its payload is a compiled page) —
+ * skip, with the reason, when the configured model is not pulled. Everything else,
+ * including account switching, vault export/restore and the erasure drill, always runs.
  *
  * Nothing here is mocked: mail goes through SMTP to Mailpit, the device grant is the
  * uni's real RFC 8628 endpoints, and the keeper/tutor calls hit the local model the
@@ -26,8 +32,8 @@ const DB_URL = process.env.E2E_DATABASE_URL ?? 'postgres://sef:sef-uni-local-dev
 const PASSWORD = 'release-drill-password-1';
 const PROGRAMME = 'bsc-physics-mathematics-astrophysics';
 const COHORT = 'bsc-pma-2026';
-/** The model the drill points the engine at; overridable so a machine without it still runs the deterministic chain. */
-const LIVE_MODEL = process.env.E2E_LIVE_MODEL ?? 'gemma3:1b';
+/** The model the drill points the engine at — the project model. Override E2E_LIVE_MODEL on a machine without it pulled. */
+const LIVE_MODEL = process.env.E2E_LIVE_MODEL ?? 'gemma4:e4b';
 const REPO = path.resolve(import.meta.dirname, '..');
 
 interface DrilledAccount {
@@ -189,9 +195,6 @@ const chatTurn = async (session: EngineSession, sessionId: string, teacher: stri
 };
 
 const ollamaHas = async (model: string): Promise<boolean> => {
-  const settings = await fetch(`${ENGINE_URL}/api/health`).then((r) => r.json()).catch(() => null) as {
-    models?: Record<string, { available?: boolean; model?: string }>;
-  } | null;
   try {
     const tags = await fetch(`${process.env.E2E_OLLAMA_URL ?? 'http://localhost:11434'}/api/tags`, { signal: AbortSignal.timeout(3_000) }).then((r) => r.json());
     return JSON.stringify(tags).includes(`"${model}`);
@@ -287,18 +290,24 @@ test.describe('release drill — the full student lifecycle', () => {
     const jobId = (ingested.body as { jobId: string }).jobId;
     const sourceId = (ingested.body as { source: { id: string } }).source.id;
 
-    // ---- model-dependent half: keeper compile, tutor turn, anchored explore, shares ----
+    // ---- model-dependent steps: keeper compile, tutor turn, save, anchored explore ----
+    // Only what genuinely needs a model is gated; everything file- or account-level below
+    // (student B, account switching, export/restore, erasure) runs either way.
     const liveModel = await ollamaHas(LIVE_MODEL);
-    test.info().annotations.push({ type: 'model', description: `live model steps used ${LIVE_MODEL}: ${liveModel ? 'ran' : 'SKIPPED — not pulled locally'}` });
+    test.info().annotations.push({
+      type: 'model',
+      description: liveModel
+        ? `live model steps used ${LIVE_MODEL}: ran`
+        : `live model steps SKIPPED — ${LIVE_MODEL} is not pulled locally (pull it, or set E2E_LIVE_MODEL to a pulled model)`,
+    });
 
     let sharedPageId: string | null = null;
     if (liveModel) {
       // Point every role at the model this host actually has, through the real settings path.
       const settingsBody = (await api(aliceSession, 'GET', '/api/settings')).body as { providers: Array<{ id: string }> };
       const providerId = settingsBody.providers[0]?.id ?? 'ollama';
-      // thinking is a real settings toggle: gemma3 has no thinking mode and Ollama
-      // rejects `think` outright on such models — the drill turns it off, exactly as a
-      // student on a non-thinking model would.
+      // thinking is a real settings toggle: a model without a thinking mode makes Ollama
+      // reject `think` outright — the drill turns it off, exactly as a student would.
       const patched = await api(aliceSession, 'PUT', '/api/settings', {
         roles: {
           tutor: { provider: providerId, model: LIVE_MODEL },
@@ -354,75 +363,140 @@ test.describe('release drill — the full student lifecycle', () => {
       } else {
         test.info().annotations.push({ type: 'note', description: 'anchor catalogue empty — no course-linked page survived compile' });
       }
+    }
 
-      // publish: preview is the payload; the uni stores it against the cohort.
-      if (sharedPageId) {
-        const prepared = await api(aliceSession, 'POST', '/api/shares/prepare', { pageId: sharedPageId });
-        assert.equal(prepared.status, 200, `prepare failed: ${JSON.stringify(prepared.body)}`);
-        const request = (prepared.body as { request: unknown }).request;
-        const published = await api(aliceSession, 'POST', '/api/shares/publish', request);
-        assert.equal(published.status, 200, `publish failed: ${JSON.stringify(published.body)}`);
-        const shareId = (published.body as { share: { id: string } }).share.id;
+    // ---- student B: same pipeline end, deterministic — no model involved ----
+    const bob = await registerVerifiedStudent(`bob-${Date.now()}@release.test`, 'Bob Release');
+    await applyForProgramme(bob);
+    const bobRow = ((await staffGet(`/v1/admin/students?search=${encodeURIComponent(bob.email)}`)) as { rows: Array<{ enrolment: { id: string; version: number } | null }> }).rows[0];
+    assert.ok(bobRow?.enrolment);
+    const bobDecision = await ops.ctx.post(`/v1/admin/enrolments/${bobRow.enrolment.id}/decision`, {
+      data: { schemaVersion: 2, expectedVersion: bobRow.enrolment.version, action: 'approve', reason: 'Release drill admission.', cohortId: COHORT },
+    });
+    assert.equal(bobDecision.status(), 200, `bob decision failed: ${await bobDecision.text()}`);
+    const bobSession = await deviceSignIn(bob);
 
-        // ---- student B: same pipeline end, reading the cohort feed ----
-        const bob = await registerVerifiedStudent(`bob-${Date.now()}@release.test`, 'Bob Release');
-        await applyForProgramme(bob);
-        const bobRow = ((await staffGet(`/v1/admin/students?search=${encodeURIComponent(bob.email)}`)) as { rows: Array<{ enrolment: { id: string; version: number } | null }> }).rows[0];
-        assert.ok(bobRow?.enrolment);
-        const bobDecision = await ops.ctx.post(`/v1/admin/enrolments/${bobRow.enrolment.id}/decision`, {
-          data: { schemaVersion: 2, expectedVersion: bobRow.enrolment.version, action: 'approve', reason: 'Release drill admission.', cohortId: COHORT },
-        });
-        assert.equal(bobDecision.status(), 200, `bob decision failed: ${await bobDecision.text()}`);
-        const bobSession = await deviceSignIn(bob);
+    // account switching: both engine sessions stay live and resolve to their own profile.
+    const meA = (await api(aliceSession, 'GET', '/api/auth/me')).body as { profile: { id: string } };
+    const meB = (await api(bobSession, 'GET', '/api/auth/me')).body as { profile: { id: string } };
+    assert.notEqual(meA.profile.id, meB.profile.id);
 
-        // Bob's workspace has its own settings: the imported share compiles under them.
-        const bobRoles = await api(bobSession, 'PUT', '/api/settings', {
-          roles: {
-            tutor: { provider: providerId, model: LIVE_MODEL },
-            brain: { provider: providerId, model: LIVE_MODEL },
-            vision: { provider: providerId, model: LIVE_MODEL },
-          },
-          thinking: false,
-        });
-        assert.equal(bobRoles.status, 200);
+    // ---- publish/import: the payload is a page the keeper compiled, so this is model-bound ----
+    if (sharedPageId) {
+      const prepared = await api(aliceSession, 'POST', '/api/shares/prepare', { pageId: sharedPageId });
+      assert.equal(prepared.status, 200, `prepare failed: ${JSON.stringify(prepared.body)}`);
+      const request = (prepared.body as { request: unknown }).request;
+      const published = await api(aliceSession, 'POST', '/api/shares/publish', request);
+      assert.equal(published.status, 200, `publish failed: ${JSON.stringify(published.body)}`);
+      const shareId = (published.body as { share: { id: string } }).share.id;
 
-        // account switching: both engine sessions stay live and resolve to their own profile.
-        const meA = (await api(aliceSession, 'GET', '/api/auth/me')).body as { profile: { id: string } };
-        const meB = (await api(bobSession, 'GET', '/api/auth/me')).body as { profile: { id: string } };
-        assert.notEqual(meA.profile.id, meB.profile.id);
+      // Bob's workspace has its own settings: the imported share compiles under them.
+      const bobSettings = (await api(bobSession, 'GET', '/api/settings')).body as { providers: Array<{ id: string }> };
+      const bobProviderId = bobSettings.providers[0]?.id ?? 'ollama';
+      const bobRoles = await api(bobSession, 'PUT', '/api/settings', {
+        roles: {
+          tutor: { provider: bobProviderId, model: LIVE_MODEL },
+          brain: { provider: bobProviderId, model: LIVE_MODEL },
+          vision: { provider: bobProviderId, model: LIVE_MODEL },
+        },
+        thinking: false,
+      });
+      assert.equal(bobRoles.status, 200);
 
-        const feed = await api(bobSession, 'GET', '/api/shares/feed');
-        assert.equal(feed.status, 200);
-        const feedBody = feed.body as { state: string; items: Array<{ id: string }> };
-        assert.equal(feedBody.state, 'ok', `feed state: ${feedBody.state}`);
-        const item = feedBody.items.find((i) => i.id === shareId);
-        assert.ok(item, "Alice's share did not reach Bob's cohort feed");
+      const feed = await api(bobSession, 'GET', '/api/shares/feed');
+      assert.equal(feed.status, 200);
+      const feedBody = feed.body as { state: string; items: Array<{ id: string }> };
+      assert.equal(feedBody.state, 'ok', `feed state: ${feedBody.state}`);
+      const item = feedBody.items.find((i) => i.id === shareId);
+      assert.ok(item, "Alice's share did not reach Bob's cohort feed");
 
-        const imported = await api(bobSession, 'POST', `/api/shares/${shareId}/import`);
-        assert.equal(imported.status, 200, `import failed: ${JSON.stringify(imported.body)}`);
-        const bobProposal = (imported.body as { proposalId: string | null }).proposalId;
-        if (bobProposal) {
-          const acceptedImport = await api(bobSession, 'POST', `/api/proposals/${bobProposal}/accept`, {});
-          assert.equal(acceptedImport.status, 200);
-        }
-
-        // ---- export/restore: Alice's vault crosses into Bob's workspace intact ----
-        const exported = await api(aliceSession, 'POST', '/api/vault/export', {});
-        assert.equal(exported.status, 200);
-        const archive = exported.body;
-        const previewed = await api(bobSession, 'POST', '/api/vault/import/preview', { archive });
-        assert.equal(previewed.status, 200);
-        assert.ok(['ready', 'conflicts'].includes((previewed.body as { state: string }).state));
-        const restored = await api(bobSession, 'POST', '/api/vault/import', { archive, overwritePageIds: [] });
-        assert.equal(restored.status, 200, `restore failed: ${JSON.stringify(restored.body)}`);
-        assert.equal((restored.body as { committed: boolean }).committed, true);
-
-        await api(bobSession, 'POST', '/api/auth/logout');
+      const imported = await api(bobSession, 'POST', `/api/shares/${shareId}/import`);
+      assert.equal(imported.status, 200, `import failed: ${JSON.stringify(imported.body)}`);
+      const bobProposal = (imported.body as { proposalId: string | null }).proposalId;
+      if (bobProposal) {
+        const acceptedImport = await api(bobSession, 'POST', `/api/proposals/${bobProposal}/accept`, {});
+        assert.equal(acceptedImport.status, 200);
       }
+    } else {
+      test.info().annotations.push({ type: 'note', description: 'publish/import needs a page the keeper compiled — skipped without a local model' });
+    }
 
-      // source erasure leaves an honest record: dependents are reported, not orphaned silently.
+    // ---- export/restore: Alice's vault crosses into Bob's workspace intact ----
+    // The archive always carries the ingested note's record and bytes; when the model ran
+    // it carries the compiled pages as well.
+    const exported = await api(aliceSession, 'POST', '/api/vault/export', {});
+    assert.equal(exported.status, 200);
+    const archive = exported.body;
+    const previewed = await api(bobSession, 'POST', '/api/vault/import/preview', { archive });
+    assert.equal(previewed.status, 200);
+    assert.ok(['ready', 'conflicts'].includes((previewed.body as { state: string }).state));
+    const restored = await api(bobSession, 'POST', '/api/vault/import', { archive, overwritePageIds: [] });
+    assert.equal(restored.status, 200, `restore failed: ${JSON.stringify(restored.body)}`);
+    assert.equal((restored.body as { committed: boolean }).committed, true);
+
+    await api(bobSession, 'POST', '/api/auth/logout');
+
+    // ---- source erasure: the student's own delete, on a note only this drill uses ----
+    const eraseNote = Buffer.from('Release drill erasure note: a fact I want gone — the lab is on Thursday.', 'utf8').toString('base64');
+    const eraseIngested = await api(aliceSession, 'POST', '/api/sources', {
+      kind: 'note',
+      title: 'Erase-me note (release drill)',
+      mediaType: 'text/plain',
+      data: eraseNote,
+    });
+    assert.equal(eraseIngested.status, 201, `erasure-note ingest failed: ${JSON.stringify(eraseIngested.body)}`);
+    const eraseSource = (eraseIngested.body as { source: { id: string; revision: string } }).source;
+
+    // Nothing cites it yet: dependents are empty, the erase answers with what it orphaned.
+    const noDependents = await api(aliceSession, 'GET', `/api/sources/${eraseSource.id}/dependents`);
+    assert.equal(noDependents.status, 200);
+    assert.equal((noDependents.body as { pages: unknown[] }).pages.length, 0);
+    const erased = await api(aliceSession, 'POST', `/api/sources/${eraseSource.id}/erase`, { expectedRevision: eraseSource.revision });
+    assert.equal(erased.status, 200, `erase failed: ${JSON.stringify(erased.body)}`);
+    assert.equal((erased.body as { erased: boolean }).erased, true);
+    assert.equal((erased.body as { dependents: unknown[] }).dependents.length, 0);
+    // The record is honestly gone — a read and a second erase both say so.
+    assert.equal((await api(aliceSession, 'GET', `/api/sources/${eraseSource.id}`)).status, 404);
+    assert.equal((await api(aliceSession, 'POST', `/api/sources/${eraseSource.id}/erase`, {})).status, 404);
+    // And the delete is recorded, not hidden: a tombstone travels with the portable vault.
+    const afterErase = await api(aliceSession, 'POST', '/api/vault/export', {});
+    assert.equal(afterErase.status, 200);
+    const tombstone = (afterErase.body as { files: Array<{ path: string; content: string }> }).files
+      .find((f) => f.path === `.meta/tombstones/${eraseSource.id}.json`);
+    assert.ok(tombstone, 'the erasure tombstone travels with the vault export');
+    const marker = JSON.parse(tombstone!.content) as { id: string; erasedAt?: string };
+    assert.equal(marker.id, eraseSource.id);
+    assert.ok(marker.erasedAt, 'the tombstone records when the source was erased');
+
+    // Erasure with dependents: a compiled page that cited the F=ma note keeps the citation
+    // and reads it honestly — missing from the catalogue, withheld from answers.
+    if (sharedPageId) {
       const dependents = await api(aliceSession, 'GET', `/api/sources/${sourceId}/dependents`);
       assert.equal(dependents.status, 200);
+      const dependentPages = (dependents.body as { pages: Array<{ id: string }> }).pages;
+      if (dependentPages.length > 0) {
+        const record = await api(aliceSession, 'GET', `/api/sources/${sourceId}`);
+        assert.equal(record.status, 200);
+        const revision = (record.body as { record: { revision: string } }).record.revision;
+        const erasedNote = await api(aliceSession, 'POST', `/api/sources/${sourceId}/erase`, { expectedRevision: revision });
+        assert.equal(erasedNote.status, 200, `erase failed: ${JSON.stringify(erasedNote.body)}`);
+        assert.equal((erasedNote.body as { erased: boolean }).erased, true);
+        assert.ok((erasedNote.body as { dependents: unknown[] }).dependents.length >= 1, 'the erase answer names the orphaned pages');
+
+        const view = await api(aliceSession, 'GET', `/api/wiki/pages/${dependentPages[0]!.id}`);
+        assert.equal(view.status, 200);
+        const page = view.body as {
+          missingSourceIds: string[];
+          claims: Array<{ assertable: boolean; reason?: string; citations: Array<{ sourceId: string }> }>;
+        };
+        assert.ok(page.missingSourceIds.includes(sourceId), 'an erased source is named as missing, not hidden');
+        for (const claim of page.claims.filter((c) => c.citations.some((citation) => citation.sourceId === sourceId))) {
+          assert.equal(claim.assertable, false, 'a claim resting on an erased source is withheld');
+          assert.equal(claim.reason, 'unresolved_source');
+        }
+      } else {
+        test.info().annotations.push({ type: 'note', description: 'no compiled page cites the ingested note — dependent-erasure check skipped' });
+      }
     }
 
     // ---- offline unlock: the entitlement fetched at device sign-in opens the vault offline ----

@@ -99,6 +99,8 @@ services:
       SEARXNG_URL: http://searxng:8080
       OLLAMA_URL: ${OLLAMA_URL:-http://host.docker.internal:11434}
       COURSEWARE_DIR: /courseware
+      # Seeding is opt-in in the engine; the demo stack opts in, overridable from .env.
+      SEED_DEMO: ${SEED_DEMO:-true}
     extra_hosts:
       - "host.docker.internal:host-gateway"
     volumes:

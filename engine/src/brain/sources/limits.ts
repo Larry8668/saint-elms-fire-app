@@ -35,6 +35,25 @@ export const ACCEPTED_MEDIA = {
 
 export type AcceptedKind = keyof typeof ACCEPTED_MEDIA;
 
+/** The distinct media types anything may declare — the set ACCEPTED_MEDIA points into. */
+export const ACCEPTED_MEDIA_TYPES: ReadonlySet<string> = new Set<string>(Object.values(ACCEPTED_MEDIA));
+
+/**
+ * The check behind the allowlist, run before bytes are stored or served. Parameters and
+ * case are tolerated (`Text/Markdown; charset=utf-8` is markdown); the base type must be
+ * one of the listed few, because the stored type later decides extraction and headers.
+ */
+export function checkMediaType(mediaType: string): Rejection | null {
+  const base = mediaType.split(';')[0]!.trim().toLowerCase();
+  if (!base || !ACCEPTED_MEDIA_TYPES.has(base)) {
+    return {
+      code: 'unsupported_media',
+      message: `Files of type '${mediaType.trim() || 'unknown'}' cannot be kept here — notes and plain text, PDFs, and PNG or JPEG images only.`,
+    };
+  }
+  return null;
+}
+
 /**
  * Overrides for tests and for a deliberately stricter deployment. Typed as plain numbers
  * rather than derived from the `as const` defaults, so a caller can actually pass a value

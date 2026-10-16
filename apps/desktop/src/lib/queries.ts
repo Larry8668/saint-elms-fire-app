@@ -14,6 +14,7 @@ export const keys = {
   scoped: {
     settings: (p: string) => ['profile', p, 'settings'] as const,
     sync: (p: string) => ['profile', p, 'sync'] as const,
+    programme: (p: string) => ['profile', p, 'programme'] as const,
     library: (p: string) => ['profile', p, 'library'] as const,
     lesson: (p: string, id: string) => ['profile', p, 'lesson', id] as const,
     graph: (p: string) => ['profile', p, 'graph'] as const,
@@ -97,6 +98,12 @@ export function useInvalidateSource(id: string) {
 export const useHealth = () => useQuery({ queryKey: keys.health, queryFn: api.health, refetchInterval: 15_000, retry: false });
 export const useSettings = () => useQuery({ queryKey: keys.scoped.settings(profile()), queryFn: api.settings });
 export const useSyncStatus = () => useQuery({ queryKey: keys.scoped.sync(profile()), queryFn: api.syncStatus });
+/**
+ * The published curriculum. Fetched only when its tab is shown, and a refusal is left on
+ * screen for the student to retry by hand — an unavailable programme is never polled.
+ */
+export const useProgramme = (enabled = true) =>
+  useQuery({ queryKey: keys.scoped.programme(profile()), queryFn: api.programme, enabled, retry: false });
 export const useLibrary = () => useQuery({ queryKey: keys.scoped.library(profile()), queryFn: api.library });
 export const useLesson = (id: string | null) =>
   useQuery({ queryKey: keys.scoped.lesson(profile(), id ?? ''), queryFn: () => api.lesson(id!), enabled: Boolean(id) });

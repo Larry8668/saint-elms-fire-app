@@ -100,8 +100,8 @@ export function useDecideProposal() {
   const invalidate = usePeerInvalidation();
   const invalidateBrain = useInvalidateBrain();
   return useMutation({
-    mutationFn: async ({ id, decision, note }: { id: string; decision: 'accept' | 'reject'; note?: string }) =>
-      decision === 'accept' ? api.acceptProposal(id) : api.rejectProposal(id, note),
+    mutationFn: async ({ id, decision, note, pageIds }: { id: string; decision: 'accept' | 'reject'; note?: string; pageIds?: string[] }) =>
+      decision === 'accept' ? api.acceptProposal(id, pageIds ? { pageIds } : undefined) : api.rejectProposal(id, note),
     onSuccess: (_r, { decision }) => {
       invalidate();
       invalidateBrain();

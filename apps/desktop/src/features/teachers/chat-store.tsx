@@ -59,8 +59,8 @@ interface ChatStore {
   retry: (teacher: TeacherId) => Promise<void>;
   stop: (teacher: TeacherId) => void;
   reset: (teacher: TeacherId) => void;
-  /** Records an accepted hand-off with the engine and points the target thread at the successor. */
-  handoff: (from: TeacherId, to: TeacherId) => Promise<void>;
+  /** Records an accepted hand-off with the engine and points the target thread at the successor; false when it could not be recorded, so the caller stays put. */
+  handoff: (from: TeacherId, to: TeacherId) => Promise<boolean>;
   /** Opens a saved conversation from this device. */
   open: (teacher: TeacherId, sessionId: string) => Promise<void>;
   remove: (teacher: TeacherId, sessionId: string) => Promise<void>;
@@ -153,6 +153,15 @@ export function ChatProvider({ profileId, children }: { profileId: string; child
       if (id) void load(teacher, id, { quiet: true });
     }
   }, [active, load]);
+
+  // Sign-out and profile switches remount this provider (Root keys the tree by profile id):
+  // a stream belongs to the student who started it, so it dies here rather than leaking on.
+  useEffect(() => {
+    const controllers = aborts.current;
+    return () => {
+      for (const controller of Object.values(controllers)) controller?.abort();
+    };
+  }, []);
 
   const send = useCallback<ChatStore['send']>(
     async (teacher, text, attachments) => {
@@ -291,15 +300,17 @@ export function ChatProvider({ profileId, children }: { profileId: string; child
   const handoff = useCallback<ChatStore['handoff']>(
     async (from, to) => {
       const sessionId = threadsRef.current[from].sessionId;
-      if (!sessionId) return; // nothing was ever said on the source thread — the view just switches
+      if (!sessionId) return true; // nothing was ever said on the source thread — the view just switches
       try {
         const next = await conversationApi.handoff(sessionId, to, 'the student accepted a hand-off');
         update(to, () => ({ sessionId: next.sessionId, messages: [], busy: false }));
         active.set(to, next.sessionId);
         log.info('chat_handoff_recorded', { from, to, sessionId: next.sessionId });
+        return true;
       } catch (error) {
         log.warn('chat_handoff_failed', { from, to, error: String(error) });
         toast.error('The hand-off could not be recorded, so the original conversation stays open.');
+        return false;
       }
     },
     [active, update],

@@ -23,6 +23,7 @@ import { readBytes, readText } from '../../lib/fs';
 import { sha256Hex } from '../../lib/hash';
 import { renderIndex, type IndexEntry } from '../index-format';
 import { renderLogEntry } from '../log-format';
+import { checkMediaType } from '../sources/limits';
 import { VaultSchemaError } from '../vault-errors';
 import type { JournalStep } from '../vault-journal';
 import {
@@ -314,6 +315,13 @@ export class VaultPortabilityService {
       const record = parseJson(file.content, SourceRecordSchema);
       if (!record || record.id !== area.id) {
         warnings.push(`Source record ${file.path} is not a valid record and will not be restored.`);
+        invalidRecordPaths.add(file.path);
+        continue;
+      }
+      // The stored media type later reaches the raw route's Content-Type decision, so an
+      // archive cannot plant one this engine would never serve.
+      if (checkMediaType(record.mediaType)) {
+        warnings.push(`Source record ${file.path} declares media type '${record.mediaType}', which this engine does not accept, and will not be restored.`);
         invalidRecordPaths.add(file.path);
         continue;
       }

@@ -1,10 +1,11 @@
 import type { ShareImportResult } from '@sef/shared';
-import { AlertTriangle, Check, X } from 'lucide-react';
+import { AlertTriangle, Check, ShieldCheck, X } from 'lucide-react';
 import { useState } from 'react';
 import { Button } from '@/components/ui/button';
 import { Badge, Panel } from '@/components/ui/primitives';
 import { Dialog } from '@/components/ui/overlays';
 import { SkeletonText } from '@/components/ui/primitives';
+import { cn } from '@/lib/cn';
 import { useProposalPreview } from '@/lib/queries';
 import { useDecideProposal } from './peer-queries';
 
@@ -19,13 +20,18 @@ export function ImportReview({ result, onClose }: { result: ShareImportResult; o
   const proposal = useProposalPreview(result.proposalId);
   const decide = useDecideProposal();
   const [note, setNote] = useState('');
+  const [deselected, setDeselected] = useState<Set<string>>(new Set());
+
+  const pages = proposal.data?.pages ?? [];
+  const selectedIds = pages.filter((p) => !deselected.has(p.id)).map((p) => p.id);
+  const partial = deselected.size > 0 && selectedIds.length > 0;
 
   const done = () => {
     onClose();
   };
 
   return (
-    <Dialog open onOpenChange={(open) => !open && onClose()} title="Review import" description="This is what would change in your brain. Nothing is applied until you accept.">
+    <Dialog open onOpenChange={(open) => !open && onClose()} title="Review import" description="This is what would change in your brain. Nothing is applied until you accept — untick a page to keep it out.">
       {result.proposalId === null && (
         <Panel className="p-4 text-sm text-night-300">
           {result.reused
@@ -59,30 +65,67 @@ export function ImportReview({ result, onClose }: { result: ShareImportResult; o
           )}
 
           <div className="space-y-2">
-            {proposal.data.pages.map((page) => (
-              <Panel key={page.id} className="p-4">
-                <div className="flex items-center justify-between gap-3">
-                  <div className="min-w-0">
-                    <div className="truncate text-[14px] font-medium text-night-100">{page.title}</div>
-                    <div className="text-[12px] text-night-500">
-                      {page.id} · {page.kind}
-                    </div>
-                  </div>
-                  <Badge tone={CHANGE_TONE[page.change]}>{page.change}</Badge>
-                </div>
-                <p className="mt-2 text-[13px] text-night-400">{page.summaryAfter}</p>
-                {page.summaryBefore && page.summaryBefore !== page.summaryAfter && (
-                  <p className="mt-1 text-[12px] text-night-600 line-through">{page.summaryBefore}</p>
-                )}
-              </Panel>
-            ))}
+            {pages.map((page) => {
+              const checked = !deselected.has(page.id);
+              return (
+                <Panel key={page.id} className={cn('p-4 transition', !checked && 'opacity-50')}>
+                  <label className="flex cursor-pointer items-start gap-3">
+                    <input
+                      type="checkbox"
+                      checked={checked}
+                      onChange={() =>
+                        setDeselected((prev) => {
+                          const next = new Set(prev);
+                          if (next.has(page.id)) next.delete(page.id);
+                          else next.add(page.id);
+                          return next;
+                        })
+                      }
+                      className="mt-0.5 size-4 shrink-0 accent-beacon-500"
+                      aria-label={`Apply changes to ${page.title}`}
+                    />
+                    <span className="min-w-0 flex-1">
+                      <span className="flex items-center justify-between gap-3">
+                        <span className="min-w-0">
+                          <span className="block truncate text-[14px] font-medium text-night-100">{page.title}</span>
+                          <span className="text-[12px] text-night-500">
+                            {page.id} · {page.kind}
+                          </span>
+                        </span>
+                        <Badge tone={CHANGE_TONE[page.change]}>{page.change}</Badge>
+                      </span>
+                      <span className="mt-2 block text-[13px] text-night-400">{page.summaryAfter}</span>
+                      {page.summaryBefore && page.summaryBefore !== page.summaryAfter && (
+                        <span className="mt-1 block text-[12px] text-night-600 line-through">{page.summaryBefore}</span>
+                      )}
+                    </span>
+                  </label>
+                </Panel>
+              );
+            })}
           </div>
+
+          {(proposal.data.record.dropped?.length ?? 0) > 0 && (
+            <details className="rounded-xl border border-white/[0.06] bg-black/20 p-3 text-sm">
+              <summary className="cursor-pointer text-night-300">
+                <ShieldCheck className="mr-1 inline size-3.5 text-gold-300" /> What the checks dropped ({proposal.data.record.dropped!.length})
+              </summary>
+              <ul className="mt-2 space-y-1 text-xs text-night-400">
+                {proposal.data.record.dropped!.map((drop, i) => (
+                  <li key={i}>
+                    • <span className="text-night-300">{drop.what}</span> — {drop.reason}
+                  </li>
+                ))}
+              </ul>
+            </details>
+          )}
 
           <div className="flex items-center justify-between gap-3 border-t border-white/[0.06] pt-4">
             <input
               value={note}
               onChange={(e) => setNote(e.target.value)}
               placeholder="Optional note (kept with the decision)"
+              aria-label="Optional note, kept with the decision"
               className="h-9 flex-1 rounded-lg border border-white/10 bg-black/20 px-3 text-[13px] text-night-200 outline-none placeholder:text-night-600 focus:border-beacon-400/50"
             />
             <div className="flex gap-2">
@@ -98,9 +141,10 @@ export function ImportReview({ result, onClose }: { result: ShareImportResult; o
                 variant="primary"
                 size="sm"
                 loading={decide.isPending}
-                onClick={() => decide.mutate({ id: result.proposalId!, decision: 'accept' }, { onSuccess: done })}
+                disabled={selectedIds.length === 0 || proposal.data.conflicts.length > 0}
+                onClick={() => decide.mutate({ id: result.proposalId!, decision: 'accept', ...(partial ? { pageIds: selectedIds } : {}) }, { onSuccess: done })}
               >
-                <Check /> Accept into brain
+                <Check /> {partial ? `Accept ${selectedIds.length} of ${pages.length} pages` : 'Accept into brain'}
               </Button>
             </div>
           </div>

@@ -1,5 +1,6 @@
 import { z } from 'zod';
 import { EDGE_TYPES, IdentifierSchema } from '@sef/shared';
+import { UNTRUSTED_CONTENT_NOTE } from '../../agents/prompts';
 
 /**
  * What the keeper model is asked to produce. Deliberately looser than the vault contracts:
@@ -60,6 +61,7 @@ export type KeeperDraft = z.infer<typeof KeeperDraftSchema>;
 export const WIKI_KEEPER_INSTRUCTIONS = `
 You keep one student's second brain: a markdown wiki that grows with what they study.
 You are shown the vault's current pages, its index, and the new SOURCE MATERIAL.
+${UNTRUSTED_CONTENT_NOTE}
 
 Your job: draft page updates. Code — not you — decides what is actually kept, so cite
 honestly and prefer fewer accurate entries over many vague ones. Empty arrays are fine;

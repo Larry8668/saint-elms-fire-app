@@ -6,7 +6,9 @@ import type {
   EngineLoginResponse,
   EngineMe,
   EnrolmentStatus,
+  LimitedAccessReason,
   LoginResponse,
+  SessionAccess,
 } from '@sef/shared';
 import { log } from '../config';
 import type { CredentialStore } from '../credentials/store';
@@ -33,6 +35,21 @@ interface PendingDeviceFlow {
   intervalSeconds: number;
   expiresAtMs: number;
 }
+
+const FULL: SessionAccess = { mode: 'full' };
+
+/**
+ * The reason a sign-in is read/export-only, or null for a full session. An enrolment
+ * state the uni itself reported outranks local expiry: signing back in online cannot
+ * restore a suspended enrolment, so that is the story the student needs to hear.
+ */
+const limitedReason = (profile: DeviceProfile, entitlementExpired: boolean): LimitedAccessReason | null => {
+  if (profile.admission === 'suspended') return 'admission_suspended';
+  if (profile.admission === 'withdrawn') return 'admission_withdrawn';
+  return entitlementExpired ? 'entitlement_expired' : null;
+};
+
+const accessFor = (reason: LimitedAccessReason | null): SessionAccess => (reason ? { mode: 'limited', reason } : FULL);
 
 /**
  * Sign-in for the desktop app.
@@ -68,7 +85,7 @@ export class AuthService {
         throw new AuthError('staff_use_portal', 'Staff accounts sign in at the university’s /admin portal, not in the study app.');
       }
       const profile = await this.registry.recordOnline(res.account, password, res.token, res.expiresAt);
-      return { role: 'student', profile, mode: 'online', token: await this.sessions.create(profile.id, 'online') };
+      return { role: 'student', profile, mode: 'online', access: FULL, token: await this.sessions.create(profile.id, 'online') };
     } catch (error) {
       if (error instanceof UniHttpError && error.status === 401) {
         throw new AuthError('invalid_credentials', 'That email and password do not match.');
@@ -85,7 +102,7 @@ export class AuthService {
       );
     }
     log.info('offline_login', { profileId: profile.id });
-    return { role: 'student', profile, mode: 'offline', token: await this.sessions.create(profile.id, 'offline') };
+    return { role: 'student', profile, mode: 'offline', access: FULL, token: await this.sessions.create(profile.id, 'offline') };
   }
 
   /** Begins an RFC 8628 device grant with the uni. Online only — errors propagate as unreachable. */
@@ -145,8 +162,13 @@ export class AuthService {
     } else {
       log.info('device_signin_unapproved', { profileId: profile.id, admission });
     }
-    const token = await this.sessions.create(profile.id, 'online');
-    return { status: 'approved', role: 'student', profile, mode: 'online', token };
+    // Suspended or withdrawn enrolments once had files here: admit them read/export-only
+    // rather than locking the student out of their own vault. Pending/rejected never had
+    // files, so their full session stays confined to /api/auth/* by the approved gate.
+    const access = accessFor(limitedReason(profile, false));
+    if (access.mode === 'limited') log.info('device_signin_limited', { profileId: profile.id, reason: access.reason });
+    const token = await this.sessions.create(profile.id, 'online', access);
+    return { status: 'approved', role: 'student', profile, mode: 'online', access, token };
   }
 
   /** Fetches and stores a fresh device-bound entitlement; failure leaves the profile online-only. */
@@ -172,8 +194,9 @@ export class AuthService {
   /**
    * Offline unlock for a profile created via device sign-in: requires a stored
    * entitlement that verifies locally (signature, audience, student, device).
-   * An expired entitlement still unlocks private read/export — the student's own
-   * files stay theirs — but nothing network-facing can run without a live uni anyway.
+   * An expired entitlement — or a profile whose last reported enrolment is suspended
+   * or withdrawn — still unlocks private read/export as a limited session: the
+   * student's own files stay theirs. Nothing network-facing can run offline anyway.
    */
   async unlockOffline(profileId: string): Promise<EngineLoginResponse | null> {
     const profile = await this.registry.get(profileId);
@@ -189,14 +212,16 @@ export class AuthService {
     }
     if (!verified.ok) log.info('entitlement_expired_offline_read', { profileId });
     else log.info('offline_unlock', { profileId });
-    return { role: 'student', profile, mode: 'offline', token: await this.sessions.create(profile.id, 'offline') };
+    const access = accessFor(limitedReason(profile, !verified.ok));
+    if (access.mode === 'limited') log.info('offline_unlock_limited', { profileId, reason: access.reason });
+    return { role: 'student', profile, mode: 'offline', access, token: await this.sessions.create(profile.id, 'offline', access) };
   }
 
   async resolve(token: string): Promise<EngineMe | null> {
     const session = await this.sessions.resolve(token);
     if (!session) return null;
     const profile = await this.registry.get(session.profileId);
-    return profile ? { profile, mode: session.mode } : null;
+    return profile ? { profile, mode: session.mode, access: session.access ?? FULL } : null;
   }
 
   /**

@@ -15,7 +15,7 @@ import type { ContentfulStatusCode } from 'hono/utils/http-status';
 import { errorFields, log } from '../../config';
 import { extractPdf, extractText, recordStudentCorrection, sha256, type ExtractionMethod, type ExtractionResult } from './extract';
 import { assertJobCapacity, advanceJob, cancelJob, createJob, jobStore, JobConflictError, JobStateError, listProfileJobs, retryJob } from './jobs';
-import { checkBytes, countChars, sanitiseTitle, sliceChars, titleIsSafe, INGEST_LIMITS, type Limits } from './limits';
+import { checkBytes, checkMediaType, countChars, sanitiseTitle, sliceChars, titleIsSafe, INGEST_LIMITS, type Limits } from './limits';
 import { openPdf, PdfParseError } from './pdf';
 import type { WikiStore } from '../wiki-store';
 
@@ -122,6 +122,8 @@ export class SourceIngestor {
    */
   async ingest(input: IngestInput, limits: Limits = {}): Promise<IngestResult> {
     if (!titleIsSafe(input.title)) throw new SourceRejection('That title cannot be used.', 'unsafe_title', 400);
+    const mediaRejection = checkMediaType(input.mediaType);
+    if (mediaRejection) throw new SourceRejection(mediaRejection.message, mediaRejection.code, 415);
     const rejection = checkBytes(input.bytes, limits);
     if (rejection) throw new SourceRejection(rejection.message, rejection.code, rejection.code === 'empty' ? 400 : 413);
 

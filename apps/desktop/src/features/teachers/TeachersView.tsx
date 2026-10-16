@@ -192,7 +192,7 @@ export function TeachersView() {
             ) : thread.messages.length === 0 ? (
               <TeacherIntro teacher={teacher} onPick={(p) => submit(p)} anchor={thread.anchor} onAnchor={(a) => setAnchor(teacher, a)} />
             ) : (
-              <div className="space-y-7">
+              <div className="space-y-7" role="log" aria-live="polite" aria-atomic="false">
                 {thread.messages.map((m, i) =>
                   m.role === 'user' ? (
                     <UserMessage key={m.id} message={m} />
@@ -209,10 +209,13 @@ export function TeachersView() {
                       onHandoff={(to) => {
                         const lastQuestion = thread.messages.findLast((x) => x.role === 'user');
                         // The registry closes this conversation and issues the successor; the view
-                        // follows it rather than silently re-teachering the same session.
-                        void handoff(teacher, to);
-                        setTeacher(to);
-                        if (lastQuestion) setDraft(lastQuestion.content);
+                        // follows only once that is recorded, so a failed hand-off never strands
+                        // the student outside the conversation that is still open.
+                        void handoff(teacher, to).then((recorded) => {
+                          if (!recorded) return;
+                          setTeacher(to);
+                          if (lastQuestion) setDraft(lastQuestion.content);
+                        });
                       }}
                     />
                   ),

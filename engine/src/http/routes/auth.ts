@@ -75,7 +75,8 @@ export function authRoutes(deps: EngineDeps) {
 
   app.get('/me', requireProfile(deps), (c) => c.json(c.get('me')));
 
-  app.post('/logout', requireProfile(deps), async (c) => {
+  /** Signing out is always allowed — a limited session must be able to end itself. */
+  app.post('/logout', requireProfile(deps, { limitedWrites: true }), async (c) => {
     await deps.auth.logout(c.get('token'));
     deps.workspaces.drop(c.get('me').profile.id);
     return c.body(null, 204);

@@ -2,6 +2,7 @@ import { betterAuth } from 'better-auth';
 import { bearer, deviceAuthorization, magicLink, twoFactor } from 'better-auth/plugins';
 import type { Pool } from 'pg';
 import type { Mailer } from './mail';
+import { withStaffDeviceApprovalRefusal } from './device-approval';
 import { createPgSecondaryStorage, type SecondaryStorage } from './rate-limit';
 import { withMagicLinkConfirmation } from './routes/account';
 import { log } from './logger';
@@ -178,15 +179,19 @@ export function createAccountAuth(options: AccountAuthOptions): AccountAuth {
   const storage = createPgSecondaryStorage(options.pool);
   const auth = betterAuth(accountAuthOptions(options));
   const origins = accountAuthOrigins(options.publicUrl, options.trustedOrigins ?? []);
+  const getSession = async (headers: Headers): Promise<SessionInfo | null> => {
+    const session = await auth.api.getSession({ headers });
+    return session ? { user: session.user, session: session.session } : null;
+  };
   log.info('account_auth_ready', { magicLinkTtlSeconds: MAGIC_LINK_TTL_SECONDS });
   return {
-    handler: withMagicLinkConfirmation((request: Request) => auth.handler(request), origins[0]),
+    handler: withStaffDeviceApprovalRefusal(
+      withMagicLinkConfirmation((request: Request) => auth.handler(request), origins[0]),
+      { pool: options.pool, getSession },
+    ),
     storage,
     trustedOrigins: origins,
-    getSession: async (headers) => {
-      const session = await auth.api.getSession({ headers });
-      return session ? { user: session.user, session: session.session } : null;
-    },
+    getSession,
     revokeUserSessions: async (userId) => {
       const context = await (auth as unknown as {
         $context: Promise<{ internalAdapter: { deleteUserSessions: (id: string) => Promise<unknown> } }>;

@@ -33,7 +33,8 @@ import { pageOrigin } from './growth';
 import { lintBrain } from './lint';
 import { computeStatus } from './mastery';
 import { writeProposalRecord } from './proposals';
-import { countChars } from './sources/limits';
+import { countChars, checkImageDimensions } from './sources/limits';
+import { probeImageDimensions } from './sources/image';
 import { recordVisionText } from './sources/extract';
 import { SourceRejection, type SourceIngestor } from './sources/ingest';
 import type { BrainVault } from './vault';
@@ -515,6 +516,11 @@ export class BrainService {
     if (!record || record.profile.studentId !== identity.studentId || record.kind !== 'image') return null;
     const bytes = await this.deps.wiki.readSourceBytes(record.id);
     if (!bytes) return null;
+    // Measured before the model is asked: an image too large to read on this device —
+    // or one whose header cannot be read at all — is refused by name, never handed over.
+    const dimensions = probeImageDimensions(bytes);
+    const rejection = checkImageDimensions(dimensions?.width ?? 0, dimensions?.height ?? 0);
+    if (rejection) throw new SourceRejection(rejection.message, rejection.code, 413);
     const settings = await this.settings.get();
     const vision = resolveModel(settings, 'vision');
     const { object: reading } = await generateStructured({

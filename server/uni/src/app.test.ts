@@ -48,3 +48,30 @@ test('/ready is 200 only when account auth is mounted and the database answers',
   assert.equal(body.checks.accountAuth, true);
   assert.equal(body.checks.database, false);
 });
+
+test('the legacy login carries the same 64KB body cap as every auth path', async () => {
+  const app = createApp(minDeps());
+  const oversized = await app.request('/v1/auth/login', {
+    method: 'POST',
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify({ email: 'a@b.test', password: `x${'y'.repeat(70 * 1024)}` }),
+  });
+  assert.equal(oversized.status, 413);
+});
+
+test('onError keeps internals out of client responses on non-auth paths too', async () => {
+  const app = createApp(
+    minDeps({
+      releases: {
+        cohorts: () => {
+          throw new Error('relation "cohorts" does not exist for role sef with password hunter2');
+        },
+      } as unknown as UniDeps['releases'],
+    }),
+  );
+  const res = await app.request('/v1/cohorts');
+  assert.equal(res.status, 500);
+  const body = (await res.json()) as Record<string, unknown>;
+  assert.deepEqual(body, { error: 'internal_error' });
+  assert.ok(!JSON.stringify(body).includes('hunter2'), 'database internals stay server-side');
+});

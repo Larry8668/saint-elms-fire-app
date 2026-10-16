@@ -65,6 +65,7 @@ function NavButton({ label, active, onClick, badge = 0, children }: { label: str
       <button
         onClick={onClick}
         aria-label={label}
+        aria-current={active ? 'page' : undefined}
         className={cn('relative grid size-11 place-items-center rounded-xl transition', active ? 'text-night-50' : 'text-night-500 hover:bg-white/[0.04] hover:text-night-200')}
       >
         {active && <motion.span layoutId="nav-active" className="absolute inset-0 rounded-xl border border-white/10 bg-white/[0.07]" transition={{ type: 'spring', stiffness: 420, damping: 34 }} />}
