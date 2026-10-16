@@ -13,7 +13,7 @@ export async function readJson<T>(file: string, fallback: T): Promise<T> {
 }
 
 /** Write via a temp file and rename, so a crash never leaves half a file behind. */
-export async function writeFileAtomic(file: string, content: string): Promise<void> {
+export async function writeFileAtomic(file: string, content: string | Uint8Array): Promise<void> {
   await mkdir(path.dirname(file), { recursive: true });
   const temp = `${file}.${process.pid}.${randomUUID()}.tmp`;
   try {

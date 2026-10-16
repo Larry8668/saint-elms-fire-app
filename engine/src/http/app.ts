@@ -14,6 +14,7 @@ import { settingsRoutes } from './routes/settings';
 import { shareRoutes } from './routes/shares';
 import { studentRoutes } from './routes/student';
 import { sourceRoutes } from './routes/sources';
+import { vaultRoutes } from './routes/vault';
 import { wikiRoutes } from './routes/wiki';
 
 export type { EngineDeps } from './context';
@@ -81,7 +82,12 @@ export function createApp(deps: EngineDeps) {
     await next();
   });
 
-  app.use('/api/*', bodyLimit({ maxSize: 20 * 1024 * 1024, onError: (c) => c.json({ error: 'Request too large' }, 413) }));
+  // Vault restores carry base64-encoded originals, so the archive ceiling is the decoded
+  // 96 MB vault limit plus encoding overhead; everything else keeps the tighter cap.
+  app.use('/api/*', (c, next) => {
+    const maxSize = c.req.path.startsWith('/api/vault/import') ? 160 * 1024 * 1024 : 20 * 1024 * 1024;
+    return bodyLimit({ maxSize, onError: (inner) => inner.json({ error: 'Request too large' }, 413) })(c, next);
+  });
 
   app.use('/api/*', async (c, next) => {
     const started = Date.now();
@@ -112,6 +118,7 @@ export function createApp(deps: EngineDeps) {
   app.route('/api', settingsRoutes(deps));
   app.route('/api', studentRoutes(deps));
   app.route('/api', sourceRoutes(deps));
+  app.route('/api', vaultRoutes(deps));
   app.route('/api', wikiRoutes(deps));
   app.route('/api', shareRoutes(deps));
   app.route('/api', logisticsRoutes(deps));

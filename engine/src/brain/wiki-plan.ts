@@ -1,11 +1,15 @@
 import { CONTRACT_VERSION, type ConceptPage, type WikiProposal } from '@sef/shared';
+import { sha256Hex } from '../lib/hash';
 import type { IndexEntry } from './index-format';
 import { VaultConflictError, type VaultConflictDetail } from './vault-errors';
-import type { PageKind } from './vault-layout';
+import { pageIdFromFileName, type PageKind } from './vault-layout';
+import type { VaultManifestPage } from './vault-manifest';
 import {
   contentRevision,
   legacyPageSummary,
   pageContent,
+  readPageFile,
+  revisionMatches,
   wikiContentFromConceptPage,
   type PageMetadata,
   type PageMetadataInput,
@@ -53,6 +57,68 @@ export interface ProposalPlan {
   conflicts: VaultConflictDetail[];
   /** Pages an operation named but would not change; reported, never rewritten. */
   unchanged: PageChange[];
+}
+
+/**
+ * The snapshot one raw page file produces — the same read the store performs on disk, lifted
+ * pure so a restore can classify archived bytes exactly as a live file would be classified.
+ * `recorded` is the manifest's catalogue entry for this id, when one exists.
+ */
+export function pageSnapshotFromContent(kind: PageKind, relativePath: string, raw: string, recorded?: VaultManifestPage): PageSnapshot | null {
+  const id = pageIdFromFileName(relativePath.split('/').pop() ?? '');
+  if (!id) return null;
+  const fileSha256 = sha256Hex(raw);
+  const bytes = Buffer.byteLength(raw);
+  const parsed = readPageFile(raw);
+  if (parsed.format === 2) {
+    const drifted = !revisionMatches(parsed.metadata, parsed.body) || parsed.metadata.kind !== kind || (recorded !== undefined && recorded.sha256 !== fileSha256);
+    return {
+      id,
+      kind: parsed.metadata.kind,
+      format: 2,
+      relativePath,
+      revision: drifted ? `file-${fileSha256.slice(0, 40)}` : parsed.metadata.revision,
+      state: drifted ? 'out_of_band' : 'ok',
+      metadata: parsed.metadata,
+      legacy: null,
+      body: parsed.body,
+      raw,
+      fileSha256,
+      bytes,
+      ...(drifted ? { issue: 'the page changed outside the keeper' } : {}),
+    };
+  }
+  if (parsed.format === 1) {
+    return {
+      id,
+      kind,
+      format: 1,
+      relativePath,
+      revision: `file-${fileSha256.slice(0, 40)}`,
+      state: 'ok',
+      metadata: null,
+      legacy: parsed.legacy,
+      body: parsed.body,
+      raw,
+      fileSha256,
+      bytes,
+    };
+  }
+  return {
+    id,
+    kind,
+    format: null,
+    relativePath,
+    revision: `file-${fileSha256.slice(0, 40)}`,
+    state: parsed.reason === 'newer_schema' ? 'newer_schema' : 'malformed',
+    metadata: null,
+    legacy: null,
+    body: '',
+    raw,
+    fileSha256,
+    bytes,
+    issue: parsed.message,
+  };
 }
 
 /** The typed view of a page that is still in the earlier concept format, or null when unreadable. */

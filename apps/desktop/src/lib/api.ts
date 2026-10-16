@@ -48,11 +48,16 @@ import type {
   ShareDraftRequest,
   ShareDraftResponse,
   ShareImportResult,
+  SourceDependents,
   SourceDetail,
+  SourceEraseResult,
   SourceReadResult,
   SourceReceipt,
   SyncStatus,
   TeacherId,
+  VaultExport,
+  VaultImportPreview,
+  VaultImportResult,
   WikiIndex,
   WikiPageView,
   WikiProposalRecord,
@@ -245,6 +250,13 @@ export const api = {
   extractLogistics: (image: { mimeType: 'image/png' | 'image/jpeg'; data: string }, note?: string) =>
     post<LogisticsList>('/api/logistics/extract', { image, note }),
 
+  // Vault portability — the student's own knowledge, exportable behind the local sign-in.
+  exportVault: () => post<VaultExport>('/api/vault/export', {}),
+  previewVaultImport: (archive: unknown) => post<VaultImportPreview>('/api/vault/import/preview', { archive }),
+  restoreVault: (archive: unknown, overwritePageIds: string[]) => post<VaultImportResult>('/api/vault/import', { archive, overwritePageIds }),
+  /** What still cites a source — shown before an erase, and part of the erase answer. */
+  sourceDependents: (id: string) => request<SourceDependents>(`/api/sources/${encodeURIComponent(id)}/dependents`),
+  eraseSource: (id: string, expectedRevision?: string) => post<SourceEraseResult>(`/api/sources/${encodeURIComponent(id)}/erase`, { expectedRevision }),
 };
 
 export interface ConversationHandle {

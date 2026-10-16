@@ -27,6 +27,8 @@ export const META_PROPOSALS_DIRECTORY = 'proposals';
 export const META_EVENTS_DIRECTORY = 'events';
 export const META_JOURNAL_DIRECTORY = 'journal';
 export const META_RECOVERY_DIRECTORY = 'recovery';
+/** Erasure markers: a deleted source leaves one small record so a future sync can carry the delete. */
+export const META_TOMBSTONES_DIRECTORY = 'tombstones';
 export const META_MAINTENANCE_FILE = 'maintenance.json';
 export const INDEX_FILE = 'index.md';
 export const LOG_FILE = 'log.md';
@@ -44,6 +46,7 @@ export const VAULT_DIRECTORIES = [
   `${META_DIRECTORY}/${META_EVENTS_DIRECTORY}`,
   `${META_DIRECTORY}/${META_JOURNAL_DIRECTORY}`,
   `${META_DIRECTORY}/${META_RECOVERY_DIRECTORY}`,
+  `${META_DIRECTORY}/${META_TOMBSTONES_DIRECTORY}`,
 ] as const;
 
 const RECORD_ID_PATTERN = /^[A-Za-z0-9][A-Za-z0-9_-]*$/;
