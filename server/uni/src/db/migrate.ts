@@ -35,6 +35,11 @@ const migrations: MigrationSource[] = [
     name: 'admission',
     url: new URL('./migrations/003_admission.sql', import.meta.url),
   },
+  {
+    version: 4,
+    name: 'published_shares',
+    url: new URL('./migrations/004_published_shares.sql', import.meta.url),
+  },
 ];
 
 export interface MigrationResult {

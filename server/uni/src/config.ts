@@ -18,7 +18,10 @@ export const config = {
   releasesFile: path.resolve(env('RELEASES_FILE', path.join(serverRoot, 'config/releases.json'))),
   keysDir: path.resolve(env('KEYS_DIR', path.join(serverRoot, 'keys'))),
   dataDir: path.resolve(env('UNI_DATA_DIR', path.join(serverRoot, '../../.data/uni'))),
+  /** Byte cap on a published share's markdown body (the only unbounded text field). */
   shareMaxBytes: Number(env('SHARE_MAX_BYTES', String(10 * 1024))),
+  /** Cap on the size a share may claim for one attachment descriptor. */
+  shareAttachmentMaxBytes: Number(env('SHARE_ATTACHMENT_MAX_BYTES', String(25 * 1024 * 1024))),
   sharesPerDay: Number(env('SHARES_PER_DAY', '10')),
   /** Password given to the seeded admin and demo students on first boot. */
   demoPassword: env('DEMO_PASSWORD', DEMO_PASSWORD_DEFAULT),

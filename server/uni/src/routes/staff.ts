@@ -2,16 +2,33 @@ import { Hono } from 'hono';
 import {
   CONTRACT_VERSION,
   EnrolmentDecisionRequestSchema,
+  RemoveShareRequestSchema,
   StaffInviteRequestSchema,
   StaffUpdateRequestSchema,
   StudentProfilePatchSchema,
+  type AdminShareDetail,
+  type AdminSharePage,
   type AdminStudentPage,
   type AdminStudentRow,
   type ErasureRequest,
+  type LegacySharePage,
 } from '@sef/shared';
 import { requireAdmission, type AppEnv } from '../authorization';
 import { recentAuditEvents } from '../audit-events';
 import type { UniDeps } from '../deps';
+import { log } from '../logger';
+import {
+  decodeShareCursor,
+  getPublishedShare,
+  listShareEvents,
+  listSharesForModeration,
+  removeShare,
+  rowToAdminShareView,
+  rowToPublishedShare,
+  ShareError,
+} from '../shares';
+
+import { shareErrorStatus } from './shares';
 import {
   AdmissionError,
   confirmErasure,
@@ -229,6 +246,75 @@ export function staffRoutes(deps: UniDeps) {
       details: row.details,
       at: row.occurred_at.toISOString(),
     })));
+  });
+
+  // Share moderation: staff see every share in every cohort and state; students
+  // only ever reach the cohort-scoped feed in routes/shares.ts.
+  app.get('/published-shares', async (c) => {
+    const limit = Math.min(50, Math.max(1, Number(c.req.query('limit')) || 25));
+    const state = c.req.query('state');
+    if (state !== undefined && state !== 'published' && state !== 'withdrawn') {
+      return c.json({ error: 'invalid_state' }, 400);
+    }
+    let cursor = null;
+    try {
+      cursor = decodeShareCursor(c.req.query('cursor'));
+    } catch (error) {
+      if (error instanceof ShareError) return c.json({ error: error.code }, 400);
+      throw error;
+    }
+    const { rows, nextCursor } = await listSharesForModeration(deps.pool!, {
+      cohortCode: c.req.query('cohort') || undefined,
+      state,
+      cursor,
+      limit,
+    });
+    const body: AdminSharePage = {
+      schemaVersion: CONTRACT_VERSION,
+      items: rows.map(rowToAdminShareView),
+      nextCursor,
+    };
+    return c.json(body);
+  });
+
+  app.get('/published-shares/:id', async (c) => {
+    const share = await getPublishedShare(deps.pool!, c.req.param('id'));
+    if (!share) return c.json({ error: 'not_found' }, 404);
+    const events = await listShareEvents(deps.pool!, share.id);
+    const body: AdminShareDetail = {
+      ...rowToPublishedShare(share),
+      lastModeration: events.at(-1) ?? null,
+      events,
+    };
+    return c.json(body);
+  });
+
+  app.post('/published-shares/:id/remove', requireAdmission(deps, MUTATION), async (c) => {
+    const parsed = RemoveShareRequestSchema.safeParse(await c.req.json().catch(() => ({})));
+    if (!parsed.success) return c.json({ error: 'invalid_request', issues: parsed.error.issues }, 400);
+    try {
+      const row = await removeShare(deps.pool!, {
+        shareId: c.req.param('id'),
+        actor: actor(c),
+        note: parsed.data.note ?? null,
+      });
+      log.info('share_removed_by_staff', { cohortId: row.cohort_code });
+      return c.json(rowToPublishedShare(row));
+    } catch (error) {
+      if (error instanceof ShareError) return c.json({ error: error.code }, shareErrorStatus(error.code));
+      throw error;
+    }
+  });
+
+  // The quarantined pre-admission relay: readable for review and eventual
+  // explicit migration, but its items are never merged into the new surface.
+  app.get('/legacy-shares', async (c) => {
+    const body: LegacySharePage = {
+      schemaVersion: CONTRACT_VERSION,
+      quarantined: true,
+      items: deps.shares.all().map(({ image: _image, fromAccountId: _id, ...share }) => share),
+    };
+    return c.json(body);
   });
 
   return app;

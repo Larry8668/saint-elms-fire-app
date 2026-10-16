@@ -20,7 +20,7 @@ Everything a new teammate needs to understand, run, demo and extend Saint Elms F
 | **Sky** | The visual map of every course concept. Stars light up as the brain grows; aurora lines are links the student made. |
 | **Reflect** | After a chat, freeze the new turns as a session source and send them through the compile pipeline. The student sees a diff of what landed and what was dropped. |
 | **Capture** | Photograph handwritten notes; the vision model transcribes them and the compile pipeline proposes updates from the transcription. |
-| **Peer share** | A student sends a brain page to a classmate through the uni relay. The registrar can remove shares. |
+| **Peer share** | An admitted student publishes a page to their cohort's feed; publication is idempotent, quota-limited, and withdrawable. Staff can remove shares with an audit trail. |
 | **Sources** | The lessons, brain pages and web results behind an answer. Lesson sources are checked against the finished answer: only lessons it measurably drew on are shown as cited, and each links to the exact section of the lesson. |
 | **Chat history** | Every conversation is saved as JSON in the student's workspace, including each answer's sources and checks. Reopen it from History; a reload restores the open conversation. |
 
@@ -53,8 +53,9 @@ engine/src/
   http/routes/         Hono routes: auth, student (sync, library, chat, sessions, brain, quiz), settings…
 docs/                  agentic-layer.md, knowledge-graph.md
 server/uni/src/
-  routes/              auth, student (catalogue, packages, shares), admin
-  store/               accounts, releases, dispersal, shares, audit (JSON files with atomic writes)
+  routes/              auth, student (catalogue, packages), shares (peer feed), admin
+  store/               accounts, releases, dispersal, shares (quarantined legacy relay), audit (JSON files with atomic writes)
+  shares.ts            published-share store: idempotent publish, cursor feed, withdraw, staff removal
 packages/shared/src/   contracts shared by all packages: auth, brain, teachers, demo personas, API types
 courseware/            B.Sc. Physics/Maths/Astro programme: semester-<n>/<subject>/<course>/ lessons + university-support/
 infra/                 Dockerfiles and SearXNG config
@@ -185,7 +186,7 @@ The sign-in screen deliberately shows no names. Type an email, or open **Explori
 
 ## 10. Known gaps and next steps
 
-- Peer shares are relayed but not end-to-end encrypted.
+- Peer shares live in Postgres (published_shares) but are not end-to-end encrypted; legacy file-relay shares are quarantined pending explicit migration.
 - The engine and the uni server trust the local network; there is no TLS in dev.
 - The Tauri build doesn't yet bundle the engine as a sidecar (it expects the engine to be running).
 - Source attribution is lexical (term overlap), not semantic; a heavily paraphrased answer can be under-credited. Seeded demo sessions have no stored sources.

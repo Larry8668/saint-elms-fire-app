@@ -12,6 +12,7 @@ import {
 import { requireRole, type AppEnv } from '../auth';
 import { config } from '../config';
 import type { UniDeps } from '../deps';
+import { countPublishedSharesSince } from '../shares';
 import { AccountExistsError } from '../store/accounts';
 
 const WEEK_MS = 7 * 24 * 60 * 60 * 1000;
@@ -47,9 +48,14 @@ export function adminRoutes(deps: UniDeps) {
     }));
   };
 
-  app.get('/overview', admin, (c) => {
+  app.get('/overview', admin, async (c) => {
     const dispersal = deps.dispersal.all();
     const cohorts = cohortSummaries();
+    // With the database up, the stat reflects the authenticated share surface;
+    // without it only the quarantined file relay exists to count.
+    const sharesLast7Days = deps.pool
+      ? await countPublishedSharesSince(deps.pool, new Date(Date.now() - WEEK_MS))
+      : deps.shares.all().filter((s) => isRecent(s.createdAt)).length;
     const body: AdminOverview = {
       issuer: config.issuer,
       programmeName: deps.courseware.programmeName,
@@ -59,7 +65,7 @@ export function adminRoutes(deps: UniDeps) {
       releasedCourseSlots: cohorts.reduce((n, cohort) => n + cohort.courses.filter((id) => id !== '*').length, 0),
       syncsLast7Days: dispersal.filter((d) => isRecent(d.at)).length,
       outdatedInstalls: dispersal.filter((d) => d.version !== currentVersion(d.courseId)).length,
-      sharesLast7Days: deps.shares.all().filter((s) => isRecent(s.createdAt)).length,
+      sharesLast7Days,
       recentAudit: deps.audit.recent(8),
     };
     return c.json(body);
@@ -161,6 +167,9 @@ export function adminRoutes(deps: UniDeps) {
 
   app.get('/audit', admin, (c) => c.json(deps.audit.recent(Number(c.req.query('limit') ?? 200))));
 
+  // The pre-admission file relay is quarantined: it stays readable here so old
+  // items can be reviewed and deleted, but nothing is ever re-attributed to an
+  // account. Moderation of the authenticated share surface lives in staff.ts.
   app.get('/shares', admin, (c) => {
     const body: AdminShare[] = deps.shares.all().map(({ image: _image, fromAccountId: _id, ...share }) => share);
     return c.json(body);
