@@ -245,6 +245,25 @@ The student sees the diff, including what the deterministic pass dropped and why
 and shaky prerequisites — disputed claims appear as open misconceptions. These appear in
 Brain → Open questions, each with a "Work through it" button that opens the Guide with a prompt.
 
+**Maintenance** (`maintenance/`, `MaintenanceService` on the workspace, routes under
+`/api/maintenance/*`, Brain → Maintenance) keeps the vault itself honest. A lint pass runs
+deterministic structural checks — orphan pages, missing sources and citations, dead or
+unrecorded links, index drift, bad course mappings, oversized pages, schema and revision
+drift — and every finding carries stable ids, the page revisions it was computed against,
+and the evidence behind it. Findings are *suggestions*: code-supported ones can be filed
+as ordinary `WikiProposal`s through the same review → `applyProposal` path (with base
+revisions, so a manual edit in between refuses them as stale), and false ones can be
+dismissed — dismissals persist in `.meta/maintenance.json` and survive reruns. "Rebuild
+index" rewrites `index.md` and the manifest through the same journaled commit; drifted
+entries keep their committed record so a mismatch stays visible. Raw sources are never
+deleted. A separate semantic review (`POST /api/maintenance/review`) sends a bounded set
+of pages (≤12, claims clipped) through the chat model for contradictions, stale claims,
+missing connections and open questions; every page/claim reference the model returns is
+validated in code — contradictions must cite both sides, dangling references are listed
+under `dropped`, and a semantic finding expires when a cited page moves or a cited claim
+is no longer current. Nothing it produces writes a page until the student accepts a
+code-built proposal for it.
+
 ### Wiki-first answers, saved syntheses and restores
 
 The compiled wiki is the first place a question is looked up, not the last

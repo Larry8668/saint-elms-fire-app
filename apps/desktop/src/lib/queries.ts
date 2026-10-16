@@ -28,6 +28,7 @@ export const keys = {
     records: (p: string) => ['profile', p, 'records'] as const,
     pageRecord: (p: string, id: string) => ['profile', p, 'page-record', id] as const,
     events: (p: string, pageId?: string) => ['profile', p, 'events', pageId ?? 'all'] as const,
+    maintenance: (p: string) => ['profile', p, 'maintenance'] as const,
     sessions: (p: string, teacher: string) => ['profile', p, 'sessions', teacher] as const,
     jobBoard: (p: string) => ['profile', p, 'jobs'] as const,
     source: (p: string, id: string) => ['profile', p, 'source', id] as const,
@@ -61,6 +62,7 @@ const brainKeys = () => {
     keys.scoped.brainLog(p),
     keys.scoped.lint(p),
     keys.scoped.records(p),
+    keys.scoped.maintenance(p),
     keys.scoped.sessions(p, 'all'),
     keys.scoped.jobBoard(p),
     keys.scoped.proposals(p),
@@ -106,6 +108,7 @@ export const usePageRecord = (id: string | null) =>
 /** `useEvents()` — the whole ledger; `useEvents(pageId)` — one page's trail; `useEvents(null)` — parked. */
 export const useEvents = (pageId?: string | null) =>
   useQuery({ queryKey: keys.scoped.events(profile(), pageId ?? undefined), queryFn: () => api.events(pageId ?? undefined), enabled: pageId !== null });
+export const useMaintenance = () => useQuery({ queryKey: keys.scoped.maintenance(profile()), queryFn: api.maintenance });
 export const useSessions = (teacher?: TeacherId) =>
   useQuery({ queryKey: keys.scoped.sessions(profile(), teacher ?? 'all'), queryFn: () => api.sessions(teacher) });
 
@@ -141,6 +144,64 @@ export const usePageRevision = (key: string | null, revision: string | null) =>
 export const useWikiIndex = () => useQuery({ queryKey: keys.scoped.wikiIndex(profile()), queryFn: api.wikiIndex });
 export const useWikiPage = (id: string | null) =>
   useQuery({ queryKey: keys.scoped.wikiPage(profile(), id ?? ''), queryFn: () => api.wikiPage(id!), enabled: Boolean(id), retry: false });
+
+/** The bounded semantic pass — slow, so the button tells the truth about waiting. */
+export function useMaintenanceReview() {
+  const client = useQueryClient();
+  const p = profile();
+  return useMutation({
+    mutationFn: api.runMaintenanceReview,
+    onSuccess: () => {
+      void client.invalidateQueries({ queryKey: keys.scoped.maintenance(p) });
+      void client.invalidateQueries({ queryKey: keys.scoped.brainLog(p) });
+    },
+    onError: (error) => toast.error((error as Error).message),
+  });
+}
+
+/** Files the selected findings as one proposal; the dialog the caller opens does the rest. */
+export function useProposeMaintenance() {
+  const client = useQueryClient();
+  const p = profile();
+  return useMutation({
+    mutationFn: (findingIds: string[]) => api.proposeMaintenance(findingIds),
+    onSuccess: (result) => {
+      void client.invalidateQueries({ queryKey: keys.scoped.maintenance(p) });
+      void client.invalidateQueries({ queryKey: keys.scoped.proposals(p) });
+      void client.invalidateQueries({ queryKey: keys.scoped.brainLog(p) });
+      if (!result.proposalId) toast(result.skipped.length ? 'Nothing could be filed — see the reasons' : 'Nothing to file');
+    },
+    onError: (error) => toast.error((error as Error).message),
+  });
+}
+
+/** Dismissing a suggestion never touches a page — it just stops being shown. */
+export function useDismissFinding() {
+  const client = useQueryClient();
+  const p = profile();
+  return useMutation({
+    mutationFn: ({ id, note }: { id: string; note?: string }) => api.dismissFinding(id, note),
+    onSuccess: (report) => {
+      client.setQueryData(keys.scoped.maintenance(p), report);
+      toast('Dismissed — it will not resurface');
+    },
+    onError: (error) => toast.error((error as Error).message),
+  });
+}
+
+export function useRepairCatalogue() {
+  const client = useQueryClient();
+  const p = profile();
+  return useMutation({
+    mutationFn: api.repairCatalogue,
+    onSuccess: (result) => {
+      void client.invalidateQueries({ queryKey: keys.scoped.maintenance(p) });
+      void client.invalidateQueries({ queryKey: keys.scoped.brainLog(p) });
+      toast.success(result.changed ? `Index rebuilt — ${result.pagesIndexed} pages catalogued` : 'The index was already right');
+    },
+    onError: (error) => toast.error((error as Error).message),
+  });
+}
 
 export function useSaveSettings() {
   const client = useQueryClient();

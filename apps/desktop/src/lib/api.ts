@@ -1,6 +1,7 @@
 import { CONTRACT_VERSION } from '@sef/shared';
 import type {
   BrainLogEntry,
+  CatalogueRepairResult,
   ChatStreamEvent,
   CompileResult,
   ConceptPage,
@@ -24,6 +25,8 @@ import type {
   LogisticsRecord,
   LogisticsRecordResult,
   LogisticsWriteInput,
+  MaintenanceProposalResult,
+  MaintenanceReport,
   OwnSharesResponse,
   PageRecordSummary,
   PageRecordView,
@@ -38,6 +41,7 @@ import type {
   PublishShareResult,
   RestorePageRequest,
   SaveAnswerRequest,
+  SemanticReviewResult,
   SessionDetail,
   SessionSummary,
   ShareablePageList,
@@ -187,6 +191,13 @@ export const api = {
   events: (pageId?: string) => request<LearningEvent[]>(`/api/brain/events${pageId ? `?pageId=${encodeURIComponent(pageId)}` : ''}`),
   /** One page in full — works for concepts, syntheses, questions and legacy pages alike. */
   pageRecord: (id: string) => request<PageRecordView>(`/api/brain/pages/${encodeURIComponent(id)}/record`),
+
+  // Wiki maintenance: reads and suggestions only — repairs file as ordinary proposals.
+  maintenance: () => request<MaintenanceReport>('/api/brain/maintenance'),
+  runMaintenanceReview: () => post<SemanticReviewResult>('/api/brain/maintenance/review'),
+  proposeMaintenance: (findingIds: string[]) => post<MaintenanceProposalResult>('/api/brain/maintenance/proposals', { findingIds }),
+  dismissFinding: (id: string, note?: string) => post<MaintenanceReport>(`/api/brain/maintenance/findings/${encodeURIComponent(id)}/dismiss`, { note }),
+  repairCatalogue: () => post<CatalogueRepairResult>('/api/brain/maintenance/catalogue'),
   /** Freeze a session's fresh turns as a source and stop — the compile and the decision are the student's. */
   reflectReview: (sessionId: string) => post<SourceReceipt>(`/api/brain/ingest/${encodeURIComponent(sessionId)}`, { review: true }),
   sessions: (teacher?: TeacherId) => request<SessionSummary[]>(`/api/sessions${teacher ? `?teacher=${teacher}` : ''}`),

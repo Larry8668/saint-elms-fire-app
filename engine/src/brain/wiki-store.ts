@@ -266,6 +266,62 @@ export class WikiStore {
     });
   }
 
+  /**
+   * Rebuilds the derived catalogue — index.md and the manifest's page map — from the files
+   * actually on disk, through the journal like every other write. Pages keep their recorded
+   * entries untouched (drift between a file and its record is a finding, not something a
+   * repair should paper over); entries for files that are gone are dropped.
+   */
+  async repairCatalogue(): Promise<{ changed: boolean; pagesIndexed: number }> {
+    return this.lock.run(async () => {
+      const at = this.now().toISOString();
+      const read = await readManifest(this.root);
+      assertWritableManifest(read);
+      const manifest = read.manifest ?? emptyManifest(at);
+      const snapshots = await this.listPagesWith(manifest);
+      const entries = snapshots.map(indexEntryOf).filter(isIndexEntry);
+      const nextIndex = renderIndex(entries, at);
+
+      const live = new Set(snapshots.map((page) => page.id));
+      const pages: Record<string, ManifestPage> = {};
+      for (const [id, entry] of Object.entries(manifest.pages)) {
+        if (live.has(id)) pages[id] = entry;
+      }
+      for (const snapshot of snapshots) {
+        // New pages join the catalogue; drifted ones keep the committed record so the
+        // mismatch stays visible to the next check instead of being silently adopted.
+        if (!pages[snapshot.id] && snapshot.format !== null) {
+          pages[snapshot.id] = {
+            kind: snapshot.kind,
+            revision: snapshot.revision,
+            sha256: snapshot.fileSha256,
+            bytes: snapshot.bytes,
+            updatedAt: snapshot.metadata?.updatedAt ?? snapshot.legacy?.updated ?? at,
+          };
+        }
+      }
+
+      const currentIndex = await readText(vaultPath(this.root, INDEX_FILE));
+      const pagesChanged = JSON.stringify(pages) !== JSON.stringify(manifest.pages);
+      if (currentIndex === nextIndex && !pagesChanged) return { changed: false, pagesIndexed: entries.length };
+
+      const dropped = Object.keys(manifest.pages).length - Object.keys(pages).length;
+      const entry: BrainLogEntry = {
+        at,
+        kind: 'maintenance',
+        title: 'Rebuilt the wiki catalogue',
+        detail: `${entries.length} page${entries.length === 1 ? '' : 's'} indexed${dropped > 0 ? `, ${dropped} dropped entr${dropped === 1 ? 'y' : 'ies'}` : ''}.`,
+      };
+      await this.commit('wiki.reindex', [
+        { kind: 'write', path: INDEX_FILE, content: nextIndex },
+        { kind: 'append', path: LOG_FILE, content: renderLogEntry(entry) },
+        { kind: 'write', path: manifestPath(this.root), content: manifestJson({ schemaVersion: VAULT_LAYOUT_VERSION, updatedAt: at, pages, sources: manifest.sources }) },
+      ]);
+      log.info('wiki_catalogue_repaired', { root: this.root, pages: entries.length, pagesChanged });
+      return { changed: true, pagesIndexed: entries.length };
+    });
+  }
+
   async readSource(id: string): Promise<SourceRecord | null> {
     const safeId = assertRecordId(id, 'Source id');
     const raw = await readJson<unknown>(sourceRecordPath(this.root, safeId), null);

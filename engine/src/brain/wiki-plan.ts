@@ -143,13 +143,16 @@ export function planProposal(proposal: WikiProposal, snapshots: Map<string, Page
     // A page created earlier in this same proposal has no snapshot yet — its plan is the base.
     const base = previous ? previous.content.metadata : metadataInputOf(snapshot, at);
     if (!base) continue;
-    const links = mergeLinks(base.links, [op.link]);
+    const links =
+      op.op === 'add_link'
+        ? mergeLinks(base.links, [op.link])
+        : base.links.filter((link) => link.toPageId !== op.toPageId || (op.linkType !== undefined && link.type !== op.linkType));
     plans.set(op.fromPageId, {
       snapshot,
       content: { metadata: { ...base, updatedAt: at, links }, body: previous ? previous.content.body : snapshot!.body },
       // A link onto a page created earlier in this proposal does not turn it into an update.
       created: previous?.created ?? createdIds.has(op.fromPageId),
-      changed: previous?.changed ?? links.length !== base.links.length,
+      changed: (previous?.changed ?? false) || links.length !== base.links.length,
     });
   }
 

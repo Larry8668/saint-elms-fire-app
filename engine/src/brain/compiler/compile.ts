@@ -294,6 +294,7 @@ export class WikiCompiler {
       const before = metadataInputOf(p.snapshot, at);
       const beforeClaims = new Set((before?.claims ?? []).map((claim) => claim.id));
       const beforeLinks = new Set((before?.links ?? []).map(linkKey));
+      const afterLinks = new Set(p.content.metadata.links.map(linkKey));
       return {
         id: p.content.metadata.id,
         kind: p.content.metadata.kind,
@@ -303,6 +304,7 @@ export class WikiCompiler {
         summaryAfter: p.content.metadata.summary,
         addedClaims: p.content.metadata.claims.filter((claim) => !beforeClaims.has(claim.id)),
         addedLinks: p.content.metadata.links.filter((link) => !beforeLinks.has(linkKey(link))),
+        removedLinks: (before?.links ?? []).filter((link) => !afterLinks.has(linkKey(link))),
       };
     });
     const conflicts = plan.conflicts.map((conflict) => `${conflict.id}: ${conflict.reason}`);
