@@ -11,6 +11,7 @@ const STATUS: Record<AuthError['code'], 400 | 401 | 403 | 503> = {
   offline_unknown_profile: 503,
   no_device_flow: 400,
   offline_locked: 401,
+  staff_use_portal: 403,
 };
 
 export function authRoutes(deps: EngineDeps) {

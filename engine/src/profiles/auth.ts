@@ -21,7 +21,7 @@ import type { AuthSessions } from './sessions';
 
 export class AuthError extends Error {
   constructor(
-    readonly code: 'invalid_credentials' | 'offline_unknown_profile' | 'account_disabled' | 'no_device_flow' | 'offline_locked',
+    readonly code: 'invalid_credentials' | 'offline_unknown_profile' | 'account_disabled' | 'no_device_flow' | 'offline_locked' | 'staff_use_portal',
     message: string,
   ) {
     super(message);
@@ -63,8 +63,9 @@ export class AuthService {
         timeoutMs: 5000,
       });
       if (res.account.role === 'admin') {
-        log.info('admin_login_relayed', { accountId: res.account.id });
-        return { role: 'admin', uniToken: res.token, uniUrl: uniServerUrl, account: res.account };
+        // Staff are not engine users: the registrar portal at the uni's /admin is their surface.
+        log.info('staff_login_refused', { accountId: res.account.id });
+        throw new AuthError('staff_use_portal', 'Staff accounts sign in at the university’s /admin portal, not in the study app.');
       }
       const profile = await this.registry.recordOnline(res.account, password, res.token, res.expiresAt);
       return { role: 'student', profile, mode: 'online', token: await this.sessions.create(profile.id, 'online') };

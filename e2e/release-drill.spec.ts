@@ -219,8 +219,8 @@ test.describe('release drill — the full student lifecycle', () => {
     const opsMe = (await (await ops.ctx.get('/v1/me')).json()) as { staffRoles: string[] };
     assert.ok(opsMe.staffRoles.includes('registrar'), 'staff grant did not take effect');
 
-    // The legacy operator admin still answers on its own credential — the desktop
-    // registrar surface reads it — but staff mutations below need the live session.
+    // The legacy operator admin still answers on its own credential — it is the release-
+    // management API's bootstrap — but staff mutations below need the live session.
     const adminLogin = await (await uniCtx()).post('/v1/auth/login', {
       data: { email: 'admin@saintelms.local', password: process.env.DEMO_PASSWORD ?? 'harbor-lantern' },
     });

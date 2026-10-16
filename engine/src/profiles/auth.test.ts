@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict';
 import { generateKeyPairSync } from 'node:crypto';
 import { mkdtemp, mkdir, writeFile } from 'node:fs/promises';
+import { createServer } from 'node:http';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { test } from 'node:test';
@@ -181,4 +182,35 @@ test('logout clears uni credentials and entitlement while keeping the profile', 
   const profile = await registry.get('logout-user');
   assert.ok(profile, 'profile record stays for the picker');
   assert.equal(profile!.offlineReady, false);
+});
+
+test('staff accounts are refused and sent to the /admin portal, never relayed', async () => {
+  const uni = createServer((req, res) => {
+    if (req.method === 'POST' && req.url === '/v1/auth/login') {
+      res.writeHead(200, { 'content-type': 'application/json' });
+      res.end(
+        JSON.stringify({
+          token: 'sef1.staff.token',
+          expiresAt: new Date(Date.now() + 3_600_000).toISOString(),
+          account: { id: 'admin', email: 'admin@saintelms.local', name: 'Registrar', role: 'admin', createdAt: new Date().toISOString() },
+        }),
+      );
+      return;
+    }
+    res.writeHead(404).end();
+  });
+  await new Promise<void>((resolve) => uni.listen(0, '127.0.0.1', resolve));
+  try {
+    const address = uni.address();
+    const port = typeof address === 'object' && address ? address.port : 0;
+    const settings = new SettingsStore(path.join(dataDir, 'settings-staff-refusal.json'));
+    await settings.update({ uniServerUrl: `http://127.0.0.1:${port}` });
+    const credentials = new MemoryCredentialStore();
+    const registry = new ProfileRegistry(credentials);
+    const auth = new AuthService(settings, registry, new AuthSessions(), credentials);
+    await assert.rejects(auth.login('admin@saintelms.local', 'harbor-lantern'), (e: unknown) => e instanceof AuthError && e.code === 'staff_use_portal');
+    assert.equal(await registry.get('admin'), undefined, 'no student profile is recorded for a staff account');
+  } finally {
+    uni.close();
+  }
 });

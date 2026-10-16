@@ -30,7 +30,7 @@ A university releases its courseware as signed packages. A student's device down
   - **Philosopher** takes ideas into the wider world with web search. Every line is tagged `[course]` or `[web]`, and each answer ends with a "Trailhead" question.
 - **A second brain**: one markdown page per concept *as the student understands it*. It's a plain folder you can open in Obsidian, and a model only ever *proposes* edits to it. A deterministic validator decides what lands; mastery (met / shaky / solid) is computed from evidence (quizzes, sessions, flagged misconceptions) and never set by the model.
 - **The sky**: a star map of every concept in the released courses. Stars light up as the brain grows: amber for shaky, gold for solid, with aurora lines for connections the student made themselves.
-- **A registrar's desk** for the university: release courses per cohort, see which devices are on stale content, manage students, moderate peer shares.
+- **A registrar's desk** hosted by the university itself at `/admin`: applications in, enrolment decisions out, students and staff managed, every action audited.
 
 Because the teachers, the brain and the courseware live on the device, a student keeps studying with no network at all. Sign-in works offline too, after one online sign-in.
 
@@ -50,7 +50,8 @@ Open <http://localhost:5173>. Every demo account uses the password **`harbor-lan
 | `ananya@saintelms.local` | Semester 1, week 6 | Small sky, Mechanics half lit, 4 amber misconceptions (force vs. motion, centrifugal force, μN friction) |
 | `brinda@saintelms.local` | End of Semester 3 | Dense, mostly gold sky; her own links from physics to the maths underneath (F = dp/dt → derivative) |
 | `chetna@saintelms.local` | Semester 5, thesis prep | Near-complete sky, Philosopher research trails, peer links, one self-correcting shaky node (band gap) |
-| `admin@saintelms.local` | Registrar | Release toggles, dispersal freshness, students, moderation, audit |
+
+Staff sign in at the registrar portal the uni hosts itself (`http://localhost:4200/admin`). It needs the Postgres account stack rather than the two-minute demo setup — the exact bootstrap commands are in [HANDOVER.md](HANDOVER.md) §4.
 
 Compare the three students on the same **Mechanics** course to see how one curriculum grows into three different brains.
 
@@ -77,7 +78,6 @@ flowchart LR
     E -->|Philosopher only| S[SearXNG]
   end
   E <-->|token, signed packages| U
-  A -.->|registrar only| U
 ```
 
 | Package | Path | Role |
@@ -85,7 +85,8 @@ flowchart LR
 | `@sef/shared` | `packages/shared` | Types and contracts shared by every package; `@sef/shared/node` holds crypto and the courseware loader |
 | `@sef/uni-server` | `server/uni` | Hono API: auth, cohorts and releases, ed25519-signed course packages, peer-share relay, admin API |
 | `@sef/engine` | `engine` | Local runtime: per-profile workspaces, Mastra agents, brain pipeline, course sync, offline sign-in |
-| `@sef/desktop` | `apps/desktop` | React 19 + Tailwind 4 UI, also packaged with Tauri 2; student app and registrar app |
+| `@sef/desktop` | `apps/desktop` | React 19 + Tailwind 4 UI, also packaged with Tauri 2; the student app |
+| `@sef/admin` | `apps/admin` | Registrar/staff portal, built statically and served by the uni at `/admin` |
 | courseware | `courseware/` | B.Sc. Physics, Mathematics and Astrophysics programme as markdown lessons with frontmatter |
 
 ## Why it fits the tracks

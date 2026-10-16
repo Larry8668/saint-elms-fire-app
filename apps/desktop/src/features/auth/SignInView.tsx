@@ -1,5 +1,5 @@
-import { DEMO_ADMIN, DEMO_PASSWORD_DEFAULT, DEMO_PERSONAS, TEACHER_IDS, TEACHERS } from '@sef/shared';
-import { ChevronDown, GraduationCap, HardDrive, Landmark, ServerCrash, ShieldCheck, Sparkles, WifiOff } from 'lucide-react';
+import { DEMO_PASSWORD_DEFAULT, DEMO_PERSONAS, TEACHER_IDS, TEACHERS } from '@sef/shared';
+import { ChevronDown, GraduationCap, HardDrive, ServerCrash, ShieldCheck, Sparkles, WifiOff } from 'lucide-react';
 import { AnimatePresence, motion } from 'motion/react';
 import { useRef, useState } from 'react';
 import { Button } from '@/components/ui/button';
@@ -10,15 +10,18 @@ import { cn } from '@/lib/cn';
 import { DEMO_MODE } from '@/lib/demo';
 import { useHealth } from '@/lib/queries';
 import { useSession } from '@/lib/session';
+import { UNI_URL } from '@/lib/uni-url';
 import { DeviceSignInCard } from './DeviceSignInCard';
 
 const YEAR_LABEL = ['First-year', 'Second-year', 'Third-year'];
 
 /** Demo accounts described by where they are in the programme, not by who they are. */
-const DEMO_ACCOUNTS = [
-  ...DEMO_PERSONAS.map((p) => ({ email: p.email, label: `${YEAR_LABEL[Math.max(0, Math.ceil(p.throughSemester / 2) - 1)] ?? 'Final-year'} student`, detail: p.stage, Icon: GraduationCap })),
-  { email: DEMO_ADMIN.email, label: 'Registrar', detail: 'Releases, dispersal, moderation', Icon: Landmark },
-];
+const DEMO_ACCOUNTS = DEMO_PERSONAS.map((p) => ({
+  email: p.email,
+  label: `${YEAR_LABEL[Math.max(0, Math.ceil(p.throughSemester / 2) - 1)] ?? 'Final-year'} student`,
+  detail: p.stage,
+  Icon: GraduationCap,
+}));
 
 const PROMISES = [
   { Icon: HardDrive, text: 'Your brain stays on this device' },
@@ -147,6 +150,13 @@ function DemoAccounts() {
               </p>
             )}
             <p className="pt-2.5 text-[11.5px] text-night-500">Demo accounts are seeded locally and bypass university admission.</p>
+            <p className="pt-1 text-[11.5px] text-night-500">
+              Staff sign in at the{' '}
+              <a href={`${UNI_URL}/admin`} target="_blank" rel="noreferrer noopener" className="text-night-300 underline underline-offset-2">
+                registrar portal
+              </a>{' '}
+              — it is hosted by the university server and needs its database stack.
+            </p>
           </motion.div>
         )}
       </AnimatePresence>
