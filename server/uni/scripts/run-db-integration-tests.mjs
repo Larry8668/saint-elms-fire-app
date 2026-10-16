@@ -51,6 +51,7 @@ try {
   await run('pnpm', [
     'exec', 'node', '--import', 'tsx', '--test',
     'src/db/integration.test.ts',
+    'src/db/backup.integration.test.ts',
     'src/account-auth.integration.test.ts',
     'src/admission.integration.test.ts',
     'src/shares.integration.test.ts',

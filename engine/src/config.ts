@@ -58,8 +58,8 @@ export const config = {
   },
   /** Engine session lifetime on this device; offline sign-in issues the same kind of session. */
   sessionHours: envInt('ENGINE_SESSION_HOURS', 24 * 14),
-  /** Seed demo profiles (offline-ready) on first boot so the app works without the uni server. */
-  seedDemo: env('SEED_DEMO', 'true') === 'true',
+  /** Seed demo profiles (offline-ready) on first boot so the app works without the uni server. Opt-in: deploys fail closed. */
+  seedDemo: env('SEED_DEMO', 'false') === 'true',
   demoPassword: env('DEMO_PASSWORD', DEMO_PASSWORD_DEFAULT),
   /** Repo courseware used only to preload demo profiles offline. Real students sync signed packages. */
   demoCoursewareDir: path.resolve(env('COURSEWARE_DIR', path.join(here, '../../courseware'))),
