@@ -48,3 +48,13 @@ test('revokeForProfile kills every session of that profile and none of others', 
   assert.equal(await sessions.resolve(a2), null);
   assert.equal(await sessions.resolve(b1).then((s) => s?.profileId), 'brinda');
 });
+
+test('the access decided at issue time persists across a reload', async () => {
+  const sessions = new AuthSessions();
+  const limited = await sessions.create('carina', 'offline', { mode: 'limited', reason: 'entitlement_expired' });
+  const plain = await sessions.create('devi', 'offline');
+  // A fresh instance re-reads the file: the access marker must survive the round trip.
+  const reloaded = new AuthSessions();
+  assert.deepEqual((await reloaded.resolve(limited))?.access, { mode: 'limited', reason: 'entitlement_expired' });
+  assert.deepEqual((await reloaded.resolve(plain))?.access, { mode: 'full' });
+});

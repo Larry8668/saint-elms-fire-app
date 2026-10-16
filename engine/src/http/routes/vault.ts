@@ -21,12 +21,15 @@ import { friendlyError } from '../errors';
  * Vault portability over HTTP: carry the student's own knowledge away, or restore it here.
  * Export, preview and dependency listing sit behind the local sign-in alone — an expired
  * entitlement or an unapproved enrolment can never hold a student's own files hostage.
+ * Export additionally opts into `limitedWrites` so a limited (read/export-only) session
+ * can still take the vault with it; preview and everything that writes stay shut for it.
  * Restoring and erasing are writes, so they keep the approved-profile guard every other
  * vault writer uses; neither ever touches the profile registry or admission state.
  */
 export function vaultRoutes(deps: EngineDeps) {
   const app = new Hono<EngineEnv>();
   const owner = requireProfile(deps);
+  const exporter = requireProfile(deps, { limitedWrites: true });
   const writer = requireProfile(deps, { approved: true });
 
   const handled = (error: unknown, fallbackCode: string): { body: { error: string; code: string; details?: unknown }; status: ContentfulStatusCode } => {
@@ -38,7 +41,7 @@ export function vaultRoutes(deps: EngineDeps) {
   };
 
   /** The student's whole vault as one checksummed export; sourceIds narrows the originals included. */
-  app.post('/vault/export', owner, async (c) => {
+  app.post('/vault/export', exporter, async (c) => {
     const parsed = VaultExportRequestSchema.safeParse(await c.req.json().catch(() => ({})));
     if (!parsed.success) return c.json({ error: 'Send an optional sourceIds selection', code: 'invalid_request' }, 400);
     try {

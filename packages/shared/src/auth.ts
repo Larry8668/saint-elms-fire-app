@@ -91,14 +91,29 @@ export interface DeviceProfile {
 
 export type SessionMode = 'online' | 'offline';
 
+/** Why a session is read/export-only: the access the engine last verified has run out. */
+export type LimitedAccessReason = 'entitlement_expired' | 'admission_suspended' | 'admission_withdrawn';
+
+/**
+ * What a sign-in may do. `full` is the ordinary session. `limited` keeps the student's own
+ * files readable and exportable — every other write answers 403 — because an expired
+ * entitlement or a suspended/withdrawn enrolment can never hold those files hostage.
+ * Absent on sessions issued before limited access existed; read it as `full`.
+ */
+export interface SessionAccess {
+  mode: 'full' | 'limited';
+  reason?: LimitedAccessReason;
+}
+
 export type EngineLoginResponse =
-  | { role: 'student'; token: string; profile: DeviceProfile; mode: SessionMode }
+  | { role: 'student'; token: string; profile: DeviceProfile; mode: SessionMode; access?: SessionAccess }
   /** Admins are not engine users: the engine just relays the uni login so the UI can talk to the uni directly. */
   | { role: 'admin'; uniToken: string; uniUrl: string; account: Account };
 
 export interface EngineMe {
   profile: DeviceProfile;
   mode: SessionMode;
+  access?: SessionAccess;
 }
 
 // ---- Device sign-in (RFC 8628 over the uni's better-auth device endpoints) ----

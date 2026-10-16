@@ -140,8 +140,10 @@ entitlement or network:
   records) are reported, never forced. A restore never touches the profile registry: it cannot
   grant admission, and `exportedBy` stays provenance.
 
-Export and preview sit behind the local sign-in alone, so an expired entitlement or a
-suspended enrolment cannot hold the student's files hostage; restore and erase keep the
+Export sits behind the local sign-in alone and is the one write a limited (read/export-only)
+session may still make, so an expired entitlement or a suspended enrolment cannot hold the
+student's files hostage; preview likewise needs only the local sign-in, but a limited session
+is refused — it would plan a restore that session could never run. Restore and erase keep the
 approved-profile guard of every other vault writer. Source erasure lists its dependent pages
 first (`GET /api/sources/:id/dependents`), then `POST /api/sources/:id/erase` removes the
 record, the derived extraction text and the original under `raw/` — erasure is the only

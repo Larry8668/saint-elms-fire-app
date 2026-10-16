@@ -42,12 +42,14 @@ const COPY: Record<AdmissionState, AdmissionCopy> = {
   },
   suspended: {
     title: 'Enrolment suspended',
-    body: 'Your enrolment is suspended. Your own files stay on this device and can still be read and exported.',
+    // A fresh sign-in is a limited (read/export-only) session routed to its own screen;
+    // this gate is the fallback for a session issued before the suspension landed.
+    body: 'Your enrolment is suspended. Your own files stay on this device — sign out and back in to read and export them.',
     action: 'Open the university site',
   },
   withdrawn: {
     title: 'Enrolment withdrawn',
-    body: 'You have withdrawn from the programme. Your own files stay on this device and can still be read and exported.',
+    body: 'You have withdrawn from the programme. Your own files stay on this device — sign out and back in to read and export them.',
     action: 'Open the university site',
   },
 };
