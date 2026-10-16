@@ -4,6 +4,7 @@ import { can, type CapabilityId, conceptKey, TEACHER_IDS, teacherPolicy, type Te
 import { z } from 'zod';
 import type { BrainService } from '../brain/service';
 import { claimsFor, evidenceIndexFrom, renderClaims, type ClaimReader } from '../brain/claim-evidence';
+import { pageEvidenceText, WikiQuery, type WikiReader } from '../brain/query';
 import type { ContentStore } from '../content/store';
 import { searchLessons } from '../content/search';
 import { webSearch } from '../web/searxng';
@@ -15,6 +16,8 @@ export interface ToolDeps {
   searxngUrl: string;
   /** The student's wiki, so claim-level evidence filtering has something to judge against. */
   claims?: ClaimReader;
+  /** The wiki the compiled-page tools read; the same store, under a page-shaped view. */
+  wiki?: WikiReader;
   /** Per-turn consent. Without it the Philosopher's web tool refuses rather than reaching out. */
   webConsented?: boolean;
 }
@@ -132,6 +135,77 @@ export function buildTools(teacher: TeacherId, deps: ToolDeps, ctx: TurnContext)
     },
   });
 
+  /**
+   * Searches the compiled wiki — page titles, summaries, claims and bodies — rather than
+   * raw sources. A saved synthesis is a page like any other, so a repeated question finds
+   * the worked answer; read_wiki_page shows it through the permitted view.
+   */
+  const searchWikiTool = createTool({
+    id: 'search_wiki',
+    description: "Search the student's compiled wiki: concept pages, saved syntheses, source summaries and open questions. Returns page ids, kinds and summaries — never bodies.",
+    inputSchema: z.object({ query: z.string().describe('What to look for') }),
+    execute: async ({ query }) => {
+      if (!can(teacher, 'tool:search_wiki')) return refuse('tool:search_wiki');
+      if (!deps.wiki) return { error: 'No wiki is attached to this turn' };
+      const hits = await new WikiQuery(deps.wiki).search(query, 5);
+      ctx.recordTool('search_wiki', `"${query}" → ${hits.length} page${hits.length === 1 ? '' : 's'}`);
+      return hits.map((hit) => ({
+        pageId: hit.id,
+        kind: hit.kind,
+        title: hit.title,
+        summary: hit.summary,
+        revision: hit.revision,
+        claims: hit.claims,
+        sourceCount: hit.sourceIds.length,
+      }));
+    },
+  });
+
+  /**
+   * Reads one compiled page through the permitted view. A concept page is learner evidence
+   * and stays assertable; a generated page (source_summary, synthesis, question) is added
+   * to the evidence set as withheld — citable as context, never as support for an assertion.
+   * That is what keeps a saved model answer from laundering itself into course evidence.
+   */
+  const readWikiPageTool = createTool({
+    id: 'read_wiki_page',
+    description: "Read one compiled wiki page by id: its body, its claims with their live verdicts, its links and the sources it rests on.",
+    inputSchema: z.object({ pageId: z.string() }),
+    execute: async ({ pageId }) => {
+      if (!can(teacher, 'tool:read_wiki_page')) return refuse('tool:read_wiki_page');
+      if (!deps.wiki) return { error: 'No wiki is attached to this turn' };
+      const view = await new WikiQuery(deps.wiki).pageView(pageId);
+      ctx.recordTool('read_wiki_page', view ? `${view.title} (${view.kind})` : `${pageId} (not found)`);
+      if (!view) return { found: false, error: 'No page by that id in this wiki' };
+      const generated = view.kind !== 'concept';
+      ctx.addSource({ kind: 'brain', id: view.id, title: view.title }, pageEvidenceText(view), generated ? { assertable: false } : undefined);
+      return {
+        found: true,
+        id: view.id,
+        kind: view.kind,
+        title: view.title,
+        summary: view.summary,
+        revision: view.revision,
+        updatedAt: view.updatedAt,
+        body: view.body.slice(0, 6000),
+        claims: view.claims.map((claim) => ({
+          text: claim.text,
+          kind: claim.kind,
+          origin: claim.origin,
+          assertable: claim.assertable,
+          ...(claim.reason ? { withheld: claim.reason } : {}),
+          citeAs: claim.assertable ? `[claim: ${claim.id}]` : `[withheld: ${claim.id}]`,
+        })),
+        links: view.links.map((link) => ({ to: link.toPageId, type: link.type, origin: link.origin, why: link.why })),
+        restsOn: view.sources.map((source) => ({ id: source.id, title: source.title, kind: source.kind, origin: source.origin })),
+        ...(view.missingSourceIds.length ? { missingSourceIds: view.missingSourceIds } : {}),
+        ...(generated
+          ? { provenance: 'Generated page: its text is model writing — cite it as context, never assert it as evidence.' }
+          : {}),
+      };
+    },
+  });
+
   const handoffTool = createTool({
     id: 'handoff',
     description: 'Suggest handing the student to another teacher who is a better fit for this question.',
@@ -146,7 +220,16 @@ export function buildTools(teacher: TeacherId, deps: ToolDeps, ctx: TurnContext)
     },
   });
 
-  return { search_lessons: searchLessonsTool, read_lesson: readLessonTool, brain_lookup: brainLookupTool, weakest_concepts: weakestTool, web_search: webSearchTool, handoff: handoffTool };
+  return {
+    search_lessons: searchLessonsTool,
+    read_lesson: readLessonTool,
+    brain_lookup: brainLookupTool,
+    weakest_concepts: weakestTool,
+    search_wiki: searchWikiTool,
+    read_wiki_page: readWikiPageTool,
+    web_search: webSearchTool,
+    handoff: handoffTool,
+  };
 }
 
 /**

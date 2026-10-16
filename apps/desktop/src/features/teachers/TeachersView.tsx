@@ -14,7 +14,7 @@ import { useNav } from '@/lib/nav';
 import { useInvalidateBrain } from '@/lib/queries';
 import { ProposalReviewDialog } from '@/features/contribute/ProposalReviewDialog';
 import { useStickToBottom } from '@/lib/use-stick-to-bottom';
-import { useChat } from './chat-store';
+import { useChat, type ChatMessage } from './chat-store';
 import { Composer, type Attachments, type ComposerHandle } from './Composer';
 import { HistoryButton } from './ConversationHistory';
 import { AssistantMessage, ThreadSkeleton, UserMessage } from './MessageRow';
@@ -71,6 +71,35 @@ export function TeachersView() {
     onError: (e) => {
       setReflectOpen(false);
       log.warn('reflect_failed', { teacher, error: (e as Error).message });
+      toast.error((e as Error).message);
+    },
+  });
+
+  /**
+   * Save to wiki: the answer turn is frozen as a model-provenance source and its job
+   * compiles straight away. The proposal still waits for the student's accept — the only
+   * difference from Reflect is granularity: one answer, not the whole session.
+   */
+  const save = useMutation({
+    mutationFn: async (message: ChatMessage) => {
+      if (!thread.sessionId) throw new Error('Nothing has been said in this conversation yet.');
+      // Index and content both go up: a failed turn drifts the position, and the stored
+      // session turn — not the rendered message — is the source of truth for the save.
+      const receipt = await api.saveAnswer({ sessionId: thread.sessionId, turnIndex: thread.messages.indexOf(message), content: message.content });
+      return api.compileJob(receipt.jobId);
+    },
+    onSuccess: (result) => {
+      invalidateBrain();
+      if (result.job.stage === 'awaiting_review' && result.proposalId) {
+        setProposalId(result.proposalId);
+      } else if (result.job.stage === 'no_changes') {
+        toast.info('The answer is kept as a source, but the keeper found nothing to write from it.');
+      } else if (result.job.stage === 'failed') {
+        toast.error(result.job.error ?? 'The saved answer could not be drafted — it is kept under Add to my wiki for a retry.');
+      }
+    },
+    onError: (e) => {
+      log.warn('wiki_save_failed', { teacher, error: (e as Error).message });
       toast.error((e as Error).message);
     },
   });
@@ -157,6 +186,8 @@ export function TeachersView() {
                       message={m}
                       teacher={teacher}
                       isLatest={i === thread.messages.length - 1 && !thread.busy}
+                      onSave={teacher === 'friend' ? undefined : () => save.mutate(m)}
+                      saving={save.isPending}
                       onRetry={() => void retry(teacher)}
                       onFollowUp={(text) => submit(text)}
                       onHandoff={(to) => {
