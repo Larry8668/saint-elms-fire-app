@@ -103,6 +103,117 @@ export const RemoveShareRequestSchema = z.strictObject({
 });
 export type RemoveShareRequest = z.infer<typeof RemoveShareRequestSchema>;
 
+/**
+ * A feed item as the engine annotates it for the student's UI: the published share
+ * plus local knowledge (authorship, whether this revision was already imported,
+ * whether the student hid it). `import` and `ignored` never cross the network —
+ * they live in the student's workspace.
+ */
+export const PeerFeedItemSchema = PublishedShareSchema.extend({
+  /** True when the caller authored this share. */
+  mine: z.boolean(),
+  /** Set when this share+revision already has a peer source in the vault. */
+  import: z.strictObject({ sourceId: IdentifierSchema, jobId: IdentifierSchema }).nullable(),
+  /** Locally hidden by the student. */
+  ignored: z.boolean(),
+});
+export type PeerFeedItem = z.infer<typeof PeerFeedItemSchema>;
+
+/**
+ * The engine's answer to the feed request. A non-`ok` state means the list is
+ * honestly empty — never a fabricated feed: `offline` when the uni did not
+ * answer, `auth_required` when there is no university session to try,
+ * `unavailable` when the uni answered but refused (admission, mismatch).
+ */
+export const PeerFeedResponseSchema = z.strictObject({
+  schemaVersion: ContractVersionSchema,
+  state: z.enum(['ok', 'offline', 'auth_required', 'unavailable']),
+  /** Plain-language reason for a non-ok state; null when ok. */
+  detail: z.string().nullable(),
+  /** The cohort the feed belongs to, when the uni confirmed it. */
+  cohortId: IdentifierSchema.nullable(),
+  items: z.array(PeerFeedItemSchema),
+  nextCursor: z.string().max(512).nullable(),
+});
+export type PeerFeedResponse = z.infer<typeof PeerFeedResponseSchema>;
+
+/** One wiki page the student may publish — the picker lists these. */
+export const ShareablePageSchema = z.strictObject({
+  id: IdentifierSchema,
+  kind: z.enum(['concept', 'source_summary', 'synthesis', 'question']),
+  title: z.string().min(1),
+  summary: z.string(),
+  revision: RevisionSchema,
+});
+export type ShareablePage = z.infer<typeof ShareablePageSchema>;
+
+export const ShareablePageListSchema = z.strictObject({
+  schemaVersion: ContractVersionSchema,
+  items: z.array(ShareablePageSchema),
+});
+export type ShareablePageList = z.infer<typeof ShareablePageListSchema>;
+
+/** What the engine needs to build a share draft for preview. */
+export const ShareDraftRequestSchema = z.strictObject({
+  pageId: IdentifierSchema,
+  /**
+   * Frozen source records whose *descriptors* ride along. Chosen one by one; the
+   * original bytes never leave the device.
+   */
+  attachmentSourceIds: z.array(IdentifierSchema).max(SHARE_ATTACHMENT_LIMIT).optional(),
+});
+export type ShareDraftRequest = z.infer<typeof ShareDraftRequestSchema>;
+
+/**
+ * The draft the student reviews. `request` is the exact body the engine will
+ * POST to the university on publish — the preview *is* the network payload.
+ */
+export const ShareDraftResponseSchema = z.strictObject({
+  schemaVersion: ContractVersionSchema,
+  request: PublishShareRequestSchema,
+  /** The disclosed recipient: the student's own cohort, as the engine knows it. */
+  cohortId: IdentifierSchema.nullable(),
+  /** What the deterministic builder left out, in words the UI can list. */
+  excluded: z.array(z.string()),
+});
+export type ShareDraftResponse = z.infer<typeof ShareDraftResponseSchema>;
+
+export const PublishShareResultSchema = z.strictObject({
+  schemaVersion: ContractVersionSchema,
+  share: PublishedShareSchema,
+  /** True when the uni replayed an earlier publish (same idempotency key + payload). */
+  replayed: z.boolean(),
+});
+export type PublishShareResult = z.infer<typeof PublishShareResultSchema>;
+
+/** An own share as the student last saw it; `freshness` says whether the uni just confirmed it. */
+export const OwnShareSchema = PublishedShareSchema.extend({
+  freshness: z.enum(['live', 'stored']),
+});
+export type OwnShare = z.infer<typeof OwnShareSchema>;
+
+export const OwnSharesResponseSchema = z.strictObject({
+  schemaVersion: ContractVersionSchema,
+  /** False when the uni could not be reached — items then show their stored state. */
+  reachable: z.boolean(),
+  items: z.array(OwnShareSchema),
+});
+export type OwnSharesResponse = z.infer<typeof OwnSharesResponseSchema>;
+
+/** What an import produced. The brain itself is untouched until the filed proposal is accepted. */
+export const ShareImportResultSchema = z.strictObject({
+  schemaVersion: ContractVersionSchema,
+  shareId: IdentifierSchema,
+  sourceId: IdentifierSchema,
+  jobId: IdentifierSchema,
+  /** The filed proposal awaiting student review; null when the compile produced none. */
+  proposalId: IdentifierSchema.nullable(),
+  stage: z.enum(['queued', 'extracting', 'awaiting_source_review', 'compiling', 'awaiting_review', 'committed', 'no_changes', 'failed', 'cancelled']),
+  /** True when this share+revision was already imported — nothing new was created. */
+  reused: z.boolean(),
+});
+export type ShareImportResult = z.infer<typeof ShareImportResultSchema>;
+
 /** The quarantined pre-admission relay listing; its authors are never re-attributed. */
 export const LegacySharePageSchema = z.strictObject({
   schemaVersion: ContractVersionSchema,

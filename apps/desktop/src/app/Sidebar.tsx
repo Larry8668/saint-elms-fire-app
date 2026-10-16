@@ -1,4 +1,4 @@
-import { Brain, Camera, Library, MessagesSquare, Settings, Sparkles, type LucideIcon } from 'lucide-react';
+import { Brain, Camera, Library, MessagesSquare, Settings, Sparkles, Users, type LucideIcon } from 'lucide-react';
 import { motion } from 'motion/react';
 import { Tooltip } from '@/components/ui/overlays';
 import { StatusDot } from '@/components/ui/primitives';
@@ -12,6 +12,7 @@ const ITEMS: Array<{ view: View; label: string; Icon: LucideIcon }> = [
   { view: 'teachers', label: 'Teachers', Icon: MessagesSquare },
   { view: 'capture', label: 'Capture', Icon: Camera },
   { view: 'brain', label: 'Brain', Icon: Brain },
+  { view: 'peers', label: 'Peers', Icon: Users },
   { view: 'library', label: 'Library', Icon: Library },
 ];
 

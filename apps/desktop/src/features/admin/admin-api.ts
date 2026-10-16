@@ -5,10 +5,14 @@ import type {
   AdminLesson,
   AdminOverview,
   AdminShare,
+  AdminShareDetail,
+  AdminSharePage,
   AuditEntry,
   CohortSummary,
   DispersalRecord,
+  LegacySharePage,
   NewAccount,
+  PublishedShare,
 } from '@sef/shared';
 import { log } from '@/lib/log';
 
@@ -70,6 +74,24 @@ export function createAdminApi(baseUrl: string, token: string, onExpired: () => 
     updateAccount: (id: string, patch: AccountPatch) => call<Account>(`/v1/admin/accounts/${encodeURIComponent(id)}`, { method: 'PATCH', body: patch }),
     dispersal: () => call<DispersalRow[]>('/v1/admin/dispersal'),
     audit: (limit = 200) => call<AuditEntry[]>(`/v1/admin/audit?limit=${limit}`),
+
+    // Session-staff share moderation. Removal is reserved for fresh staff sessions —
+    // a legacy admin bearer can list and read, and gets an honest refusal on remove.
+    publishedShares: (query: { cursor?: string; cohort?: string; state?: 'published' | 'withdrawn' } = {}) => {
+      const params = new URLSearchParams();
+      if (query.cursor) params.set('cursor', query.cursor);
+      if (query.cohort) params.set('cohort', query.cohort);
+      if (query.state) params.set('state', query.state);
+      const qs = params.toString();
+      return call<AdminSharePage>(`/v1/admin/published-shares${qs ? `?${qs}` : ''}`);
+    },
+    publishedShare: (id: string) => call<AdminShareDetail>(`/v1/admin/published-shares/${encodeURIComponent(id)}`),
+    removePublishedShare: (id: string, note?: string) =>
+      call<PublishedShare>(`/v1/admin/published-shares/${encodeURIComponent(id)}/remove`, { method: 'POST', body: note ? { note } : {} }),
+    /** The quarantined pre-admission relay — readable here, never merged into the feed. */
+    legacyShares: () => call<LegacySharePage>('/v1/admin/legacy-shares'),
+
+    // Legacy relay surface (sef1 admin tokens only). Kept for the quarantine drain.
     shares: () => call<AdminShare[]>('/v1/admin/shares'),
     removeShare: (id: string) => call<void>(`/v1/admin/shares/${encodeURIComponent(id)}`, { method: 'DELETE' }),
   };

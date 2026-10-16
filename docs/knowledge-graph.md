@@ -197,6 +197,34 @@ The student sees the diff, including what the deterministic pass dropped and why
 and shaky prerequisites — disputed claims appear as open misconceptions. These appear in
 Brain → Open questions, each with a "Work through it" button that opens the Guide with a prompt.
 
+### Peer material runs the same pipeline
+
+Cohort sharing lives in `engine/src/shares/` behind `/api/shares/*` (`routes/shares.ts`),
+relayed to the university's authenticated feed by `PeerShareService`:
+
+- **Publish** is preview-first: `POST /api/shares/prepare` builds the exact
+  `PublishShareRequest` — title, markdown, citations, attachment *descriptors* — and
+  `POST /api/shares/publish` relays it verbatim. The deterministic builder in
+  `shares/payload.ts` keeps the page's title, summary and public body sections and cuts
+  the private blocks (struggles, misconceptions, quiz results, contact details) by
+  construction, not by model judgement; `[[page-id]]` links stay as explicit references
+  to material the sender did not share. Attachment checkboxes pick source descriptors
+  (`sha256`, `bytes`, `name`, `mediaType`) — the files themselves never leave the
+  device. The preview lists what was excluded and does not promise perfect redaction.
+- **Read** is `GET /api/shares/feed` (cursor-paginated, annotated with `mine` /
+  `import` / `ignored` from the profile-local ledger in `shares/store.ts`) and
+  `GET /api/shares/mine` for the author's own items including withdrawn ones. An
+  unreachable uni, a missing session or a refused call is a response *state*
+  (`offline` / `auth_required` / `unavailable`), never fabricated items.
+- **Import** is `POST /api/shares/:id/import`: the share freezes as a `kind: 'peer'`,
+  `origin: 'peer'` source carrying `{id, revision, senderId, cohortId}` provenance,
+  then runs the ordinary ingest → compile → proposal → student-review → `applyProposal`
+  pipeline — with no `autoAccept`, because importing is not reviewing. Repeating an
+  import of the same share *and revision* replays the first (no duplicate source or
+  job); a new revision freezes a new source. Peer material never touches mastery or
+  the vault directly, and withdrawal stops future downloads without recalling
+  already-imported copies.
+
 ## 4. Merging the two: the graph the UI draws
 
 `engine/src/brain/graph.ts → buildGraphView(courseGraph, pages, courses)` returns `GraphResponse` (`GET /api/graph`):
