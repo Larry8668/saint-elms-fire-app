@@ -1,4 +1,4 @@
-import type { GraphResponse } from '@sef/shared';
+import { PERSONAL_SKY_ID, type GraphResponse } from '@sef/shared';
 import { AlertTriangle, ArrowRight, Download, Eye, EyeOff, Maximize2, Minus, Plus, Search, Sparkles, X } from 'lucide-react';
 import { motion } from 'motion/react';
 import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
@@ -7,7 +7,7 @@ import { Tooltip } from '@/components/ui/overlays';
 import { EmptyState } from '@/components/ui/primitives';
 import { SkyLoading } from './SkyLoading';
 import { ConceptSheet } from '@/features/brain/ConceptSheet';
-import { LESSON_HEX, ORIGIN_STYLE, STATUS_STYLE } from '@/lib/brain-style';
+import { KIND_STYLE, LESSON_HEX, ORIGIN_STYLE, starHex, STATUS_STYLE } from '@/lib/brain-style';
 import { cn } from '@/lib/cn';
 import { useNav } from '@/lib/nav';
 import { useGraph } from '@/lib/queries';
@@ -47,7 +47,7 @@ export function SkyView() {
 }
 
 function SkyChart({ graph }: { graph: GraphResponse }) {
-  const { conceptKey } = useNav();
+  const { conceptKey, page } = useNav();
   const layout = useMemo(() => layoutSky(graph), [graph]);
   const progress = useMemo(() => courseProgress(graph), [graph]);
   const suggestions = useMemo(() => nextUp(graph), [graph]);
@@ -103,6 +103,13 @@ function SkyChart({ graph }: { graph: GraphResponse }) {
     if (conceptKey) select(`c:${conceptKey}`);
   }, [conceptKey, select]);
 
+  // Stable page anchor — deep links (journal entries, future invites) name a page, not a node id.
+  useEffect(() => {
+    if (!page) return;
+    const n = graph.nodes.find((x) => x.pageId === page);
+    if (n) select(n.id);
+  }, [page, graph, select]);
+
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
       if ((e.target as HTMLElement).closest('input, textarea')) return;
@@ -157,7 +164,13 @@ function SkyChart({ graph }: { graph: GraphResponse }) {
             </Chip>
             {layout.constellations.map((c) => (
               <Chip key={c.courseId} active={focusCourseId === c.courseId} onClick={() => focusCourse(c.courseId)}>
-                <span className="text-night-500">S{c.semesterNumber}</span> {c.title}
+                {c.courseId === PERSONAL_SKY_ID ? (
+                  <>✦ {c.title}</>
+                ) : (
+                  <>
+                    <span className="text-night-500">S{c.semesterNumber}</span> {c.title}
+                  </>
+                )}
               </Chip>
             ))}
           </div>
@@ -180,6 +193,9 @@ function SkyChart({ graph }: { graph: GraphResponse }) {
           <Legend color={LESSON_HEX} label="Lesson" />
           {(['unseen', 'met', 'shaky', 'solid'] as const).map((s) => (
             <Legend key={s} color={STATUS_STYLE[s].hex} label={STATUS_STYLE[s].label} />
+          ))}
+          {(['synthesis', 'question'] as const).map((k) => (
+            <Legend key={k} color={KIND_STYLE[k].hex!} label={KIND_STYLE[k].label} />
           ))}
           <span className="mx-1 h-3 w-px bg-white/10" />
           {(['student', 'suggested', 'peer'] as const).map((o) => (
@@ -224,6 +240,19 @@ function Stats({ graph }: { graph: GraphResponse }) {
           <b className="font-semibold text-aurora-300">{stats.studentLinks}</b> links you made
         </span>
       </div>
+      {stats.personalPages > 0 && (
+        <div className="mt-1.5 text-[12px] text-night-500">
+          <b className="font-semibold text-[#6fe3c1]">{stats.personalPages}</b> page{stats.personalPages === 1 ? '' : 's'} of your own
+          {' · '}
+          <b className="font-semibold text-night-300">{stats.demonstrated}</b> shown
+          {stats.collected > 0 && (
+            <>
+              {' · '}
+              <b className="font-semibold text-night-300">{stats.collected}</b> collected
+            </>
+          )}
+        </div>
+      )}
     </motion.div>
   );
 }
@@ -298,7 +327,7 @@ function SearchBox({ graph, className, onPick }: { graph: GraphResponse; classNa
               }}
               className="flex w-full cursor-pointer items-center gap-2 px-3 py-2 text-left text-sm hover:bg-white/[0.06]"
             >
-              <span className="size-2 shrink-0 rounded-full" style={{ background: n.kind === 'lesson' ? LESSON_HEX : STATUS_STYLE[n.status].hex }} />
+              <span className="size-2 shrink-0 rounded-full" style={{ background: starHex(n) }} />
               <span className="flex-1 truncate text-night-100">{n.label}</span>
               <span className="shrink-0 text-[11px] text-night-500">{n.courseName}</span>
             </button>

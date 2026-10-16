@@ -4,9 +4,13 @@ import {
   CONTRACT_VERSION,
   type BrainDiffEntry,
   type ConceptPage,
+  type LearningEvent,
   type Lesson,
   type LintFinding,
+  type PageRecordSummary,
+  type PageRecordView,
   type ProfileIdentity,
+  type SourceRecord,
   type WikiProposal,
 } from '@sef/shared';
 import { z } from 'zod';
@@ -15,11 +19,13 @@ import { QUIZ_INSTRUCTIONS } from '../agents/prompts';
 import { log } from '../config';
 import type { ContentStore } from '../content/store';
 import { readJson, writeJson } from '../lib/fs';
+import { sha256Hex } from '../lib/hash';
 import { resolveModel } from '../models/registry';
 import type { Session } from '../sessions/store';
 import type { SettingsReader } from '../settings/store';
 import { buildCourseGraph, type CourseGraph } from './course-graph';
-import { buildGraphView } from './graph';
+import { buildGraphView, type BrainGraphPage } from './graph';
+import { pageOrigin } from './growth';
 import { lintBrain } from './lint';
 import { computeStatus } from './mastery';
 import { writeProposalRecord } from './proposals';
@@ -27,7 +33,7 @@ import { countChars } from './sources/limits';
 import { recordVisionText } from './sources/extract';
 import type { SourceIngestor } from './sources/ingest';
 import type { BrainVault } from './vault';
-import { readPageFile } from './wiki-page-format';
+import { legacyPageSummary, readPageFile } from './wiki-page-format';
 import type { PageChange, WikiStore } from './wiki-store';
 
 const NotesReadingSchema = z.object({
@@ -73,6 +79,8 @@ interface QuizResult {
   score: number;
   outOf: number;
   at: string;
+  /** The submitted options, so a replayed submit can re-render the same review. */
+  answers: number[];
 }
 
 /** Keeps only well-formed questions: four distinct options, one of which is the stated answer. */
@@ -122,7 +130,163 @@ export class BrainService {
   }
 
   async graph() {
-    return buildGraphView(await this.courseGraph(), await this.vault.all(), await this.content.installed());
+    return buildGraphView(await this.courseGraph(), await this.skyPages(), await this.content.installed());
+  }
+
+  /**
+   * Every vault page the sky can draw, with its typed links, provenance and growth-event
+   * counts — concepts (course-mapped or personal), syntheses and open questions. Source
+   * summary pages are vault records, not stars, so they skip the sky.
+   */
+  private async skyPages(): Promise<BrainGraphPage[]> {
+    const [snapshots, sourceRecords, events] = await Promise.all([this.deps.wiki.listPages(), this.deps.wiki.listSources(), this.deps.wiki.listEvents()]);
+    const sources = new Map<string, SourceRecord>(Object.entries(sourceRecords));
+    const counts = new Map<string, { collected: number; demonstrated: number }>();
+    for (const event of events) {
+      const count = counts.get(event.pageId) ?? { collected: 0, demonstrated: 0 };
+      if (event.knowledgeOnly) count.collected += 1;
+      else count.demonstrated += 1;
+      counts.set(event.pageId, count);
+    }
+    const pages: BrainGraphPage[] = [];
+    for (const snapshot of snapshots) {
+      if (snapshot.state !== 'ok' && snapshot.state !== 'out_of_band') continue;
+      const meta = snapshot.metadata;
+      const view = snapshot.legacy ?? (meta?.kind === 'concept' ? await this.vault.conceptView(meta, snapshot.body) : null);
+      pages.push({
+        id: snapshot.id,
+        kind: meta?.kind ?? snapshot.kind,
+        title: meta?.title ?? snapshot.legacy?.concept ?? snapshot.id,
+        updatedAt: meta?.updatedAt ?? snapshot.legacy?.updated ?? '',
+        links: meta?.links ?? (snapshot.legacy?.links ?? []).map((link) => ({ toPageId: link.to, type: link.type, origin: link.origin, why: link.why })),
+        origin: meta ? pageOrigin(meta, sources) : 'student',
+        view,
+        collected: counts.get(snapshot.id)?.collected ?? 0,
+        demonstrated: counts.get(snapshot.id)?.demonstrated ?? 0,
+      });
+    }
+    return pages;
+  }
+
+  /**
+   * The growth ledger, oldest first, optionally narrowed to one page. A page written before
+   * the ledger existed (seeded or legacy) gets its first-encounter marker synthesised from its
+   * earliest saved revision — attributable to real history, never invented.
+   */
+  async events(pageId?: string): Promise<LearningEvent[]> {
+    const events = await this.deps.wiki.listEvents(pageId);
+    if (!pageId || events.some((event) => event.kind === 'encounter')) return events;
+    const revisions = await this.deps.wiki.pageRevisions(pageId);
+    const oldest = revisions?.revisions.at(-1);
+    if (!revisions || !oldest) return events;
+    const identity = await this.deps.identity();
+    return [
+      ...events,
+      {
+        schemaVersion: CONTRACT_VERSION,
+        id: `evt_${sha256Hex(`encounter|${pageId}|${oldest.revision}|first`).slice(0, 24)}`,
+        profile: identity,
+        pageId,
+        at: oldest.at,
+        kind: 'encounter' as const,
+        actor: 'student' as const,
+        evidence: [{ kind: 'revision' as const, ref: oldest.revision }],
+        note: 'First page',
+        knowledgeOnly: false,
+      },
+    ];
+  }
+
+  /** Every vault page as a list row — all kinds, not only concepts, so personal pages are findable. */
+  async records(): Promise<PageRecordSummary[]> {
+    const [snapshots, sourceRecords] = await Promise.all([this.deps.wiki.listPages(), this.deps.wiki.listSources()]);
+    const sources = new Map<string, SourceRecord>(Object.entries(sourceRecords));
+    const records: PageRecordSummary[] = [];
+    for (const snapshot of snapshots) {
+      if (snapshot.state === 'malformed' || snapshot.state === 'newer_schema') continue;
+      const meta = snapshot.metadata;
+      if (meta) {
+        const view = meta.kind === 'concept' ? await this.vault.conceptView(meta, snapshot.body) : null;
+        records.push({
+          id: snapshot.id,
+          kind: meta.kind,
+          title: meta.title,
+          summary: meta.summary,
+          updatedAt: meta.updatedAt,
+          revision: snapshot.revision,
+          origin: meta.provenance ? 'legacy' : pageOrigin(meta, sources),
+          ...(view ? { status: computeStatus(view), openMisconceptions: view.misconceptions.filter((m) => !m.resolved).length } : {}),
+        });
+      } else if (snapshot.legacy) {
+        records.push({
+          id: snapshot.id,
+          kind: 'concept',
+          title: snapshot.legacy.concept || snapshot.id,
+          summary: legacyPageSummary(snapshot.legacy),
+          updatedAt: snapshot.legacy.updated,
+          revision: snapshot.revision,
+          origin: 'legacy',
+          status: computeStatus(snapshot.legacy),
+          openMisconceptions: snapshot.legacy.misconceptions.filter((m) => !m.resolved).length,
+        });
+      }
+    }
+    return records.sort((a, b) => b.updatedAt.localeCompare(a.updatedAt));
+  }
+
+  /** One vault page in full — the detail view for any kind, concept or not. */
+  async pageRecord(id: string): Promise<PageRecordView | null> {
+    const snapshot = await this.deps.wiki.readPage(id);
+    if (!snapshot || snapshot.state === 'malformed' || snapshot.state === 'newer_schema') return null;
+    const sources = new Map<string, SourceRecord>(Object.entries(await this.deps.wiki.listSources()));
+    const meta = snapshot.metadata;
+    if (meta) {
+      const view = meta.kind === 'concept' ? await this.vault.conceptView(meta, snapshot.body) : null;
+      return {
+        id: snapshot.id,
+        kind: meta.kind,
+        title: meta.title,
+        summary: meta.summary,
+        updatedAt: meta.updatedAt,
+        revision: snapshot.revision,
+        origin: meta.provenance ? 'legacy' : pageOrigin(meta, sources),
+        ...(view ? { status: computeStatus(view), openMisconceptions: view.misconceptions.filter((m) => !m.resolved).length } : {}),
+        markdown: snapshot.body,
+        courseRefs: meta.courseRefs,
+        claims: meta.claims,
+        links: meta.links,
+        learner: meta.learner,
+        sourceIds: meta.sourceIds,
+      };
+    }
+    if (snapshot.legacy) {
+      const page = snapshot.legacy;
+      return {
+        id: snapshot.id,
+        kind: 'concept',
+        title: page.concept || snapshot.id,
+        summary: legacyPageSummary(page),
+        updatedAt: page.updated,
+        revision: snapshot.revision,
+        origin: 'legacy',
+        status: computeStatus(page),
+        openMisconceptions: page.misconceptions.filter((m) => !m.resolved).length,
+        markdown: snapshot.body,
+        courseRefs: [],
+        claims: [],
+        // Legacy links are display projections: they predate required citations, so they are
+        // shown verbatim rather than re-stamped as typed links.
+        links: page.links.map((link) => ({ toPageId: link.to, type: link.type, origin: link.origin, why: link.why ?? 'Recorded before link reasons existed.', citations: [] })),
+        learner: {
+          inMyWords: page.sections.in_my_words,
+          stuck: page.sections.where_i_got_stuck,
+          connections: page.sections.connections,
+          evidenceIds: page.evidence.map((entry) => entry.ref),
+        },
+        sourceIds: [],
+      };
+    }
+    return null;
   }
 
   async lint(): Promise<LintFinding[]> {
@@ -268,7 +432,7 @@ export class BrainService {
     };
   }
 
-  async submitQuiz(id: string, answers: number[]) {
+  async submitQuiz(id: string, answers: number[], attemptId?: string) {
     const quiz = await readJson<Quiz | null>(path.join(this.quizzesDir, `${id.replace(/[^a-zA-Z0-9-]/g, '')}.json`), null);
     if (!quiz) throw new Error('Quiz not found');
     const score = quiz.questions.reduce((n, q, i) => n + (answers[i] === q.answerIndex ? 1 : 0), 0);
@@ -276,9 +440,21 @@ export class BrainService {
     const concept = graph.concepts.get(quiz.key);
     const at = new Date().toISOString();
 
-    // The result is its own durable artifact: an evidence id on the page resolves to it.
-    const resultId = `res_${randomUUID().replace(/-/g, '').slice(0, 20)}`;
-    const result: QuizResult = { id: resultId, quizId: quiz.id, key: quiz.key, score, outOf: quiz.questions.length, at };
+    // The result id is derived from the attempt, so a retried submit (same client attempt, or
+    // byte-identical answers with no attempt id) replays the stored outcome instead of filing
+    // duplicate evidence — one attempt is one review signal, however many times it is sent.
+    const resultId = `res_${sha256Hex(`${quiz.id}:${attemptId ?? answers.join('.')}`).slice(0, 20)}`;
+    const existing = await readJson<QuizResult | null>(path.join(this.quizzesDir, `${resultId}.json`), null);
+    if (existing) {
+      return {
+        score: existing.score,
+        outOf: existing.outOf,
+        review: quiz.questions.map((q, i) => ({ correct: q.answerIndex, chosen: existing.answers[i], explanation: q.explanation })),
+        diff: [] as BrainDiffEntry[],
+        replayed: true,
+      };
+    }
+    const result: QuizResult = { id: resultId, quizId: quiz.id, key: quiz.key, score, outOf: quiz.questions.length, at, answers };
     await writeJson(path.join(this.quizzesDir, `${resultId}.json`), result);
 
     // Every page write goes through the proposal machinery — a format-1 page is upgraded
@@ -333,6 +509,7 @@ export class BrainService {
       outOf: quiz.questions.length,
       review: quiz.questions.map((q, i) => ({ correct: q.answerIndex, chosen: answers[i], explanation: q.explanation })),
       diff,
+      replayed: false,
     };
   }
 }

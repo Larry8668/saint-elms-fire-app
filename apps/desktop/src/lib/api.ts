@@ -16,10 +16,13 @@ import type {
   HealthResponse,
   IngestResult,
   JobList,
+  LearningEvent,
   Lesson,
   LessonMeta,
   LintFinding,
   OwnSharesResponse,
+  PageRecordSummary,
+  PageRecordView,
   PageRevisionContent,
   PageRevisionList,
   PeerFeedResponse,
@@ -125,6 +128,8 @@ export interface QuizResult {
   outOf: number;
   review: Array<{ correct: number; chosen: number; explanation: string }>;
   diff: IngestResult['diff'];
+  /** True when this submit replayed an already-recorded attempt — no duplicate evidence was written. */
+  replayed: boolean;
 }
 export type { SessionDetail, SessionSummary };
 
@@ -160,6 +165,12 @@ export const api = {
   pageRevision: (key: string, revision: string) => request<PageRevisionContent>(`/api/brain/pages/${encodeURIComponent(key)}/revisions/${encodeURIComponent(revision)}`),
   brainLog: () => request<BrainLogEntry[]>('/api/brain/log'),
   lint: () => request<LintFinding[]>('/api/brain/lint'),
+  /** Every vault page in list form — all kinds, so personal pages show up too. */
+  records: () => request<PageRecordSummary[]>('/api/brain/records'),
+  /** The growth ledger; pass a page id for one page's trail. */
+  events: (pageId?: string) => request<LearningEvent[]>(`/api/brain/events${pageId ? `?pageId=${encodeURIComponent(pageId)}` : ''}`),
+  /** One page in full — works for concepts, syntheses, questions and legacy pages alike. */
+  pageRecord: (id: string) => request<PageRecordView>(`/api/brain/pages/${encodeURIComponent(id)}/record`),
   /** Freeze a session's fresh turns as a source and stop — the compile and the decision are the student's. */
   reflectReview: (sessionId: string) => post<SourceReceipt>(`/api/brain/ingest/${encodeURIComponent(sessionId)}`, { review: true }),
   sessions: (teacher?: TeacherId) => request<SessionSummary[]>(`/api/sessions${teacher ? `?teacher=${teacher}` : ''}`),
@@ -182,7 +193,7 @@ export const api = {
   rejectProposal: (id: string, note?: string) => post<WikiProposalRecord>(`/api/proposals/${encodeURIComponent(id)}/reject`, { note }),
 
   createQuiz: (key: string) => post<QuizPayload>(`/api/quiz/${encodeURIComponent(key)}`),
-  submitQuiz: (id: string, answers: number[]) => post<QuizResult>(`/api/quiz/${encodeURIComponent(id)}/submit`, { answers }),
+  submitQuiz: (id: string, answers: number[], attemptId: string) => post<QuizResult>(`/api/quiz/${encodeURIComponent(id)}/submit`, { answers, attemptId }),
 
 
   // Cohort sharing — the engine relays to the university share API on this profile's uni session.

@@ -23,6 +23,9 @@ export const keys = {
     pageRevision: (p: string, key: string, revision: string) => ['profile', p, 'page-revisions', key, revision] as const,
     brainLog: (p: string) => ['profile', p, 'brain-log'] as const,
     lint: (p: string) => ['profile', p, 'lint'] as const,
+    records: (p: string) => ['profile', p, 'records'] as const,
+    pageRecord: (p: string, id: string) => ['profile', p, 'page-record', id] as const,
+    events: (p: string, pageId?: string) => ['profile', p, 'events', pageId ?? 'all'] as const,
     sessions: (p: string, teacher: string) => ['profile', p, 'sessions', teacher] as const,
     jobBoard: (p: string) => ['profile', p, 'jobs'] as const,
     source: (p: string, id: string) => ['profile', p, 'source', id] as const,
@@ -51,6 +54,7 @@ const brainKeys = () => {
     keys.scoped.pages(p),
     keys.scoped.brainLog(p),
     keys.scoped.lint(p),
+    keys.scoped.records(p),
     keys.scoped.sessions(p, 'all'),
     keys.scoped.jobBoard(p),
     keys.scoped.proposals(p),
@@ -62,6 +66,8 @@ export function useInvalidateBrain() {
   return () => {
     for (const key of brainKeys()) void client.invalidateQueries({ queryKey: key });
     void client.invalidateQueries({ queryKey: ['profile', profile(), 'page'] });
+    void client.invalidateQueries({ queryKey: ['profile', profile(), 'page-record'] });
+    void client.invalidateQueries({ queryKey: ['profile', profile(), 'events'] });
   };
 }
 
@@ -87,6 +93,12 @@ export const usePage = (key: string | null) =>
   useQuery({ queryKey: keys.scoped.page(profile(), key ?? ''), queryFn: () => api.page(key!), enabled: Boolean(key), retry: false });
 export const useBrainLog = () => useQuery({ queryKey: keys.scoped.brainLog(profile()), queryFn: api.brainLog });
 export const useLint = () => useQuery({ queryKey: keys.scoped.lint(profile()), queryFn: api.lint });
+export const useRecords = () => useQuery({ queryKey: keys.scoped.records(profile()), queryFn: api.records });
+export const usePageRecord = (id: string | null) =>
+  useQuery({ queryKey: keys.scoped.pageRecord(profile(), id ?? ''), queryFn: () => api.pageRecord(id!), enabled: Boolean(id), retry: false });
+/** `useEvents()` — the whole ledger; `useEvents(pageId)` — one page's trail; `useEvents(null)` — parked. */
+export const useEvents = (pageId?: string | null) =>
+  useQuery({ queryKey: keys.scoped.events(profile(), pageId ?? undefined), queryFn: () => api.events(pageId ?? undefined), enabled: pageId !== null });
 export const useSessions = (teacher?: TeacherId) =>
   useQuery({ queryKey: keys.scoped.sessions(profile(), teacher ?? 'all'), queryFn: () => api.sessions(teacher) });
 

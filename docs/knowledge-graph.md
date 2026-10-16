@@ -57,6 +57,7 @@ questions/<key>.md   investigations and open questions
 .history/…           earlier revisions of every page (for diffs and undo)
 .meta/manifest.json  the committed revision, hash and size of every page and source
 .meta/sources/…      the typed source records
+.meta/events/…       the growth ledger, one typed learning event per file
 .meta/jobs/…         wiki jobs, one file each
 .meta/journal/…      in-flight commits (a commit is cleared only once every file landed)
 .meta/recovery/…     records of commits that were finished after a crash
@@ -142,10 +143,50 @@ Allowed link types (`EDGE_TYPES` in `packages/shared/src/brain.ts`): `prerequisi
 | --- | --- | --- |
 | `unseen` | no page | dim star |
 | `shaky` | any unresolved misconception, **or** the latest quiz below 70% | amber (ember) |
-| `solid` | no open misconceptions **and** the last two quizzes both at least 70% | gold |
+| `solid` | no open misconceptions **and** two *distinct* passing quiz checks (≥ 70%) | gold |
 | `met` | a page exists and neither of the above applies | blue-white |
 
 The `status` in frontmatter is only a cache, recomputed on every save and every graph read.
+Quiz checks are deduplicated by attempt: resubmitting the same `attemptId` — or the identical
+answers — replays the stored result instead of recording a second pass, so a retried submit can
+never inflate a concept into `solid`. Only student-authored artifacts reach
+`learner.evidenceIds`; peer-imported and model-generated material is recorded in the growth
+ledger but can never feed mastery.
+
+A generated quiz is a *signal*, not a certification: the dialog says so in words, and nothing in
+the engine treats a pass as proof of understanding.
+
+### The growth ledger
+
+`engine/src/brain/growth.ts → deriveGrowthEvents()` turns every committed plan into typed
+**learning events**, written beside the page under `.meta/events/<id>.json` inside the same
+journaled commit:
+
+| Kind | Fires when a commit shows |
+| --- | --- |
+| `encounter` | the first revision of a concept page |
+| `application` | the first revision of a synthesis or question |
+| `explanation` | `learner.inMyWords` changed |
+| `struggle` | `learner.stuck` changed |
+| `correction` | a claim was superseded or disputed |
+| `connection` | a link was added (origin preserved) |
+| `review` | learner sections revisited without new claims or links |
+
+Each event (`LearningEventSchema` in `packages/shared/src/wiki.ts`) carries `pageId`, `at`, an
+**actor** (`student` / `peer` / `model`, derived from the backing source's origin — never from a
+model's say-so), at least one evidence reference, and `knowledgeOnly`. Evidence is either a
+verbatim `SourceCitation` or an `EventRef`: a vault `source` (id + frozen revision), a durable
+`artifact` (a stored quiz result `res_*`), or the page `revision` itself — which is what makes an
+event reproducible: the event id is a hash of `kind | pageId | revision | subject`, so replaying
+a proposal or retrying a commit lands the identical file instead of a duplicate. An upsert that
+would only re-stamp `updatedAt` is recognised as no change and emits nothing. Non-student actors
+are forced to `knowledgeOnly: true` by the schema itself: **knowledge collected is kept separate
+from understanding demonstrated**, structurally, not by convention.
+
+`GET /api/brain/events?pageId=…` lists the ledger oldest-first; `GET /api/brain/records` lists
+every vault page (concepts, syntheses, questions) as records; `GET /api/brain/pages/:id/record`
+returns one page's detail view. The Brain view merges durable events with the older `log.md`
+entries in its timeline, and each record sheet shows its own growth trail.
 
 ## 3. How the brain changes
 
@@ -194,8 +235,10 @@ uploads), **Reflect** (freezing a chat's fresh turns) and the
 **Quizzes** write evidence through the same machinery: the score becomes a durable result
 artifact (`res_*`), a code-built proposal adds its id to the page's `learner.evidenceIds`,
 and a page still in the earlier format is adopted (`upgradeLegacyPage`) first — there is no
-legacy bypass writer left. The old `BrainVault` only *reads* typed pages now (as concept
-views for the sky and mastery); its `save`/`writeSeeded` refuse to touch them.
+legacy bypass writer left. `submitQuiz` accepts an `attemptId` (or falls back to a hash of
+the answers) and keys the stored result on it, so retries and double-submits replay the
+same result rather than stacking evidence. The old `BrainVault` only *reads* typed pages
+now (as concept views for the sky and mastery); its `save`/`writeSeeded` refuse to touch them.
 
 The student sees the diff, including what the deterministic pass dropped and why, in the
 "Your brain grew" dialog. **Lint** (`lint.ts`) surfaces open misconceptions, oversized pages
@@ -235,19 +278,22 @@ relayed to the university's authenticated feed by `PeerShareService`:
 `engine/src/brain/graph.ts → buildGraphView(courseGraph, pages, courses)` returns `GraphResponse` (`GET /api/graph`):
 
 - every lesson and concept node from the course sky, with concept nodes carrying the student's `status`, open misconception count, and whether a peer link touches them;
+- **personal nodes**: every vault page is a star — concepts under `c:<pageId>`, syntheses under `s:<pageId>`, questions under `q:<pageId>` (`pageNodeId`/`parsePageNodeId` in `packages/shared/src/brain.ts`). Course concepts keep their `c:<conceptKey>` ids, so old navigation stays valid. Pages with no course mapping (`courseRefs` empty) live in a synthetic constellation, `PERSONAL_SKY_ID` ("Your own sky"), that no real course can collide with. Personal nodes carry `kind` (`concept` | `synthesis` | `question`), the link **origin** that brought them (`student`, `peer`, `suggested`, or `course` for official syllabus pages — kept distinct from personal provenance), `pageId`, `status`, and counts of collected vs demonstrated evidence;
 - course edges plus every brain link whose two ends are in the sky;
-- `stats`: course concepts, lit (not unseen), shaky, solid, and student-made links. These drive the "62 of 286 lit" header.
+- `stats`: course concepts, lit (not unseen), shaky, solid, student-made links, and personal-node counts. These drive the "62 of 286 lit" header.
 
 ## 5. The Sky view
 
 `apps/desktop/src/features/sky/` renders the merged graph with react-three-fiber:
 
-- **Layout** (`layout.ts`) is deterministic: one column per semester, one constellation per course, lessons along a gentle wave in teaching order, and concepts spiralling around the lesson that introduces them. Reading left to right is reading the programme.
+- **Layout** (`layout.ts`) is deterministic: one column per semester, one constellation per course, lessons along a gentle wave in teaching order, and concepts spiralling around the lesson that introduces them. Personal pages are grouped apart in the "Your own sky" constellation rather than scattered through the course columns. Reading left to right is reading the programme.
+- **Shapes and rims** (`SkyCanvas.tsx`, `lib/brain-style.ts`) distinguish what a star is: course stars, personal concepts, syntheses and questions each get their own shape, and a rim marks peer- or suggested-origin nodes so imported material is visible at a glance.
 - **Camera** (`MapCamera.tsx`) behaves like a map: drag pans, wheel or pinch zooms toward the cursor, and selecting a star centres it in the space not covered by the side sheet.
 - **Labels** (`labels.ts`, `SkyLabels.tsx`) use semantic zoom: course names when far out, concept names when close. Collisions are resolved by priority, and the selection and hover labels always win.
 - **Next up** (`next-up.ts`) points the student at open misconceptions first, then the next unseen concepts in teaching order.
-- Clicking a star opens the **concept sheet**: the student's page, misconceptions, links, a quick quiz, and "Talk it through with the Guide".
+- Clicking a star opens the **concept sheet**, which is kind-aware: a course concept offers a quick quiz and "Talk it through with the Guide"; a synthesis or question (and any personal concept with no introducing lesson) shows its record and growth trail instead — the quiz action exists only where a real lesson can back it.
+- **Deep links**: the Sky view reads `?page=<pageId>` (`lib/nav.tsx`) to select a node — the stable anchor hook PR-21 builds on. The Brain view honours the same parameter for its record sheets.
 
 ## 6. Demo brains
 
-The three demo students' vaults are generated deterministically by `engine/src/demo/seed.ts` from the real courseware and the personas in `packages/shared/src/demo.ts`. Each gets pages with evidence, misconceptions, student links and seeded chat sessions. The same seed always produces the same brains, so the demo is reproducible.
+The three demo students' vaults are generated deterministically by `engine/src/demo/seed.ts` from the real courseware and the personas in `packages/shared/src/demo.ts`. Each gets pages with evidence, misconceptions, student links and seeded chat sessions — and personal pages (a synthesis, a question, peer-imported concepts) written through the **real proposal path**, so the demo vaults carry genuine typed growth events rather than hand-planted ones. The same seed always produces the same brains, so the demo is reproducible.

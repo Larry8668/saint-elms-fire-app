@@ -1,5 +1,5 @@
-import type { GraphNode, GraphResponse } from '@sef/shared';
-import { STATUS_STYLE } from '@/lib/brain-style';
+import { KIND_STYLE, STATUS_STYLE } from '@/lib/brain-style';
+import { PERSONAL_SKY_ID, type GraphNode, type GraphResponse } from '@sef/shared';
 import type { SkyLayout } from './layout';
 
 /** Semantic zoom: what is worth reading at each scale. */
@@ -29,7 +29,7 @@ export interface CourseProgress {
 export function courseProgress(graph: GraphResponse): Map<string, CourseProgress> {
   const map = new Map<string, CourseProgress>();
   for (const n of graph.nodes) {
-    if (n.kind !== 'concept') continue;
+    if (n.kind !== 'concept' || n.courseId === PERSONAL_SKY_ID) continue;
     const p = map.get(n.courseId) ?? { lit: 0, total: 0, shaky: 0 };
     p.total += 1;
     if (n.status !== 'unseen') p.lit += 1;
@@ -39,7 +39,7 @@ export function courseProgress(graph: GraphResponse): Map<string, CourseProgress
   return map;
 }
 
-const statusText = (n: GraphNode) => (n.kind === 'lesson' ? 'Lesson' : STATUS_STYLE[n.status].label);
+const statusText = (n: GraphNode) => (n.kind === 'concept' ? STATUS_STYLE[n.status].label : KIND_STYLE[n.kind].label);
 
 /** Picks the labels to show; later entries win so selection and hover always override tier rules. */
 export function buildLabels(args: {
@@ -68,7 +68,7 @@ export function buildLabels(args: {
       x: c.bounds.minX + 18,
       y: c.bounds.maxY - 6,
       text: c.title,
-      sub: p ? `${p.lit} of ${p.total} lit${p.shaky ? ` · ${p.shaky} shaky` : ''}` : undefined,
+      sub: c.courseId === PERSONAL_SKY_ID ? `${c.nodeIds.length} page${c.nodeIds.length === 1 ? '' : 's'}` : p ? `${p.lit} of ${p.total} lit${p.shaky ? ` · ${p.shaky} shaky` : ''}` : undefined,
       tone: 'course',
     });
   }
@@ -76,10 +76,17 @@ export function buildLabels(args: {
   // With a selection, only its neighbourhood is named; everything else is context.
   const quiet = Boolean(selectedId);
   for (const n of graph.nodes) {
-    if (n.kind === 'lesson' && tier >= 1) at(n, 'lesson');
-    if (n.kind !== 'concept') continue;
-    if (n.status === 'shaky') at(n, 'shaky');
-    else if (tier >= 2 && !quiet && (showUnseen || n.status !== 'unseen')) at(n, 'concept');
+    if (n.kind === 'lesson') {
+      if (tier >= 1) at(n, 'lesson');
+      continue;
+    }
+    if (n.kind === 'concept') {
+      if (n.status === 'shaky') at(n, 'shaky');
+      else if (tier >= 2 && !quiet && (showUnseen || n.status !== 'unseen')) at(n, 'concept');
+      continue;
+    }
+    // Personal pages are few and pointful — name them at reading zoom.
+    if (tier >= 1 && !quiet) at(n, 'concept');
   }
 
   if (selectedId) {

@@ -2,7 +2,7 @@ import { Canvas, useFrame, useThree, type ThreeEvent } from '@react-three/fiber'
 import type { EdgeOrigin, GraphNode, GraphResponse } from '@sef/shared';
 import { useEffect, useMemo, useRef, type RefObject } from 'react';
 import * as THREE from 'three';
-import { LESSON_HEX, ORIGIN_STYLE, STATUS_STYLE } from '@/lib/brain-style';
+import { KIND_STYLE, LESSON_HEX, nodeShape, ORIGIN_STYLE, rimFor, starHex, STATUS_STYLE } from '@/lib/brain-style';
 import type { LabelItem } from './labels';
 import { hash01, type SkyLayout } from './layout';
 import { MapCamera, type FrameRequest, type Insets, type MapCameraApi } from './MapCamera';
@@ -35,12 +35,16 @@ const STAR_VERTEX = /* glsl */ `
   attribute float alpha;
   attribute float phase;
   attribute float pulse;
+  attribute float shape;
   attribute vec3 starColor;
+  attribute vec3 rimColor;
   uniform float uTime;
   uniform float uPixelRatio;
   uniform float uZoom;
   varying vec3 vColor;
+  varying vec3 vRim;
   varying float vAlpha;
+  varying float vShape;
   void main() {
     float twinkle = 0.9 + 0.1 * sin(uTime * 1.3 + phase * 6.2831);
     float throb = 1.0 + pulse * 0.35 * sin(uTime * 3.0 + phase * 6.2831);
@@ -48,23 +52,31 @@ const STAR_VERTEX = /* glsl */ `
     gl_PointSize = clamp(size * scale * twinkle * throb, 2.0, 64.0) * uPixelRatio;
     gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0);
     vColor = starColor;
+    vRim = rimColor;
     vAlpha = alpha;
+    vShape = shape;
   }
 `;
 
 const STAR_FRAGMENT = /* glsl */ `
   varying vec3 vColor;
+  varying vec3 vRim;
   varying float vAlpha;
+  varying float vShape;
   void main() {
     vec2 uv = gl_PointCoord - 0.5;
-    float d = length(uv);
-    if (d > 0.5) discard;
-    float core = smoothstep(0.14, 0.0, d);
-    float halo = pow(smoothstep(0.5, 0.0, d), 2.2);
+    // Point-sprite silhouettes: disc for stars, diamond for syntheses, square for open questions.
+    float dist = vShape < 0.5 ? length(uv) : vShape < 1.5 ? (abs(uv.x) + abs(uv.y)) * 0.72 : max(abs(uv.x), abs(uv.y));
+    if (dist > 0.5) discard;
+    float core = smoothstep(0.14, 0.0, dist);
+    float halo = pow(smoothstep(0.5, 0.0, dist), 2.2);
     float spikes = (max(0.0, 1.0 - abs(uv.y) * 30.0) * smoothstep(0.5, 0.0, abs(uv.x))
-                  + max(0.0, 1.0 - abs(uv.x) * 30.0) * smoothstep(0.5, 0.0, abs(uv.y))) * 0.22;
+                  + max(0.0, 1.0 - abs(uv.x) * 30.0) * smoothstep(0.5, 0.0, abs(uv.y))) * 0.22 * (1.0 - min(vShape, 1.0));
     float intensity = core + halo * 0.65 + spikes;
-    gl_FragColor = vec4(mix(vColor, vec3(1.0), core * 0.7) * intensity, intensity * vAlpha);
+    // The rim carries provenance: a personal page's silhouette is ringed in its origin colour.
+    float rim = smoothstep(0.30, 0.47, dist);
+    vec3 col = mix(mix(vColor, vec3(1.0), core * 0.7), vRim, rim * 0.85);
+    gl_FragColor = vec4(col * intensity, intensity * vAlpha);
   }
 `;
 
@@ -85,6 +97,8 @@ const NEBULA_VERTEX = /* glsl */ `
 
 function starAppearance(node: GraphNode, showUnseen: boolean) {
   if (node.kind === 'lesson') return { hex: LESSON_HEX, size: 6.5, alpha: 0.9, pulse: 0 };
+  if (node.kind === 'synthesis') return { hex: KIND_STYLE.synthesis.hex!, size: 5.8, alpha: 1, pulse: 0 };
+  if (node.kind === 'question') return { hex: KIND_STYLE.question.hex!, size: 5.8, alpha: 1, pulse: 0.7 };
   switch (node.status) {
     case 'unseen':
       return { hex: STATUS_STYLE.unseen.hex, size: 2.6, alpha: showUnseen ? 0.55 : 0.08, pulse: 0 };
@@ -104,23 +118,35 @@ function StarField({ graph, layout, focus, showUnseen, onHover, onPick }: Pick<S
 
   const geometry = useMemo(() => {
     const n = graph.nodes.length;
-    const attrs = { position: new Float32Array(n * 3), starColor: new Float32Array(n * 3), size: new Float32Array(n), alpha: new Float32Array(n), phase: new Float32Array(n), pulse: new Float32Array(n) };
+    const attrs = {
+      position: new Float32Array(n * 3),
+      starColor: new Float32Array(n * 3),
+      rimColor: new Float32Array(n * 3),
+      size: new Float32Array(n),
+      alpha: new Float32Array(n),
+      phase: new Float32Array(n),
+      pulse: new Float32Array(n),
+      shape: new Float32Array(n),
+    };
     const c = new THREE.Color();
     graph.nodes.forEach((node, i) => {
       const [x, y] = layout.positions.get(node.id) ?? [0, 0];
       attrs.position.set([x, y, 0], i * 3);
       const look = starAppearance(node, showUnseen);
-      attrs.starColor.set(c.set(look.hex).toArray(), i * 3);
+      attrs.starColor.set(c.set(starHex(node)).toArray(), i * 3);
+      attrs.rimColor.set(c.set(rimFor(node)).toArray(), i * 3);
       const inFocus = focus?.has(node.id);
       attrs.size[i] = look.size * (inFocus ? 1.2 : 1);
       attrs.alpha[i] = focus && !inFocus ? look.alpha * 0.18 : look.alpha;
       attrs.phase[i] = hash01(node.id);
       attrs.pulse[i] = look.pulse;
+      attrs.shape[i] = nodeShape(node);
     });
     const g = new THREE.BufferGeometry();
     g.setAttribute('position', new THREE.BufferAttribute(attrs.position, 3));
     g.setAttribute('starColor', new THREE.BufferAttribute(attrs.starColor, 3));
-    for (const key of ['size', 'alpha', 'phase', 'pulse'] as const) g.setAttribute(key, new THREE.BufferAttribute(attrs[key], 1));
+    g.setAttribute('rimColor', new THREE.BufferAttribute(attrs.rimColor, 3));
+    for (const key of ['size', 'alpha', 'phase', 'pulse', 'shape'] as const) g.setAttribute(key, new THREE.BufferAttribute(attrs[key], 1));
     return g;
   }, [graph, layout, focus, showUnseen]);
 

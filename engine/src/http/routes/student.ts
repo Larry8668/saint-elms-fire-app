@@ -190,6 +190,18 @@ export function studentRoutes(deps: EngineDeps, conversations: ConversationRegis
   app.get('/brain/log', guard, async (c) => c.json(await c.get('ws').brain.log(Number(c.req.query('limit') ?? 50))));
   app.get('/brain/lint', guard, async (c) => c.json(await c.get('ws').brain.lint()));
 
+  /** Every vault page in list form — concepts, syntheses, questions — so personal pages are findable. */
+  app.get('/brain/records', guard, async (c) => c.json(await c.get('ws').brain.records()));
+  /** The growth ledger, or one page's slice of it: attributable events, oldest first. */
+  app.get('/brain/events', guard, async (c) => c.json(await c.get('ws').brain.events(c.req.query('pageId'))));
+  /** One vault page in full — the detail view for any kind, not only concepts. */
+  app.get('/brain/pages/:id/record', guard, async (c) => {
+    const id = IdentifierSchema.safeParse(c.req.param('id'));
+    if (!id.success) return c.json({ error: 'No page with this id' }, 404);
+    const record = await c.get('ws').brain.pageRecord(id.data);
+    return record ? c.json(record) : c.json({ error: 'No page with this id' }, 404);
+  });
+
   /**
    * Reflect freezes the session's fresh turns as a kept source and stops — the turns stay
    * pending until the student accepts the proposal a later compile files. The checkpoint
@@ -211,9 +223,9 @@ export function studentRoutes(deps: EngineDeps, conversations: ConversationRegis
 
   app.post('/quiz/:key', guard, async (c) => c.json(await c.get('ws').brain.createQuiz(c.req.param('key'))));
   app.post('/quiz/:id/submit', guard, async (c) => {
-    const body = z.object({ answers: z.array(z.number().int()) }).safeParse(await c.req.json().catch(() => null));
+    const body = z.object({ answers: z.array(z.number().int()), attemptId: z.string().max(80).optional() }).safeParse(await c.req.json().catch(() => null));
     if (!body.success) return c.json({ error: 'answers must be an array of option indexes' }, 400);
-    return c.json(await c.get('ws').brain.submitQuiz(c.req.param('id'), body.data.answers));
+    return c.json(await c.get('ws').brain.submitQuiz(c.req.param('id'), body.data.answers, body.data.attemptId));
   });
 
   return app;
