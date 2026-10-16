@@ -48,9 +48,10 @@ services:
       UNI_TRUSTED_ORIGINS: ${UNI_TRUSTED_ORIGINS:-}
       BETTER_AUTH_SECRET: ${BETTER_AUTH_SECRET:-}
       MAIL_SMTP_URL: ${MAIL_SMTP_URL:-}
-      # The compose stack is the demo surface, so the seeded admin password defaults here
-      # explicitly; a real deployment sets DEMO_PASSWORD (and usually SEED_DEMO=false).
-      DEMO_PASSWORD: ${DEMO_PASSWORD:-harbor-lantern}
+      # Seeded accounts get this password, so it must be chosen by the operator — never a
+      # shipped default. Production refuses to boot with the public demo password anyway;
+      # requiring it here fails at `compose up` with a clear message instead of crash-looping.
+      DEMO_PASSWORD: ${DEMO_PASSWORD:?Set DEMO_PASSWORD in .env to a private value — see .env.example}
       SEED_DEMO: ${SEED_DEMO:-true}
       UNI_DATABASE_URL: postgresql://sef:${UNI_DB_PASSWORD:-sef-uni-local-dev-only}@postgres:5432/sef_uni
     volumes:

@@ -63,9 +63,9 @@ export function createApp(deps: UniDeps) {
    */
   app.get('/ready', async (c) => {
     const checks: Record<string, boolean> = { accountAuth: Boolean(deps.accountAuth) };
-    if (deps.pool) {
-      checks.database = await deps.pool.query('SELECT 1').then(() => true, () => false);
-    }
+    // Explicit false, not an absent key: readiness must not depend on checks aligning
+    // with how deps happen to be wired elsewhere.
+    checks.database = deps.pool ? await deps.pool.query('SELECT 1').then(() => true, () => false) : false;
     const ready = Object.values(checks).every(Boolean);
     return c.json({ ok: ready, checks }, ready ? 200 : 503);
   });
