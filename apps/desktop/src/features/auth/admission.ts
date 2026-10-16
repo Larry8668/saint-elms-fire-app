@@ -32,7 +32,8 @@ const COPY: Record<AdmissionState, AdmissionCopy> = {
   pending: {
     title: 'Waiting for approval',
     body: 'The registrar is reviewing your application. You will be able to study as soon as they approve it.',
-    action: 'Check again',
+    // The gate renders a "Check again" refresh button next to this link, so the link needs its own label.
+    action: 'Open the university portal',
   },
   rejected: {
     title: 'Application not accepted',
