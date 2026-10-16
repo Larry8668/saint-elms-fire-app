@@ -33,7 +33,8 @@ export async function webSearch(baseUrl: string, query: string, limit = 5): Prom
     .filter((r) => !seen.has(r.url) && seen.add(r.url))
     .slice(0, limit)
     .map((r) => ({ ...r, snippet: r.snippet.slice(0, SNIPPET_CHARS) }));
-  log.info('web_search', { query, results: results.length, infoboxes: infoboxes.length });
+  // The student's query is deliberately not logged: it is their question, not telemetry.
+  log.info('web_search', { results: results.length, infoboxes: infoboxes.length });
   return results;
 }
 

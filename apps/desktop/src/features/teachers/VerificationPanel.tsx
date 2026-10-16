@@ -3,6 +3,7 @@ import { BookOpen, Brain, CheckCircle2, ChevronDown, Cpu, Globe, LifeBuoy, Wrenc
 import { useState } from 'react';
 import { cn } from '@/lib/cn';
 import { safeHref } from '@/lib/url';
+import { providerDisclosure, segmentSummary } from './verification-summary';
 
 const SOURCE_ICON = { lesson: BookOpen, brain: Brain, web: Globe, support: LifeBuoy } as const;
 
@@ -11,6 +12,8 @@ export function VerificationPanel({ verification }: { verification: Verification
   const [open, setOpen] = useState(false);
   const passed = verification.checks.filter((c) => c.passed).length;
   const allPassed = passed === verification.checks.length;
+  const segments = segmentSummary(verification);
+  const disclosure = providerDisclosure(verification);
 
   return (
     <div className="mt-2.5">
@@ -24,6 +27,7 @@ export function VerificationPanel({ verification }: { verification: Verification
           {passed}/{verification.checks.length} checks
         </span>
         <span>{verification.sources.length} source{verification.sources.length === 1 ? '' : 's'}</span>
+        {verification.withheld ? <span className="text-ember-400">{verification.withheld} withheld</span> : null}
         {verification.toolCalls.length > 0 && <span>{verification.toolCalls.length} tool call{verification.toolCalls.length === 1 ? '' : 's'}</span>}
         <span className="flex items-center gap-1">
           <Cpu className="size-3" /> {verification.model}
@@ -44,6 +48,12 @@ export function VerificationPanel({ verification }: { verification: Verification
               </div>
             ))}
           </div>
+          {segments && (
+            <div>
+              <div className="mb-1 text-[10.5px] font-semibold tracking-[0.16em] text-night-500 uppercase">What this answer is made of</div>
+              <p className="text-night-300">{segments}</p>
+            </div>
+          )}
           {verification.sources.length > 0 && (
             <div>
               <div className="mb-1 text-[10.5px] font-semibold tracking-[0.16em] text-night-500 uppercase">Sources</div>
@@ -80,7 +90,15 @@ export function VerificationPanel({ verification }: { verification: Verification
               </ul>
             </div>
           )}
-          <div className="text-night-500">Served by {verification.model} · {verification.provider}</div>
+          <div className="space-y-1 border-t border-white/[0.06] pt-2.5 text-night-500">
+            <div>
+              Served by {verification.model} · {verification.provider}
+              {disclosure && <span> · {disclosure}</span>}
+            </div>
+            <p className="text-[11.5px] leading-5 text-night-600">
+              Checks confirm that citations resolve to evidence this teacher was permitted to see — a source existing does not prove a statement is true.
+            </p>
+          </div>
         </div>
       )}
     </div>
