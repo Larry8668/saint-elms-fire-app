@@ -82,7 +82,7 @@ const waitFor = async (label: string, url: string, proc: ChildProcess | null, de
   return `${label} did not become healthy in time.`;
 };
 
-export default async function globalSetup(): Promise<void> {
+export default async function globalSetup(): Promise<(() => Promise<void>) | void> {
   // Something already answering /health on our port is not our server: running against it would
   // test the wrong build while reporting ours. Refuse to start rather than race the spawn.
   for (const [name, url] of [
