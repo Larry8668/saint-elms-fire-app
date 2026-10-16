@@ -13,6 +13,7 @@ import { settingsRoutes } from './routes/settings';
 import { shareRoutes } from './routes/shares';
 import { studentRoutes } from './routes/student';
 import { sourceRoutes } from './routes/sources';
+import { wikiRoutes } from './routes/wiki';
 
 export type { EngineDeps } from './context';
 
@@ -110,6 +111,7 @@ export function createApp(deps: EngineDeps) {
   app.route('/api', settingsRoutes(deps));
   app.route('/api', studentRoutes(deps));
   app.route('/api', sourceRoutes(deps));
+  app.route('/api', wikiRoutes(deps));
   app.route('/api', shareRoutes(deps));
 
   return app;

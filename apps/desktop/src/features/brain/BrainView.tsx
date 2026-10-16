@@ -9,13 +9,15 @@ import { CardGridSkeleton, RowListSkeleton, TimelineSkeleton } from '@/component
 import { ProposalReviewDialog } from '@/features/contribute/ProposalReviewDialog';
 import { KIND_STYLE, STATUS_STYLE } from '@/lib/brain-style';
 import { useNav } from '@/lib/nav';
-import { useBrainLog, useEvents, useGraph, useJobBoard, useLint, useRecords } from '@/lib/queries';
+import { useBrainLog, useEvents, useGraph, useJobBoard, useLint, useRecords, useWikiIndex } from '@/lib/queries';
 import { shortDate } from '@/lib/time';
 import { ConceptSheet } from './ConceptSheet';
 import { ACTOR_LABEL, EVENT_LABEL } from './GrowthTrail';
 import { RecordSheet } from './RecordSheet';
 import { SourceDetailDialog } from './SourceDetail';
 import { SourcesPanel } from './SourcesPanel';
+import { WikiIndexPanel } from './WikiIndex';
+import { WikiPageDialog } from './WikiPageDialog';
 
 const LOG_ICON: Record<string, typeof Brain> = { session: MessageCircleQuestion, capture: FilePlus2, quiz: GraduationCap, wiki: History, source: History, migrate: History, remove: History, erase: History };
 const EVENT_ICON: Record<LearningEvent['kind'], typeof Brain> = {
@@ -37,11 +39,13 @@ export function BrainView() {
   const [sourceId, setSourceId] = useState<string | null>(null);
   const [proposalId, setProposalId] = useState<string | null>(null);
   const records = useRecords();
+  const [wikiPageId, setWikiPageId] = useState<string | null>(null);
   const log = useBrainLog();
   const events = useEvents();
   const lint = useLint();
   const graph = useGraph();
   const board = useJobBoard();
+  const wiki = useWikiIndex();
 
   // A node-backed page opens the sky sheet; everything else (source summaries, orphans) opens the record sheet.
   const selectedNode = useMemo(() => (selectedPageId && graph.data ? (graph.data.nodes.find((n) => n.pageId === selectedPageId) ?? null) : null), [selectedPageId, graph.data]);
@@ -78,6 +82,7 @@ export function BrainView() {
               onValueChange={setTab}
               items={[
                 { value: 'pages', label: `Pages${records.data ? ` · ${records.data.length}` : ''}` },
+                { value: 'wiki', label: `Wiki${wiki.data ? ` · ${wiki.data.counts.pages}` : ''}` },
                 { value: 'sources', label: `Sources${sourceCount ? ` · ${sourceCount}` : ''}` },
                 { value: 'questions', label: `Open questions${openFindings ? ` · ${openFindings}` : ''}` },
                 { value: 'timeline', label: 'Timeline' },
@@ -111,6 +116,8 @@ export function BrainView() {
             </div>
           </>
         )}
+
+        {tab === 'wiki' && <WikiIndexPanel index={wiki.data} loading={wiki.isLoading} onOpen={setWikiPageId} />}
 
         {tab === 'sources' && (
           <div className="max-w-2xl">
@@ -190,6 +197,7 @@ export function BrainView() {
       )}
       <RecordSheet pageId={selectedPageId && !selectedNode ? selectedPageId : null} onClose={() => openPage(null)} />
       <SourceDetailDialog sourceId={sourceId} onClose={() => setSourceId(null)} onReviewProposal={setProposalId} />
+      <WikiPageDialog pageId={wikiPageId} onClose={() => setWikiPageId(null)} onOpenSource={setSourceId} onOpenPage={setWikiPageId} />
       <ProposalReviewDialog proposalId={proposalId} onClose={() => setProposalId(null)} />
     </div>
   );

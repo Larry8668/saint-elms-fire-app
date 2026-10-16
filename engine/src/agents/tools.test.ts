@@ -26,7 +26,16 @@ const run = (teacher: Parameters<typeof buildTools>[0], ctx: TurnContext, tool: 
 test('every tool is registered for every teacher, so a refusal is visible rather than missing', () => {
   const ctx = new TurnContext(() => {});
   for (const teacher of ['friend', 'guide', 'philosopher'] as const) {
-    assert.deepEqual(Object.keys(buildTools(teacher, deps, ctx)).sort(), ['brain_lookup', 'handoff', 'read_lesson', 'search_lessons', 'weakest_concepts', 'web_search']);
+    assert.deepEqual(Object.keys(buildTools(teacher, deps, ctx)).sort(), [
+      'brain_lookup',
+      'handoff',
+      'read_lesson',
+      'read_wiki_page',
+      'search_lessons',
+      'search_wiki',
+      'weakest_concepts',
+      'web_search',
+    ]);
   }
 });
 
