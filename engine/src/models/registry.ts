@@ -2,6 +2,7 @@ import { createAnthropic } from '@ai-sdk/anthropic';
 import { createOpenAI } from '@ai-sdk/openai';
 import { createOpenAICompatible } from '@ai-sdk/openai-compatible';
 import type { ModelRole, ProviderConfig } from '@sef/shared';
+import { envInt } from '@sef/shared/node';
 import { createOllama } from 'ollama-ai-provider-v2';
 import type { StoredSettings } from '../settings/store';
 
@@ -54,11 +55,17 @@ const FACTORIES: Record<ProviderConfig['kind'], ProviderFactory> = {
 /**
  * Ollama defaults to a 4K context, which silently truncates brain-keeper prompts and
  * makes thinking runs crawl. One fixed size for every call also avoids model reloads.
+ * Parsed fail-closed: a malformed OLLAMA_NUM_CTX/OLLAMA_NUM_PREDICT stops boot with a
+ * readable error instead of drifting into NaN inside the provider.
  */
-export const OLLAMA_OPTIONS = {
-  num_ctx: Number(process.env.OLLAMA_NUM_CTX ?? 12288),
-  num_predict: Number(process.env.OLLAMA_NUM_PREDICT ?? 1200),
-};
+export function ollamaOptions(environment: NodeJS.ProcessEnv = process.env): { num_ctx: number; num_predict: number } {
+  return {
+    num_ctx: envInt('OLLAMA_NUM_CTX', 12288, {}, environment),
+    num_predict: envInt('OLLAMA_NUM_PREDICT', 1200, {}, environment),
+  };
+}
+
+export const OLLAMA_OPTIONS = ollamaOptions();
 
 function providerOptionsFor(kind: ProviderConfig['kind'], think: boolean): Record<string, Record<string, unknown>> {
   // Ollama rejects the `think` field outright on models without a thinking mode, so it is

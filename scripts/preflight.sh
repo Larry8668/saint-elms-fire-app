@@ -40,7 +40,8 @@ else
 fi
 
 section "Services"
-probe "University server" "$UNI_URL/health" bad "pnpm dev:uni or docker compose up -d uni"
+# /ready, not /health: liveness answers while the database is dead; readiness fails then.
+probe "University server" "$UNI_URL/ready" bad "pnpm dev:uni or docker compose up -d uni"
 probe "Local engine" "$ENGINE_URL/api/health" bad "pnpm dev:engine"
 probe "Web search (SearXNG)" "$SEARXNG_URL/healthz" warn "run: pnpm search:up (the Philosopher falls back to course-only)"
 
