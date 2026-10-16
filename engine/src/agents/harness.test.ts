@@ -36,6 +36,7 @@ function harness(reply: string, claims?: ClaimReader): Harness {
     content: {
       supportLessons: async () => lessons.filter((l) => l.courseId === 'support'),
       academicLessons: async () => lessons.filter((l) => l.courseId !== 'support'),
+      allLessons: async () => lessons,
       lesson: async (id: string) => lessons.find((l) => l.id === id) ?? null,
     },
     brain: {
@@ -59,15 +60,18 @@ function harness(reply: string, claims?: ClaimReader): Harness {
   return { deps, events, agentCalls: () => agents, webCalls: () => web, instructions: () => instructions.join('\n') };
 }
 
-test('delta events carry each new chunk, not the running total', async () => {
+test('factual content is withheld until its checks pass — progress streams, text does not', async () => {
   const h = harness('unused');
   h.deps.makeAgent = ((_id: string, _prompt: string) => ({
     stream: async () => ({ textStream: (async function* () { yield 'one '; yield 'two '; yield 'three'; })() }),
   })) as unknown as HarnessDeps['makeAgent'];
   await runChatTurn(turn({ teacher: 'guide', messages: [{ role: 'user', content: 'explain resonance' }] }), h.deps, (e) => h.events.push(e));
   const deltas = h.events.filter((e) => e.type === 'delta').map((e) => (e.type === 'delta' ? e.text : ''));
-  assert.deepEqual(deltas, ['one ', 'two ', 'three']);
-  assert.equal(done(h.events).text, 'one two three');
+  const finished = done(h.events);
+  assert.deepEqual(deltas, [finished.text], 'one delta carries the verified answer, not streamed chunks');
+  const deltaIndex = h.events.findIndex((e) => e.type === 'delta');
+  const doneIndex = h.events.findIndex((e) => e.type === 'done');
+  assert.ok(deltaIndex === doneIndex - 1, 'the only delta arrives after the evidence checks');
 });
 
 const turn = (over: Partial<ChatRequest> & Pick<ChatRequest, 'teacher'>): ChatRequest => ({
@@ -266,4 +270,55 @@ test('the Friend is given the support pool, never the courseware', async () => {
   assert.match(block, /UNIVERSITY NOTES/);
   assert.match(block, /Fees and Deadlines/);
   assert.doesNotMatch(block, /Damped Oscillations/);
+});
+
+test('a forged lesson citation fails before display and is reported, never re-labelled', async () => {
+  const h = harness('A damped oscillator loses amplitude over time as friction drains its energy. [lesson: torsion-pendulum]');
+  await runChatTurn(turn({ teacher: 'guide', messages: [{ role: 'user', content: 'explain damping' }] }), h.deps, (e) => h.events.push(e));
+  const finished = done(h.events);
+  assert.doesNotMatch(finished.text, /torsion-pendulum|\[lesson:/, 'the forged marker is never display text');
+  const citations = finished.verification.checks.find((c) => c.id === 'citations');
+  assert.equal(citations?.passed, false);
+  assert.match(citations?.detail ?? '', /does not exist|outside this teacher’s evidence/);
+});
+
+test('a statement the permitted evidence cannot back is withheld, not streamed then repaired', async () => {
+  const h = harness('A damped oscillator loses amplitude over time as friction drains its energy. The moon is made of green cheese.');
+  await runChatTurn(turn({ teacher: 'guide', messages: [{ role: 'user', content: 'explain damping' }] }), h.deps, (e) => h.events.push(e));
+  const finished = done(h.events);
+  assert.match(finished.text, /damped oscillator/);
+  assert.doesNotMatch(finished.text, /green cheese/);
+  const deltas = h.events.filter((e) => e.type === 'delta').map((e) => (e.type === 'delta' ? e.text : ''));
+  assert.ok(deltas.every((d) => !d.includes('green cheese')), 'the unsupported statement was never streamed');
+  assert.equal(finished.verification.withheld, 1);
+  assert.equal(finished.verification.checks.find((c) => c.id === 'evidence')?.passed, false);
+});
+
+test('missing evidence produces honest uncertainty, not a manufactured answer', async () => {
+  const h = harness('Quantum gravity unifies all four forces. It predicts graviton oscillations weekly.');
+  await runChatTurn(turn({ teacher: 'guide', messages: [{ role: 'user', content: 'explain quantum gravity' }] }), h.deps, (e) => h.events.push(e));
+  const finished = done(h.events);
+  assert.match(finished.text, /don’t back that|won’t invent/);
+  assert.equal(finished.verification.lane, 'answered');
+});
+
+test('a citation naming a real lesson outside the Friend’s pool is wrong-owner', async () => {
+  const h = harness('The lesson on Damped Oscillations covers fees [lesson: damped].');
+  await runChatTurn(turn({ teacher: 'friend', messages: [{ role: 'user', content: 'what about my fees?' }] }), h.deps, (e) => h.events.push(e));
+  const finished = done(h.events);
+  assert.doesNotMatch(finished.text, /\[lesson:/);
+  assert.match(finished.verification.checks.find((c) => c.id === 'citations')?.detail ?? '', /outside this teacher’s evidence/);
+});
+
+test('the served answer carries its evidence map and the provider is disclosed', async () => {
+  const h = harness('A damped oscillator loses amplitude over time as friction drains its energy. [lesson: damped]');
+  await runChatTurn(turn({ teacher: 'guide', messages: [{ role: 'user', content: 'explain damping' }] }), h.deps, (e) => h.events.push(e));
+  const finished = done(h.events);
+  assert.ok(finished.verification.segments?.length, 'segments are part of the response contract');
+  assert.equal(finished.verification.providerKind, 'ollama');
+  const provider = finished.verification.checks.find((c) => c.id === 'provider');
+  assert.equal(provider?.label, 'Answered by a model on this device');
+  const fact = finished.verification.segments?.find((s) => s.kind === 'fact');
+  assert.equal(fact?.support, 'supported');
+  assert.deepEqual(fact?.sources, ['damped']);
 });

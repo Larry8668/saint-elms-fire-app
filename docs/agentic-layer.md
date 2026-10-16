@@ -58,36 +58,57 @@ Tools are built **per turn** around a `TurnContext` (`context.ts`), so every cal
 2. **Retrieval up front.** Lessons are searched from the right pool (`content/search.ts`). The search is weighted keyword scoring over title, concepts, headings and body, keeping hits within 40% of the best score, top 3. Only installed lessons exist on the device, and only released lessons can be installed, so "released lessons only" holds by construction. Retrieval happens before the model runs, so even a model that is weak at tool use stays grounded; the teacher can still call `search_lessons` or `read_lesson` for more.
 3. **Brain context (Guide and Philosopher).** Concept keys from the hits are looked up in the student's vault. Their status, "in my words", and up to five open misconceptions go into a `STUDENT BRAIN` block. This is why the Guide says things like "given that you're shaky on the second law…".
 4. **Web search (Philosopher).** SearXNG is queried and results are passed in a `WEB RESULTS` block. If search is down, the block says so, and the model is told to use `[course]` lines only.
-5. ***Model.*** The teacher runs with its tools for up to 4 steps at temperature 0.4, streaming text to the UI.
-6. **Source attribution.** See section 4.
-7. **Validation and repair.**
-   - Philosopher: `checkPhilosopherFormat` checks the tags and the single trailhead. If it fails, `repairPhilosopherFormat` rewrites the answer deterministically instead of re-prompting a slow model, and the check is marked "Repaired by validator".
-   - Guide and Friend: `checkGrounding` passes if the answer **measurably draws on** at least one retrieved lesson, or honestly says the topic isn't covered.
-   - Image turns record whether the image was read on-device.
+5. ***Model.*** The teacher runs with its tools for up to 4 steps at temperature 0.4. Statuses and tool calls stream to the UI immediately; the model's answer text is buffered, not streamed — a statement is never shown and then "repaired" out of view.
+6. **Evidence assessment** (`evidence.ts` + `validators.ts → assessAnswer`). See section 4.
+7. **Serve.** Only the segments that passed are reassembled into the answer; the single `delta` event the UI receives already carries the verified text. Statements nothing could back are withheld; if nothing claim-bearing survives at all, the answer is replaced by an honest decline ("your released lessons don't back that, and I won't invent a source"). A citation is never re-labelled into a more plausible one.
 8. **Persist.** The turn is appended to the student's session file, with the full `Verification` (section 5).
-9. **Done event.** The UI gets the final text and the `Verification` object (model, provider, sources, checks, tool calls, handoff, lane) and renders source chips plus the verification panel.
+9. **Done event.** The UI gets the served text and the `Verification` object (model, provider, sources, checks, segments, withheld count, tool calls, handoff, lane) and renders source chips plus the verification panel.
 
-## 4. Sources: what they are and how they're attributed
+## 4. Sources: what they are and how the answer is checked against them
 
 There are four kinds of source (`SourceRef` in `packages/shared/src/api.ts`):
 
 | Kind | Comes from | Correctness guarantee |
 | --- | --- | --- |
-| `lesson` / `support` | Retrieval and the `search_lessons` / `read_lesson` tools | Always a real installed lesson. Whether the answer **used** it is checked by attribution (below). |
+| `lesson` / `support` | Retrieval and the `search_lessons` / `read_lesson` tools | Always a real installed lesson. Whether the answer **used** it is checked by the evidence assessment (below). |
 | `brain` | `brain_lookup` | The student's own page, exactly as read. |
-| `web` | SearXNG results | The real URL and title returned by search. The `[web]` tag rule keeps claims tied to these results; the tool can't check every claim against each page. |
+| `web` | SearXNG results | The real URL and title returned by search. A `[web]` tag or `[web: n]` citation only resolves if it names one of the results the teacher actually saw. |
 
-**Attribution** (`engine/src/agents/attribution.ts`) runs after the answer is complete:
+### The permitted evidence set
 
-1. Each retrieved lesson is split into sections at its h1–h4 headings, skipping fenced code.
-2. It takes the **answer-specific terms**: words in the answer that weren't in the question. Question words are excluded because every retrieved lesson matches those by construction.
-3. For each lesson, the best section is the one sharing the most answer-specific terms.
-4. A lesson is **cited** if it shares at least 4 of those terms **and** at least half as many as the best lesson, or if the answer names the lesson by title.
-5. Each lesson source gets `cited`, `courseName`, `section: { heading, index }` and an `excerpt` (the best-matching paragraph, trimmed without breaking inline maths).
+`engine/src/agents/evidence.ts → buildEvidenceSet` builds, per turn, the set of evidence the teacher may cite: the sources surfaced by retrieval or tools (with the exact text each one showed, kept on `TurnContext.evidenceText`), the wiki-claim verdicts the prompt displayed (assertable claims may be cited; withheld ones may be named but can never support a statement), and context blocks like the STUDENT BRAIN block (may support a statement, may never be cited). Ids of real lessons outside this teacher's pool are kept as *foreign ids*, so a citation naming one is judged **wrong-owner**, not merely unknown.
 
-Cited sources are listed first. In the UI, cited lessons are shown as chips, and retrieved-but-unused lessons sit behind a "+N also retrieved" toggle. Clicking a lesson chip shows the passage and an **Open at this section** button. That opens the Library reader at that heading (`section` index, with the heading text as a fallback) and briefly highlights it (`features/library/use-scroll-to-section.ts`).
+### Citations are resolved, not believed
 
-Attribution is lexical, not semantic. It reliably separates "the answer used this lesson" from "this lesson happened to share a keyword with the question". A heavily paraphrased answer could still be under-credited. Tests: `engine/src/agents/attribution.test.ts`.
+The prompt teaches the permitted forms — `[lesson: <id>]`, `[support: <id>]`, `[web: <n or url>]`, `[brain: <key>]`, `[claim: <id>]`, plus the Philosopher's bare `[course]`/`[web]` class tags — and `parseCitations` finds them in the answer. `EvidenceSet.resolve` then decides each one in code:
+
+| Verdict | Meaning |
+| --- | --- |
+| `cited` | The id exists in the permitted set, is the right class, is assertable, and the statement measurably overlaps the text it showed. |
+| `attributed` | The id is real and permitted, but support was not measured. |
+| `withheld` | Real evidence whose support is withheld (e.g. a peer- or model-origin wiki claim): it may be named, never asserted. |
+| `wrong_owner` | A real source that exists outside this teacher's pool. |
+| `wrong_class` | The right id under the wrong class — a lesson is not a web result. |
+| `unsupported` | A bare class tag no permitted evidence backs. |
+| `forged` | No such source exists. |
+
+### `assessAnswer` — segment, classify, decide
+
+`engine/src/agents/validators.ts` splits the answer into segments (sentences, keeping inline maths whole) and classifies each as **fact, belief, deduction, uncertainty, question or other** — the `AnswerSegment` contract in `packages/shared`. Then it decides keep-or-withhold:
+
+- Facts need a resolving citation or measured overlap with a permitted source (an image turn may draw on the attachment itself).
+- Beliefs about the student need brain/claim evidence, or the student's own question.
+- Deductions are served if the answer still carries some supported claim or they rest on the question.
+- Questions, honest uncertainty and connective text need nothing.
+- A failed citation strips its statement's support; on the Philosopher a fact line with no resolvable tag is withheld — tags are never guessed into place.
+
+Whatever is withheld is gone before the single `delta` is emitted, and the `verification.segments` map records what each served statement is and what backed it. `verification.withheld` counts what was kept back — the count is honest, the withheld text is not kept.
+
+### Attribution for display
+
+`engine/src/agents/attribution.ts` still enriches the lesson sources after assessment: for each retrieved lesson it finds the section sharing the most answer-specific terms, so a source chip can deep-link to the right heading (`section`, `excerpt`, `cited`). Cited sources sort first; retrieved-but-unused lessons sit behind the "+N also retrieved" toggle.
+
+Attribution and citation resolution are lexical, not semantic: they verify that each claim rests on evidence this teacher was permitted to see — not that a claim is true. The verification panel says so. Tests: `engine/src/agents/evidence.test.ts`, `attribution.test.ts`.
 
 ## 5. Conversations and chat history
 

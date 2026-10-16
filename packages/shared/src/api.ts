@@ -59,6 +59,23 @@ export interface VerificationCheck {
   detail?: string;
 }
 
+/** What one served statement in a teacher's answer is, decided by code — never by the model. */
+export type AnswerSegmentKind = 'fact' | 'belief' | 'deduction' | 'uncertainty' | 'question' | 'other';
+
+export interface AnswerSegment {
+  kind: AnswerSegmentKind;
+  text: string;
+  /**
+   * 'supported' — verified against a permitted source (a resolving citation or measured overlap).
+   * 'attributed' — a real, permitted source was named but its support was not measured.
+   * 'not_required' — questions, honest uncertainty and connective text need no evidence.
+   * Segments whose evidence checks fail are withheld before display and never reach this list.
+   */
+  support: 'supported' | 'attributed' | 'not_required';
+  /** Permitted evidence ids this segment was verified against. */
+  sources?: string[];
+}
+
 export interface Verification {
   model: string;
   provider: string;
@@ -67,6 +84,12 @@ export interface Verification {
   toolCalls: Array<{ tool: string; summary: string }>;
   handoff?: { to: TeacherId; reason: string };
   lane?: 'answered' | 'redirected' | 'refused';
+  /** Provider class that served the answer, so the UI can disclose local vs hosted plainly. */
+  providerKind?: ProviderConfig['kind'];
+  /** The served answer split into what each statement is and what could be backed. */
+  segments?: AnswerSegment[];
+  /** Statements the evidence checks withheld before display. The count is honest; the text is not kept. */
+  withheld?: number;
 }
 
 /** A persisted chat turn. Assistant turns keep the verification they were served with. */
