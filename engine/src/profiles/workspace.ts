@@ -9,6 +9,7 @@ import { SourceIngestor, SourceRejection } from '../brain/sources/ingest';
 import { BrainVault } from '../brain/vault';
 import { WikiStore } from '../brain/wiki-store';
 import { log, profilePaths, type ProfilePaths } from '../config';
+import { LogisticsStore } from '../logistics/store';
 import { ProfileSettingsStore } from '../settings/store';
 import { ContentStore } from '../content/store';
 import { ContentSync } from '../content/sync';
@@ -33,6 +34,8 @@ export interface Workspace {
   sessions: SessionStore;
   sync: ContentSync;
   peerShares: PeerShareService;
+  /** Private campus logistics — the student's own deadlines, never shared or taught. */
+  logistics: LogisticsStore;
 }
 
 export class WorkspaceManager {
@@ -111,6 +114,7 @@ export class WorkspaceManager {
           uniToken: await this.registry.uniToken(profileId),
         };
       }),
+      logistics: new LogisticsStore(path.join(paths.root, 'logistics.json')),
       peerShares: new PeerShareService({
         wiki,
         sources,

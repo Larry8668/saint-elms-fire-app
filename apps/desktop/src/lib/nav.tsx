@@ -2,7 +2,7 @@ import { createContext, useCallback, useContext, useEffect, useMemo, useState, t
 import { TEACHER_IDS, type TeacherId } from '@sef/shared';
 import { log } from './log';
 
-export const VIEWS = ['sky', 'teachers', 'library', 'brain', 'contribute', 'peers', 'settings'] as const;
+export const VIEWS = ['sky', 'teachers', 'library', 'brain', 'contribute', 'peers', 'logistics', 'settings'] as const;
 export type View = (typeof VIEWS)[number];
 
 export interface NavState {
@@ -15,6 +15,11 @@ export interface NavState {
   sectionHeading?: string;
   /** Concept focused in the sky or brain. */
   conceptKey?: string;
+  /**
+   * Vault page to focus — any kind, resolved through the graph's pageId anchors. This is the
+   * stable deep-link the timeline and the next milestone (PR-21) hang selection off.
+   */
+  page?: string;
   teacher?: TeacherId;
   /** Text to pre-fill in the chat composer. Kept in history state only, never in the URL. */
   draft?: string;
@@ -29,7 +34,7 @@ interface NavContextValue extends NavState {
 
 const NavContext = createContext<NavContextValue | null>(null);
 
-const URL_PARAMS = { lessonId: 'lesson', conceptKey: 'concept', teacher: 'teacher' } as const;
+const URL_PARAMS = { lessonId: 'lesson', conceptKey: 'concept', teacher: 'teacher', page: 'page' } as const;
 
 /** Hash routes (`#/teachers?teacher=guide`) work in the browser and under Tauri's custom protocol alike. */
 function toHash(state: NavState): string {
@@ -55,6 +60,7 @@ function fromHash(hash: string): NavState {
     lessonId,
     section: lessonId && /^\d+$/.test(rawSection) ? Number(rawSection) : undefined,
     conceptKey: params.get('concept') ?? undefined,
+    page: params.get('page') ?? undefined,
     teacher: teacher && (TEACHER_IDS as readonly string[]).includes(teacher) ? (teacher as TeacherId) : undefined,
   };
 }

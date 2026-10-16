@@ -3,6 +3,7 @@ import { Component, type ErrorInfo, type ReactNode } from 'react';
 import { BrainView } from '@/features/brain/BrainView';
 import { ContributeView } from '@/features/contribute/ContributeView';
 import { LibraryView } from '@/features/library/LibraryView';
+import { LogisticsView } from '@/features/logistics/LogisticsView';
 import { PeersView } from '@/features/peers/PeersView';
 import { SettingsView } from '@/features/settings/SettingsView';
 import { SkyView } from '@/features/sky/SkyView';
@@ -18,6 +19,7 @@ const VIEWS: Record<View, () => ReactNode> = {
   brain: BrainView,
   peers: PeersView,
   library: LibraryView,
+  logistics: LogisticsView,
   settings: SettingsView,
 };
 

@@ -6,9 +6,10 @@ import { Button } from '@/components/ui/button';
 import { Sheet, SheetClose } from '@/components/ui/overlays';
 import { Badge, Eyebrow } from '@/components/ui/primitives';
 import { SectionsSkeleton } from '@/components/ui/skeletons';
-import { LESSON_HEX, ORIGIN_STYLE, STATUS_STYLE } from '@/lib/brain-style';
+import { KIND_STYLE, LESSON_HEX, NODE_ORIGIN_RIM, ORIGIN_STYLE, STATUS_STYLE } from '@/lib/brain-style';
 import { useNav } from '@/lib/nav';
-import { usePage } from '@/lib/queries';
+import { useEvents, usePage, usePageRecord } from '@/lib/queries';
+import { GrowthTrail } from './GrowthTrail';
 import { PageHistory } from './PageHistory';
 import { QuizDialog } from './QuizDialog';
 
@@ -16,7 +17,12 @@ import { QuizDialog } from './QuizDialog';
 export function ConceptSheet({ node, graph, onSelect }: { node: GraphNode | null; graph: GraphResponse; onSelect: (id: string | null) => void }) {
   const { go } = useNav();
   const [quizOpen, setQuizOpen] = useState(false);
-  const page = usePage(node?.kind === 'concept' && node.status !== 'unseen' ? (node.key ?? null) : null);
+  const isLesson = node?.kind === 'lesson';
+  const isConcept = node?.kind === 'concept';
+  const pageId = !isLesson ? (node?.pageId ?? node?.key ?? null) : null;
+  const page = usePage(isConcept && node?.status !== 'unseen' ? (node?.key ?? null) : null);
+  const record = usePageRecord(!isLesson && !isConcept ? pageId : null);
+  const events = useEvents(isLesson ? null : pageId);
 
   const links = useMemo(() => {
     if (!node) return [];
@@ -30,27 +36,33 @@ export function ConceptSheet({ node, graph, onSelect }: { node: GraphNode | null
 
   if (!node) return null;
   const status = STATUS_STYLE[node.status];
-  const isLesson = node.kind === 'lesson';
+  const kindLabel = KIND_STYLE[node.kind].label;
+  // A quiz is generated from the lesson that introduces a course concept — a page with no
+  // introducing lesson has nothing to quiz against, so it gets no Quiz button, only honesty.
+  const canQuiz = isConcept && Boolean(node.lessonId);
 
   return (
     <>
       <Sheet open={Boolean(node)} onOpenChange={(open) => !open && onSelect(null)}>
         <div className="flex items-start justify-between gap-3 border-b border-white/[0.07] p-5">
           <div className="min-w-0">
-            <Eyebrow>{isLesson ? 'Lesson' : 'Concept'} · {node.courseName}</Eyebrow>
+            <Eyebrow>{kindLabel} · {node.courseName}</Eyebrow>
             <h2 className="mt-1.5 font-display text-[30px] leading-tight text-night-100">{node.label}</h2>
             <div className="mt-2.5 flex flex-wrap gap-1.5">
               {isLesson ? (
                 <Badge style={{ color: LESSON_HEX }}>Lesson hub</Badge>
-              ) : (
+              ) : isConcept ? (
                 <Badge tone={status.tone}>{status.label}</Badge>
+              ) : (
+                <Badge style={{ color: KIND_STYLE[node.kind].hex }}>{kindLabel}</Badge>
               )}
+              {node.origin !== 'course' && <Badge>{NODE_ORIGIN_RIM[node.origin].label}</Badge>}
               {node.misconceptions > 0 && (
                 <Badge tone="ember">
                   <AlertTriangle className="size-3" /> {node.misconceptions} open
                 </Badge>
               )}
-              <Badge>Semester {node.semesterNumber}</Badge>
+              {node.origin === 'course' && <Badge>Semester {node.semesterNumber}</Badge>}
             </div>
           </div>
           <SheetClose className="rounded-lg p-1.5 text-night-400 hover:bg-white/10 hover:text-night-100" aria-label="Close">
@@ -61,7 +73,7 @@ export function ConceptSheet({ node, graph, onSelect }: { node: GraphNode | null
         <div className="flex-1 space-y-6 overflow-y-auto p-5">
           {!isLesson && node.status === 'unseen' && (
             <p className="rounded-xl border border-white/[0.06] bg-white/[0.03] p-4 text-sm leading-6 text-night-300">
-              This star is in your released courses but not in your brain yet. Talk it through with the Guide, snap your notes, or take a quick check — it lights up when you engage with it.
+              This star is in your released courses but not in your brain yet. Talk it through with the Guide, snap your notes — it lights up when you engage with it.
             </p>
           )}
 
@@ -100,10 +112,42 @@ export function ConceptSheet({ node, graph, onSelect }: { node: GraphNode | null
                     </Badge>
                   ))}
                 </div>
+                <p className="mt-2 text-[11.5px] leading-5 text-night-500">
+                  Scores are signals, not certificates — a generated check can probe recall, never prove you own the idea.
+                </p>
               </section>
               {node.key && <PageHistory pageKey={node.key} />}
             </div>
           )}
+
+          {record.isLoading && <SectionsSkeleton />}
+          {record.data && (
+            <div className="space-y-5">
+              {record.data.markdown ? <Markdown variant="chat">{record.data.markdown}</Markdown> : null}
+              {record.data.claims.length > 0 && (
+                <section>
+                  <Eyebrow className="mb-2">Claims on this page</Eyebrow>
+                  <div className="space-y-2">
+                    {record.data.claims.map((claim) => (
+                      <div key={claim.id} className="rounded-xl border border-white/[0.06] p-3 text-sm">
+                        <p className="text-night-200">{claim.text}</p>
+                        <p className="mt-1.5 flex flex-wrap gap-1.5 text-[11px] text-night-500">
+                          <Badge>{claim.kind.replace('_', ' ')}</Badge>
+                          <Badge>{claim.origin === 'student' ? 'yours' : `from ${claim.origin}`}</Badge>
+                          {claim.status !== 'current' && <Badge tone={claim.status === 'disputed' ? 'ember' : 'neutral'}>{claim.status}</Badge>}
+                        </p>
+                      </div>
+                    ))}
+                  </div>
+                </section>
+              )}
+              {record.data.sourceIds.length > 0 && (
+                <p className="text-[11.5px] text-night-500">Built on {record.data.sourceIds.length} kept source{record.data.sourceIds.length === 1 ? '' : 's'}.</p>
+              )}
+            </div>
+          )}
+
+          {events.data && <GrowthTrail events={events.data} />}
 
           {links.length > 0 && (
             <section>
@@ -126,34 +170,48 @@ export function ConceptSheet({ node, graph, onSelect }: { node: GraphNode | null
               </ul>
             </section>
           )}
+
+          {isConcept && !canQuiz && node.origin !== 'course' && (
+            <p className="rounded-xl border border-white/[0.06] bg-white/[0.03] p-4 text-sm leading-6 text-night-400">
+              Checks are generated from the course lesson that introduces a concept. This page isn't on the syllabus, so there is nothing to quiz it against — the trail above is its evidence.
+            </p>
+          )}
         </div>
 
         <div className="grid grid-cols-2 gap-2 border-t border-white/[0.07] p-4">
-          <Button variant="primary" onClick={() => go('teachers', { teacher: 'guide', draft: isLesson ? `Walk me through "${node.label}".` : `Help me understand ${node.label}.` })}>
+          <Button
+            variant="primary"
+            onClick={() =>
+              go('teachers', {
+                teacher: 'guide',
+                draft: isLesson ? `Walk me through "${node.label}".` : isConcept ? `Help me understand ${node.label}.` : `Help me think through my ${kindLabel.toLowerCase()} "${node.label}".`,
+              })
+            }
+          >
             <MessageCircleQuestion /> Ask the Guide
           </Button>
           {isLesson ? (
             <Button onClick={() => go('library', { lessonId: node.lessonId })}>
               <BookOpen /> Read lesson
             </Button>
-          ) : (
+          ) : canQuiz ? (
             <Button onClick={() => setQuizOpen(true)}>
               <GraduationCap /> Quiz me
             </Button>
-          )}
+          ) : null}
           {!isLesson && node.lessonId && (
             <Button variant="ghost" className="col-span-2" onClick={() => go('library', { lessonId: node.lessonId })}>
               <BookOpen /> Open the lesson that introduces it
             </Button>
           )}
-          {node.key && node.status !== 'unseen' && (
-            <Button variant="ghost" className="col-span-2" onClick={() => go('peers', { sharePage: node.key })}>
+          {!isLesson && node.pageId && node.status !== 'unseen' && (
+            <Button variant="ghost" className="col-span-2" onClick={() => go('peers', { sharePage: node.pageId! })}>
               <Share2 /> Share this page with my cohort
             </Button>
           )}
         </div>
       </Sheet>
-      {node.kind === 'concept' && node.key && <QuizDialog conceptKey={node.key} conceptLabel={node.label} open={quizOpen} onOpenChange={setQuizOpen} />}
+      {isConcept && node.key && canQuiz && <QuizDialog conceptKey={node.key} conceptLabel={node.label} open={quizOpen} onOpenChange={setQuizOpen} />}
     </>
   );
 }

@@ -9,7 +9,7 @@ import { queryTerms } from '../content/search';
  * plausible-looking label.
  */
 
-export type EvidenceKind = 'lesson' | 'support' | 'web' | 'brain' | 'claim';
+export type EvidenceKind = 'lesson' | 'support' | 'web' | 'brain' | 'claim' | 'logistics';
 
 export interface EvidenceItem {
   id: string;
@@ -58,7 +58,8 @@ const DECLARED_KINDS: Record<string, EvidenceKind[] | 'any'> = {
   claim: ['claim'],
   cited: ['claim'],
   attributed: ['claim'],
-  withheld: ['claim'],
+  withheld: ['claim', 'logistics'],
+  logistics: ['logistics'],
   source: 'any',
 };
 
@@ -166,6 +167,11 @@ export interface EvidenceInput {
    * itself into evidence by being compiled.
    */
   withheldSources?: ReadonlySet<string>;
+  /**
+   * Unconfirmed logistics records the prompt named. They are real and citable so the
+   * Friend may acknowledge them, but their support is withheld until the student confirms.
+   */
+  proposedLogistics?: Array<{ id: string; title: string; text: string }>;
   /** Real evidence ids that exist on this device but were never this teacher's to cite. */
   foreignIds?: Iterable<string>;
 }
@@ -201,6 +207,10 @@ export function buildEvidenceSet(input: EvidenceInput): EvidenceSet {
         items.push({ id: sourceId, kind: 'claim', title: sourceId, text: '', assertable: verdict.assertable, withheldReason: verdict.reason, citable: true });
       }
     }
+  }
+
+  for (const record of input.proposedLogistics ?? []) {
+    items.push({ id: record.id, kind: 'logistics', title: record.title, text: record.text, assertable: false, withheldReason: 'awaiting the student’s confirmation', citable: true });
   }
 
   for (const block of input.contextBlocks ?? []) {

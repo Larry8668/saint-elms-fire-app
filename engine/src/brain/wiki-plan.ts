@@ -111,29 +111,30 @@ export function planProposal(proposal: WikiProposal, snapshots: Map<string, Page
       const previous = plans.get(draft.id);
       const snapshot = previous?.snapshot ?? snapshots.get(draft.id) ?? null;
       const base = previous ? previous.content.metadata : metadataInputOf(snapshot, at);
-      plans.set(draft.id, {
-        snapshot,
-        content: {
-          metadata: {
-            schemaVersion: CONTRACT_VERSION,
-            id: draft.id,
-            kind: draft.kind,
-            state: 'committed',
-            title: draft.title,
-            summary: draft.summary,
-            updatedAt: at,
-            courseRefs: draft.courseRefs,
-            claims: draft.claims,
-            links: mergeLinks(base?.links ?? [], draft.links),
-            learner: draft.kind === 'concept' ? draft.learner : null,
-            sourceIds: draft.kind === 'concept' ? (base?.sourceIds ?? []) : draft.sourceIds,
-            provenance: base?.provenance ?? null,
-          },
-          body: draft.markdown,
-        },
-        created: createdIds.has(draft.id),
-        changed: true,
-      });
+      const metadata = {
+        schemaVersion: CONTRACT_VERSION,
+        id: draft.id,
+        kind: draft.kind,
+        state: 'committed' as const,
+        title: draft.title,
+        summary: draft.summary,
+        updatedAt: at,
+        courseRefs: draft.courseRefs,
+        claims: draft.claims,
+        links: mergeLinks(base?.links ?? [], draft.links),
+        learner: draft.kind === 'concept' ? draft.learner : null,
+        sourceIds: draft.kind === 'concept' ? (base?.sourceIds ?? []) : draft.sourceIds,
+        provenance: base?.provenance ?? null,
+      };
+      const created = createdIds.has(draft.id);
+      // A retried upsert that only rewrites the timestamp is no change at all: keep the committed
+      // stamp, so the plan drops out as unchanged and no growth event is emitted a second time.
+      const replayed =
+        !created && !previous && snapshot != null
+          ? contentRevision({ metadata: { ...metadata, updatedAt: base?.updatedAt ?? at }, body: draft.markdown }) === snapshot.revision
+          : false;
+      if (replayed && base) metadata.updatedAt = base.updatedAt;
+      plans.set(draft.id, { snapshot, content: { metadata, body: draft.markdown }, created, changed: !replayed });
       continue;
     }
 
@@ -151,7 +152,7 @@ export function planProposal(proposal: WikiProposal, snapshots: Map<string, Page
       content: { metadata: { ...base, updatedAt: at, links }, body: previous ? previous.content.body : snapshot!.body },
       // A link onto a page created earlier in this proposal does not turn it into an update.
       created: previous?.created ?? createdIds.has(op.fromPageId),
-      changed: previous?.changed ?? links.length !== base.links.length,
+      changed: (previous?.changed ?? false) || links.length !== base.links.length,
     });
   }
 

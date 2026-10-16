@@ -24,6 +24,7 @@ export const META_MANIFEST_FILE = 'manifest.json';
 export const META_SOURCES_DIRECTORY = 'sources';
 export const META_JOBS_DIRECTORY = 'jobs';
 export const META_PROPOSALS_DIRECTORY = 'proposals';
+export const META_EVENTS_DIRECTORY = 'events';
 export const META_JOURNAL_DIRECTORY = 'journal';
 export const META_RECOVERY_DIRECTORY = 'recovery';
 export const META_MAINTENANCE_FILE = 'maintenance.json';
@@ -40,6 +41,7 @@ export const VAULT_DIRECTORIES = [
   `${META_DIRECTORY}/${META_SOURCES_DIRECTORY}`,
   `${META_DIRECTORY}/${META_JOBS_DIRECTORY}`,
   `${META_DIRECTORY}/${META_PROPOSALS_DIRECTORY}`,
+  `${META_DIRECTORY}/${META_EVENTS_DIRECTORY}`,
   `${META_DIRECTORY}/${META_JOURNAL_DIRECTORY}`,
   `${META_DIRECTORY}/${META_RECOVERY_DIRECTORY}`,
 ] as const;

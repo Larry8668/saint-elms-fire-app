@@ -1,6 +1,6 @@
-import type { BrainDiffEntry, ConceptStatus, EdgeOrigin, EdgeType, IngestResult } from './brain';
+import type { BrainDiffEntry, ConceptStatus, EdgeOrigin, EdgeType, IngestResult, SkyNodeKind } from './brain';
 import type { TeacherId } from './teachers';
-import type { ProposalReport, WikiProposalRecord } from './wiki';
+import type { CourseConceptRef, ProposalReport, WikiClaim, WikiLink, WikiProposalRecord } from './wiki';
 
 /** Engine HTTP contract shared by the desktop app and the engine. */
 
@@ -36,7 +36,7 @@ export interface ChatRequest {
 }
 
 export interface SourceRef {
-  kind: 'lesson' | 'brain' | 'web' | 'support';
+  kind: 'lesson' | 'brain' | 'web' | 'support' | 'logistics';
   id: string;
   title: string;
   url?: string;
@@ -133,8 +133,13 @@ export type ChatStreamEvent =
 
 export interface GraphNode {
   id: string;
-  kind: 'lesson' | 'concept';
+  kind: SkyNodeKind;
   label: string;
+  /**
+   * 'course' = official syllabus star. 'student'/'peer' = a personal-sky page node; 'peer'
+   * means the page's material came from an accepted peer share, never the student's own work.
+   */
+  origin: 'course' | 'student' | 'peer';
   courseId: string;
   courseName: string;
   subjectId: string;
@@ -142,9 +147,16 @@ export interface GraphNode {
   lessonId?: string;
   /** Concept key in the student's brain, if this node is a concept. */
   key?: string;
+  /** Vault page behind this node — the stable anchor for deep links and the brain view. */
+  pageId?: string;
+  /** Last committed update of that page. */
+  updated?: string;
   status: ConceptStatus;
   misconceptions: number;
   peer: boolean;
+  /** Growth events on this page: collected material vs understanding the student demonstrated. */
+  collected?: number;
+  demonstrated?: number;
 }
 
 export interface GraphEdge {
@@ -159,7 +171,44 @@ export interface GraphEdge {
 export interface GraphResponse {
   nodes: GraphNode[];
   edges: GraphEdge[];
-  stats: { courseConcepts: number; lit: number; shaky: number; solid: number; studentLinks: number };
+  stats: {
+    courseConcepts: number;
+    lit: number;
+    shaky: number;
+    solid: number;
+    studentLinks: number;
+    /** Personal-sky nodes (own concepts, syntheses, open questions) outside the released syllabus. */
+    personalPages: number;
+    /** Growth events that only record collected material — never mastery. */
+    collected: number;
+    /** Growth events where the student demonstrated understanding. */
+    demonstrated: number;
+  };
+}
+
+/** One vault page in list form — any kind, not only concepts. */
+export interface PageRecordSummary {
+  id: string;
+  kind: 'concept' | 'source_summary' | 'synthesis' | 'question';
+  title: string;
+  summary: string;
+  updatedAt: string;
+  revision: string;
+  /** 'legacy' = adopted from the earlier concept vault; 'peer' = built from a peer share. */
+  origin: 'student' | 'peer' | 'legacy';
+  /** Concept pages only: computed status and open misconception count. */
+  status?: ConceptStatus;
+  openMisconceptions?: number;
+}
+
+/** One vault page in full, for the detail sheet — works for every page kind. */
+export interface PageRecordView extends PageRecordSummary {
+  markdown: string;
+  courseRefs: CourseConceptRef[];
+  claims: WikiClaim[];
+  links: WikiLink[];
+  learner: { inMyWords: string; stuck: string; connections: string; evidenceIds: string[] } | null;
+  sourceIds: string[];
 }
 
 export interface ModelRoleConfig {

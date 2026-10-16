@@ -17,12 +17,19 @@ import type {
   HealthResponse,
   IngestResult,
   JobList,
+  LearningEvent,
   Lesson,
   LessonMeta,
   LintFinding,
+  LogisticsList,
+  LogisticsRecord,
+  LogisticsRecordResult,
+  LogisticsWriteInput,
   MaintenanceProposalResult,
   MaintenanceReport,
   OwnSharesResponse,
+  PageRecordSummary,
+  PageRecordView,
   PageRevisionContent,
   PageRevisionList,
   PeerFeedResponse,
@@ -133,6 +140,8 @@ export interface QuizResult {
   outOf: number;
   review: Array<{ correct: number; chosen: number; explanation: string }>;
   diff: IngestResult['diff'];
+  /** True when this submit replayed an already-recorded attempt — no duplicate evidence was written. */
+  replayed: boolean;
 }
 export type { SessionDetail, SessionSummary };
 
@@ -176,6 +185,12 @@ export const api = {
   saveAnswer: (body: SaveAnswerRequest) => post<SourceReceipt>('/api/wiki/save', body),
   brainLog: () => request<BrainLogEntry[]>('/api/brain/log'),
   lint: () => request<LintFinding[]>('/api/brain/lint'),
+  /** Every vault page in list form — all kinds, so personal pages show up too. */
+  records: () => request<PageRecordSummary[]>('/api/brain/records'),
+  /** The growth ledger; pass a page id for one page's trail. */
+  events: (pageId?: string) => request<LearningEvent[]>(`/api/brain/events${pageId ? `?pageId=${encodeURIComponent(pageId)}` : ''}`),
+  /** One page in full — works for concepts, syntheses, questions and legacy pages alike. */
+  pageRecord: (id: string) => request<PageRecordView>(`/api/brain/pages/${encodeURIComponent(id)}/record`),
 
   // Wiki maintenance: reads and suggestions only — repairs file as ordinary proposals.
   maintenance: () => request<MaintenanceReport>('/api/brain/maintenance'),
@@ -205,7 +220,7 @@ export const api = {
   rejectProposal: (id: string, note?: string) => post<WikiProposalRecord>(`/api/proposals/${encodeURIComponent(id)}/reject`, { note }),
 
   createQuiz: (key: string) => post<QuizPayload>(`/api/quiz/${encodeURIComponent(key)}`),
-  submitQuiz: (id: string, answers: number[]) => post<QuizResult>(`/api/quiz/${encodeURIComponent(id)}/submit`, { answers }),
+  submitQuiz: (id: string, answers: number[], attemptId: string) => post<QuizResult>(`/api/quiz/${encodeURIComponent(id)}/submit`, { answers, attemptId }),
 
 
   // Cohort sharing — the engine relays to the university share API on this profile's uni session.
@@ -217,6 +232,18 @@ export const api = {
   withdrawShare: (id: string) => post<PublishedShare>(`/api/shares/${encodeURIComponent(id)}/withdraw`),
   ignoreShare: (id: string, ignored: boolean) => post<void>(`/api/shares/${encodeURIComponent(id)}/ignore`, { ignored }),
   importShare: (id: string) => post<ShareImportResult>(`/api/shares/${encodeURIComponent(id)}/import`),
+
+  // Personal logistics — private to this profile; proposals move only by the student's own click.
+  logistics: () => request<LogisticsList>('/api/logistics'),
+  createLogistics: (body: LogisticsWriteInput) => post<LogisticsRecordResult>('/api/logistics', body),
+  updateLogistics: (id: string, patch: Partial<LogisticsWriteInput>) =>
+    request<LogisticsRecordResult>(`/api/logistics/${encodeURIComponent(id)}`, { method: 'PUT', body: JSON.stringify(patch) }),
+  confirmLogistics: (id: string, patch?: Partial<LogisticsWriteInput>) => post<LogisticsRecordResult>(`/api/logistics/${encodeURIComponent(id)}/confirm`, patch ?? {}),
+  dismissLogistics: (id: string) => post<LogisticsRecordResult>(`/api/logistics/${encodeURIComponent(id)}/dismiss`, {}),
+  deleteLogistics: (id: string) => request<void>(`/api/logistics/${encodeURIComponent(id)}`, { method: 'DELETE' }),
+  /** A notice photo becomes proposed records — never confirmed; a failure answers honestly. */
+  extractLogistics: (image: { mimeType: 'image/png' | 'image/jpeg'; data: string }, note?: string) =>
+    post<LogisticsList>('/api/logistics/extract', { image, note }),
 
 };
 

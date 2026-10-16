@@ -12,11 +12,12 @@ import { cn } from '@/lib/cn';
 import { useInvalidateBrain } from '@/lib/queries';
 import { BrainDiff } from './BrainDiff';
 
-/** Generates a short check for one concept; the score becomes evidence that moves its status. */
+/** Generates a short check for one concept; the score is one limited signal that nudges status. */
 export function QuizDialog({ conceptKey, conceptLabel, open, onOpenChange }: { conceptKey: string; conceptLabel: string; open: boolean; onOpenChange: (open: boolean) => void }) {
   const [quiz, setQuiz] = useState<QuizPayload | null>(null);
   const [answers, setAnswers] = useState<number[]>([]);
   const [result, setResult] = useState<QuizResult | null>(null);
+  const [attemptId, setAttemptId] = useState('');
   const invalidateBrain = useInvalidateBrain();
 
   const create = useMutation({
@@ -24,12 +25,15 @@ export function QuizDialog({ conceptKey, conceptLabel, open, onOpenChange }: { c
     onSuccess: (q) => {
       setQuiz(q);
       setAnswers(q.questions.map(() => -1));
+      setResult(null);
+      // One attempt id per served set: a retried submit replays its stored result, never a second mark.
+      setAttemptId(crypto.randomUUID());
     },
     onError: (e) => toast.error((e as Error).message),
   });
 
   const submit = useMutation({
-    mutationFn: () => api.submitQuiz(quiz!.id, answers),
+    mutationFn: () => api.submitQuiz(quiz!.id, answers, attemptId),
     onSuccess: (r) => {
       setResult(r);
       invalidateBrain();
@@ -47,7 +51,12 @@ export function QuizDialog({ conceptKey, conceptLabel, open, onOpenChange }: { c
   }, [open, conceptKey]);
 
   return (
-    <Dialog open={open} onOpenChange={onOpenChange} title={`Check: ${conceptLabel}`} description="Written from your lesson text by the quiz agent. Your score is evidence — it decides the star's status, not the model.">
+    <Dialog
+      open={open}
+      onOpenChange={onOpenChange}
+      title={`Check: ${conceptLabel}`}
+      description="Written from your lesson text by the quiz agent. The score is one limited signal — it can nudge a star's status, but a generated check never certifies mastery."
+    >
       {create.isPending && (
         <div className="space-y-5">
           <WorkingLabel label="Writing questions from your lesson" startedAt={create.submittedAt || undefined} className="text-beacon-300" />
@@ -112,6 +121,7 @@ export function QuizDialog({ conceptKey, conceptLabel, open, onOpenChange }: { c
               <div className="font-display text-3xl text-night-100">
                 {result.score} / {result.outOf}
               </div>
+              {result.replayed && <p className="text-[12px] text-night-500">That attempt was already recorded — this is its stored result, not a second mark.</p>}
               <BrainDiff diff={result.diff} applied={[]} rejected={[]} />
               <div className="flex justify-end gap-2">
                 <Button variant="ghost" onClick={() => create.mutate()}>

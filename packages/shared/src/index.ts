@@ -14,3 +14,4 @@ export * from './wiki';
 export * from './maintenance';
 export * from './sharing';
 export * from './teacher-policy';
+export * from './logistics';

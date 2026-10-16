@@ -29,3 +29,24 @@ test('two passing quizzes in a row make a concept solid', () => {
 test('one passing quiz is not yet solid', () => {
   assert.equal(computeStatus({ evidence: [quiz(5, '1')], misconceptions: [{ ...open, resolved: true }] }), 'met');
 });
+
+test('the same attempt retried or re-imported never stacks as extra evidence', () => {
+  const once = { kind: 'quiz' as const, ref: 'q-1', at: '2026-10-01', score: 5, outOf: 5 };
+  assert.equal(computeStatus({ evidence: [once, { ...once }, { ...once }], misconceptions: [] }), 'met', 'three copies of one pass are still one check');
+});
+
+test('two passes on the same quiz count once — solid needs two different checks', () => {
+  const evidence = [
+    { kind: 'quiz' as const, ref: 'q-1', at: '2026-10-01', score: 4, outOf: 5 },
+    { kind: 'quiz' as const, ref: 'q-1', at: '2026-10-03', score: 5, outOf: 5 },
+  ];
+  assert.equal(computeStatus({ evidence, misconceptions: [] }), 'met');
+});
+
+test('a retake replaces the earlier attempt — a failed redo turns a pass shaky', () => {
+  const evidence = [
+    { kind: 'quiz' as const, ref: 'q-1', at: '2026-10-01', score: 5, outOf: 5 },
+    { kind: 'quiz' as const, ref: 'q-1', at: '2026-10-03', score: 1, outOf: 5 },
+  ];
+  assert.equal(computeStatus({ evidence, misconceptions: [] }), 'shaky');
+});

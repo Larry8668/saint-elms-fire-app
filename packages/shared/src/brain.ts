@@ -177,3 +177,31 @@ export interface BrainLogEntry {
   title: string;
   detail?: string;
 }
+
+/**
+ * Sky node ids. Course stars keep their old prefixes (`l:` lessons, `c:` concepts) so saved
+ * links and navigation survive; personal pages join the same map under `s:`/`q:` prefixes and
+ * the synthetic PERSONAL_SKY_ID constellation, which no real course can collide with.
+ */
+export const SKY_PAGE_KINDS = ['concept', 'synthesis', 'question'] as const;
+export type SkyPageKind = (typeof SKY_PAGE_KINDS)[number];
+
+export const SKY_NODE_PREFIX: Record<SkyPageKind, 'c' | 's' | 'q'> = { concept: 'c', synthesis: 's', question: 'q' };
+export type SkyNodeKind = 'lesson' | SkyPageKind;
+
+export const PERSONAL_SKY_ID = 'personal-sky';
+export const PERSONAL_SKY_TITLE = 'Your own sky';
+
+export function pageNodeId(kind: SkyPageKind, pageId: string): string {
+  // 'c' is shared on purpose: a course concept star and the concept page behind it are the
+  // same sky object — the graph's dedup guard (page.id ∈ course.concepts) merges them, and
+  // vault page ids are unique, so 'c:x' names at most one page and one concept.
+  return `${SKY_NODE_PREFIX[kind]}:${pageId}`;
+}
+
+export function parsePageNodeId(nodeId: string): { kind: SkyNodeKind; id: string } | null {
+  const match = /^([lcsq]):(.+)$/.exec(nodeId);
+  if (!match) return null;
+  const kind = match[1] === 'l' ? 'lesson' : match[1] === 'c' ? 'concept' : match[1] === 's' ? 'synthesis' : 'question';
+  return { kind, id: match[2]! };
+}
