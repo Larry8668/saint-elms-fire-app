@@ -188,13 +188,22 @@ export function ProposalReviewDialog({ proposalId, onClose }: { proposalId: stri
                         )}
                         <span className="text-night-500">{page.change === 'created' ? 'Reads:' : 'Becomes:'}</span> {page.summaryAfter}
                       </span>
-                      {(page.addedClaims.length > 0 || page.addedLinks.length > 0) && (
+                      {(page.addedClaims.length > 0 || page.addedLinks.length > 0 || page.removedLinks.length > 0) && (
                         <ul className="mt-2 space-y-1.5">
                           {page.addedClaims.map((claim) => (
                             <ClaimRow key={claim.id} claim={claim} />
                           ))}
                           {page.addedLinks.map((link, i) => (
                             <LinkRow key={`${link.toPageId}-${link.type}-${i}`} page={page} link={link} />
+                          ))}
+                          {page.removedLinks.map((link, i) => (
+                            <li key={`removed-${link.toPageId}-${link.type}-${i}`} className="flex items-center gap-2 rounded-lg bg-ember-500/[0.08] px-3 py-2 text-[13px]">
+                              <Link2 className="size-3.5 shrink-0 text-ember-400" />
+                              <span className="min-w-0 flex-1 text-night-400 line-through">
+                                {page.title} <span className="text-night-500">{link.type.replace('_', ' ')}</span> {link.toPageId}
+                              </span>
+                              <Badge tone="ember">removed</Badge>
+                            </li>
                           ))}
                         </ul>
                       )}

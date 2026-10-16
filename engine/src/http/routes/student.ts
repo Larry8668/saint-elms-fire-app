@@ -191,6 +191,42 @@ export function studentRoutes(deps: EngineDeps, conversations: ConversationRegis
   app.get('/brain/lint', guard, async (c) => c.json(await c.get('ws').brain.lint()));
 
   /**
+   * Wiki maintenance: the deterministic checks run on every read, the semantic review only
+   * when the student asks for it, and repairs always travel as proposals — these routes
+   * never touch a page directly.
+   */
+  app.get('/brain/maintenance', guard, async (c) => c.json(await c.get('ws').maintenance.report()));
+
+  /** The bounded model pass; the vault is read-only throughout and findings are persisted. */
+  app.post('/brain/maintenance/review', guard, async (c) => {
+    try {
+      return c.json(await c.get('ws').maintenance.review());
+    } catch (error) {
+      log.warn('semantic_review_failed', { profileId: c.get('me').profile.id, ...errorFields(error) });
+      return c.json({ error: friendlyError(error), code: 'review_failed' }, 502);
+    }
+  });
+
+  /** Files the selected actionable findings as one ordinary proposal for review. */
+  app.post('/brain/maintenance/proposals', guard, async (c) => {
+    const body = z.strictObject({ findingIds: z.array(IdentifierSchema).min(1).max(64) }).safeParse(await c.req.json().catch(() => null));
+    if (!body.success) return c.json({ error: 'Send the findingIds to propose repairs for', code: 'invalid_request' }, 400);
+    return c.json(await c.get('ws').maintenance.fileProposal(body.data.findingIds));
+  });
+
+  /** A wrong or unwanted suggestion stays dismissed; nothing about the vault changes. */
+  app.post('/brain/maintenance/findings/:id/dismiss', guard, async (c) => {
+    const id = IdentifierSchema.safeParse(c.req.param('id'));
+    if (!id.success) return c.json({ error: 'Unknown finding', code: 'not_found' }, 404);
+    const body = z.strictObject({ note: z.string().max(300).optional() }).safeParse(await c.req.json().catch(() => ({})));
+    if (!body.success) return c.json({ error: 'Send an optional note', code: 'invalid_request' }, 400);
+    return c.json(await c.get('ws').maintenance.dismiss(id.data, body.data.note));
+  });
+
+  /** Rebuilds index.md and the manifest page map from the files on disk — the only repair that does not need a page proposal. */
+  app.post('/brain/maintenance/catalogue', guard, async (c) => c.json(await c.get('ws').maintenance.repairCatalogue()));
+
+  /**
    * Reflect freezes the session's fresh turns as a kept source and stops — the turns stay
    * pending until the student accepts the proposal a later compile files. The checkpoint
    * itself lives in the proposal accept route, which writes it only on a real commit.

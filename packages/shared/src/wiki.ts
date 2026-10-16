@@ -10,7 +10,7 @@ import {
   Sha256Schema,
   TimestampSchema,
 } from './contracts';
-import { EDGE_TYPES } from './brain';
+import { EDGE_TYPES, EdgeTypeSchema } from './brain';
 import { TEACHER_IDS } from './teachers';
 
 export const SourceLocatorSchema = z.discriminatedUnion('kind', [
@@ -175,6 +175,16 @@ export type WikiPage = z.infer<typeof WikiPageSchema>;
 export const WikiEditSchema = z.discriminatedUnion('op', [
   z.strictObject({ op: z.literal('upsert_page'), page: WikiPageDraftSchema }),
   z.strictObject({ op: z.literal('add_link'), fromPageId: IdentifierSchema, link: WikiLinkSchema }),
+  /**
+   * Maintenance edits need removal too: the link union on upsert can only grow, so a dead
+   * link is deleted by its own op. `linkType` narrows the match when several links share a target.
+   */
+  z.strictObject({
+    op: z.literal('remove_link'),
+    fromPageId: IdentifierSchema,
+    toPageId: IdentifierSchema,
+    linkType: EdgeTypeSchema.optional(),
+  }),
 ]);
 export type WikiEdit = z.infer<typeof WikiEditSchema>;
 
@@ -297,6 +307,8 @@ export const ProposalPreviewSchema = z.strictObject({
       /** Claims and links this proposal would add on top of the page's current state. */
       addedClaims: z.array(WikiClaimSchema),
       addedLinks: z.array(WikiLinkSchema),
+      /** Links the proposal would take away — maintenance repairs remove links too. */
+      removedLinks: z.array(WikiLinkSchema).default([]),
     }),
   ),
   conflicts: z.array(z.string()),

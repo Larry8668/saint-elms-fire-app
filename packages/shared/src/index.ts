@@ -11,5 +11,6 @@ export * from './contracts';
 export * from './identity';
 export * from './programme';
 export * from './wiki';
+export * from './maintenance';
 export * from './sharing';
 export * from './teacher-policy';

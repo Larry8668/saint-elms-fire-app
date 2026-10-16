@@ -26,6 +26,7 @@ export const META_JOBS_DIRECTORY = 'jobs';
 export const META_PROPOSALS_DIRECTORY = 'proposals';
 export const META_JOURNAL_DIRECTORY = 'journal';
 export const META_RECOVERY_DIRECTORY = 'recovery';
+export const META_MAINTENANCE_FILE = 'maintenance.json';
 export const INDEX_FILE = 'index.md';
 export const LOG_FILE = 'log.md';
 export const SCHEMA_FILE = 'SCHEMA.md';

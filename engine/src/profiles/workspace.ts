@@ -3,6 +3,7 @@ import path from 'node:path';
 import type { DeviceProfile, ProfileIdentity } from '@sef/shared';
 import { WikiCompiler } from '../brain/compiler/compile';
 import { evidenceResolver } from '../brain/evidence';
+import { MaintenanceService } from '../brain/maintenance/service';
 import { BrainService } from '../brain/service';
 import { SourceIngestor, SourceRejection } from '../brain/sources/ingest';
 import { BrainVault } from '../brain/vault';
@@ -27,6 +28,7 @@ export interface Workspace {
   wiki: WikiStore;
   sources: SourceIngestor;
   compiler: WikiCompiler;
+  maintenance: MaintenanceService;
   brain: BrainService;
   sessions: SessionStore;
   sync: ContentSync;
@@ -99,6 +101,7 @@ export class WorkspaceManager {
       wiki,
       sources,
       compiler,
+      maintenance: new MaintenanceService({ wiki, content, settings, identity }),
       brain: new BrainService(content, vault, settings, paths.quizzes, { wiki, sources, identity }),
       sessions: new SessionStore(paths.sessions),
       sync: new ContentSync(settings, content, async () => {

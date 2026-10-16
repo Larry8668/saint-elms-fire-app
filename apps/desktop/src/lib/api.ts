@@ -1,6 +1,7 @@
 import { CONTRACT_VERSION } from '@sef/shared';
 import type {
   BrainLogEntry,
+  CatalogueRepairResult,
   ChatStreamEvent,
   CompileResult,
   ConceptPage,
@@ -19,6 +20,8 @@ import type {
   Lesson,
   LessonMeta,
   LintFinding,
+  MaintenanceProposalResult,
+  MaintenanceReport,
   OwnSharesResponse,
   PageRevisionContent,
   PageRevisionList,
@@ -29,6 +32,7 @@ import type {
   PublishedShare,
   PublishShareRequest,
   PublishShareResult,
+  SemanticReviewResult,
   SessionDetail,
   SessionSummary,
   ShareablePageList,
@@ -160,6 +164,13 @@ export const api = {
   pageRevision: (key: string, revision: string) => request<PageRevisionContent>(`/api/brain/pages/${encodeURIComponent(key)}/revisions/${encodeURIComponent(revision)}`),
   brainLog: () => request<BrainLogEntry[]>('/api/brain/log'),
   lint: () => request<LintFinding[]>('/api/brain/lint'),
+
+  // Wiki maintenance: reads and suggestions only — repairs file as ordinary proposals.
+  maintenance: () => request<MaintenanceReport>('/api/brain/maintenance'),
+  runMaintenanceReview: () => post<SemanticReviewResult>('/api/brain/maintenance/review'),
+  proposeMaintenance: (findingIds: string[]) => post<MaintenanceProposalResult>('/api/brain/maintenance/proposals', { findingIds }),
+  dismissFinding: (id: string, note?: string) => post<MaintenanceReport>(`/api/brain/maintenance/findings/${encodeURIComponent(id)}/dismiss`, { note }),
+  repairCatalogue: () => post<CatalogueRepairResult>('/api/brain/maintenance/catalogue'),
   /** Freeze a session's fresh turns as a source and stop — the compile and the decision are the student's. */
   reflectReview: (sessionId: string) => post<SourceReceipt>(`/api/brain/ingest/${encodeURIComponent(sessionId)}`, { review: true }),
   sessions: (teacher?: TeacherId) => request<SessionSummary[]>(`/api/sessions${teacher ? `?teacher=${teacher}` : ''}`),

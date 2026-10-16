@@ -1,5 +1,5 @@
 import type { ConceptPage } from '@sef/shared';
-import { AlertTriangle, Brain, FilePlus2, GraduationCap, History, Lightbulb, MessageCircleQuestion, Network } from 'lucide-react';
+import { AlertTriangle, Brain, FilePlus2, GraduationCap, History, Lightbulb, MessageCircleQuestion, Network, Wrench } from 'lucide-react';
 import { motion } from 'motion/react';
 import { useMemo, useState } from 'react';
 import { Button } from '@/components/ui/button';
@@ -9,8 +9,9 @@ import { CardGridSkeleton, RowListSkeleton, TimelineSkeleton } from '@/component
 import { ProposalReviewDialog } from '@/features/contribute/ProposalReviewDialog';
 import { STATUS_STYLE } from '@/lib/brain-style';
 import { useNav } from '@/lib/nav';
-import { useBrainLog, useGraph, useJobBoard, useLint, usePages } from '@/lib/queries';
+import { useBrainLog, useGraph, useJobBoard, useLint, useMaintenance, usePages } from '@/lib/queries';
 import { ConceptSheet } from './ConceptSheet';
+import { MaintenancePanel } from './MaintenancePanel';
 import { SourceDetailDialog } from './SourceDetail';
 import { SourcesPanel } from './SourcesPanel';
 
@@ -25,11 +26,13 @@ export function BrainView() {
   const pages = usePages();
   const log = useBrainLog();
   const lint = useLint();
+  const maintenance = useMaintenance();
   const graph = useGraph();
   const board = useJobBoard();
 
   const selectedNode = useMemo(() => (selectedKey && graph.data ? graph.data.nodes.find((n) => n.key === selectedKey) ?? null : null), [selectedKey, graph.data]);
   const openFindings = lint.data?.length ?? 0;
+  const maintenanceCount = maintenance.data?.findings.length ?? 0;
   const sourceCount = board.data?.sources.length ?? 0;
 
   return (
@@ -47,6 +50,7 @@ export function BrainView() {
                 { value: 'pages', label: `Pages${pages.data ? ` · ${pages.data.length}` : ''}` },
                 { value: 'sources', label: `Sources${sourceCount ? ` · ${sourceCount}` : ''}` },
                 { value: 'questions', label: `Open questions${openFindings ? ` · ${openFindings}` : ''}` },
+                { value: 'maintenance', label: `Maintenance${maintenanceCount ? ` · ${maintenanceCount}` : ''}` },
                 { value: 'timeline', label: 'Timeline' },
               ]}
             />
@@ -110,6 +114,26 @@ export function BrainView() {
                 </Panel>
               </motion.div>
             ))}
+          </div>
+        )}
+
+        {tab === 'maintenance' && (
+          <div>
+            {maintenance.isLoading && <RowListSkeleton />}
+            {maintenance.isError && (
+              <Panel className="flex items-center gap-3 p-5 text-sm text-night-300">
+                <Wrench className="size-4 text-ember-400" />
+                {(maintenance.error as Error).message}
+              </Panel>
+            )}
+            {maintenance.data && (
+              <MaintenancePanel
+                findings={maintenance.data.findings}
+                semantic={maintenance.data.semantic}
+                dismissed={maintenance.data.dismissed}
+                onProposal={setProposalId}
+              />
+            )}
           </div>
         )}
 
