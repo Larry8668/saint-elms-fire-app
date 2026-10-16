@@ -1,15 +1,19 @@
 import { mkdir, readdir, stat } from 'node:fs/promises';
 import path from 'node:path';
 import {
+  CONTRACT_VERSION,
   LearningEventSchema,
   SourceRecordSchema,
+  SourceTombstoneSchema,
   WikiProposalSchema,
   type BrainLogEntry,
   type LearningEvent,
   type PageRevisionContent,
   type PageRevisionList,
   type Revision,
+  type SourceDependents,
   type SourceRecord,
+  type SourceTombstone,
   type WikiJob,
   type WikiProposal,
 } from '@sef/shared';
@@ -33,10 +37,12 @@ import {
   META_EVENTS_DIRECTORY,
   META_MANIFEST_FILE,
   META_SOURCES_DIRECTORY,
+  META_TOMBSTONES_DIRECTORY,
   PAGE_KINDS,
   VAULT_DIRECTORIES,
   VAULT_LAYOUT_VERSION,
   assertRecordId,
+  assertRelativeVaultPath,
   assertSafeRevision,
   historyRelativePath,
   isRawPath,
@@ -55,8 +61,8 @@ import {
   type VaultManifestPage,
   type VaultManifestSource,
 } from './vault-manifest';
-import { indexEntryOf, indexEntryOfContent, planProposal, planUpgrade, stamped, type PageChange, type PagePlan, type PageSnapshot } from './wiki-plan';
-import { contentRevision, readPageFile, revisionMatches, serializePageFile } from './wiki-page-format';
+import { indexEntryOf, indexEntryOfContent, pageSnapshotFromContent, planProposal, planUpgrade, stamped, type PageChange, type PagePlan, type PageSnapshot } from './wiki-plan';
+import { contentRevision, serializePageFile } from './wiki-page-format';
 
 export type { PageChange, PageSnapshot } from './wiki-plan';
 
@@ -516,17 +522,43 @@ export class WikiStore {
     return null;
   }
 
+  /**
+   * Every page that still leans on a source: its page-level sourceIds, each claim or link
+   * that cites it, and learner evidence that names it. The student sees this list before
+   * erasing, and it is what an erasure honestly orphans.
+   */
+  async sourceDependents(id: string): Promise<SourceDependents['pages']> {
+    const safeId = assertRecordId(id, 'Source id');
+    const pages: SourceDependents['pages'] = [];
+    for (const snapshot of await this.listPages()) {
+      const metadata = snapshot.metadata;
+      if (!metadata) continue;
+      const references: string[] = [];
+      if (metadata.sourceIds.includes(safeId)) references.push('page');
+      for (const claim of metadata.claims) {
+        if (claim.citations.some((citation) => citation.sourceId === safeId)) references.push(`claim ${claim.id}`);
+      }
+      for (const link of metadata.links) {
+        if (link.citations.some((citation) => citation.sourceId === safeId)) references.push(`link → ${link.toPageId}`);
+      }
+      if (metadata.learner?.evidenceIds.includes(safeId)) references.push('learner evidence');
+      if (references.length) pages.push({ id: snapshot.id, kind: metadata.kind, title: metadata.title, references });
+    }
+    return pages;
+  }
+
   /** Student-controlled erasure: the only path that may touch raw/. */
-  async eraseSource(id: string, expectedRevision?: Revision): Promise<{ erased: boolean }> {
+  async eraseSource(id: string, expectedRevision?: Revision): Promise<{ erased: boolean; dependents: SourceDependents['pages'] }> {
     const safeId = assertRecordId(id, 'Source id');
     return this.lock.run(async () => {
       const record = await this.readSource(safeId);
-      if (!record) return { erased: false };
+      if (!record) return { erased: false, dependents: [] };
       if (expectedRevision && record.revision !== expectedRevision) {
         throw new VaultConflictError(`Source ${safeId} is not at the revision you read.`, [
           { id: safeId, expected: expectedRevision, found: record.revision, reason: 'revision_changed' },
         ]);
       }
+      const dependents = await this.sourceDependents(safeId);
       const read = await readManifest(this.root);
       assertWritableManifest(read);
       const at = this.now().toISOString();
@@ -535,14 +567,29 @@ export class WikiStore {
       const sources = { ...current.sources };
       delete sources[safeId];
       const logEntry: BrainLogEntry = { at, kind: 'erase', title: `Erased source ${safeId}`, detail: 'The student removed this source; the page metadata that cited it stays.' };
+      // A tombstone replaces the record: the delete is recorded, not hidden, and a future
+      // sync can carry it. Derived extraction text goes with the source it came from.
+      const tombstone: SourceTombstone = SourceTombstoneSchema.parse({
+        schemaVersion: CONTRACT_VERSION,
+        id: record.id,
+        revision: record.revision,
+        kind: record.kind,
+        mediaType: record.mediaType,
+        sha256: record.sha256,
+        erasedAt: at,
+      });
+      const extractedDir = `${META_DIRECTORY}/${META_SOURCES_DIRECTORY}/${safeId}/extracted`;
+      const extracted = await readdir(vaultPath(this.root, extractedDir)).catch(() => [] as string[]);
       const steps: JournalStep[] = [
         ...(entry ? [{ kind: 'remove' as const, path: entry.path }] : []),
+        ...extracted.filter((file) => file.endsWith('.txt')).map((file) => ({ kind: 'remove' as const, path: `${extractedDir}/${file}` })),
         { kind: 'remove', path: sourceRecordStepPath(safeId) },
+        { kind: 'write', path: `${META_DIRECTORY}/${META_TOMBSTONES_DIRECTORY}/${safeId}.json`, content: `${JSON.stringify(tombstone, null, 2)}\n` },
         { kind: 'write', path: manifestPath(this.root), content: manifestJson({ ...current, updatedAt: at, sources }) },
         { kind: 'append', path: LOG_FILE, content: renderLogEntry(logEntry) },
       ];
       await this.commit(`wiki.erase:${safeId}`, steps, { allowRaw: true });
-      return { erased: true };
+      return { erased: true, dependents };
     });
   }
 
@@ -614,59 +661,7 @@ export class WikiStore {
     if (raw === null) return null;
     const id = pageIdFromFileName(path.basename(relativePath));
     if (!id) return null;
-    const fileSha256 = sha256Hex(raw);
-    const bytes = Buffer.byteLength(raw);
-    const parsed = readPageFile(raw);
-    if (parsed.format === 2) {
-      const recorded = manifest?.pages[id];
-      const drifted = !revisionMatches(parsed.metadata, parsed.body) || parsed.metadata.kind !== kind || (recorded !== undefined && recorded.sha256 !== fileSha256);
-      return {
-        id,
-        kind: parsed.metadata.kind,
-        format: 2,
-        relativePath,
-        revision: drifted ? `file-${fileSha256.slice(0, 40)}` : parsed.metadata.revision,
-        state: drifted ? 'out_of_band' : 'ok',
-        metadata: parsed.metadata,
-        legacy: null,
-        body: parsed.body,
-        raw,
-        fileSha256,
-        bytes,
-        ...(drifted ? { issue: 'the page changed outside the keeper' } : {}),
-      };
-    }
-    if (parsed.format === 1) {
-      return {
-        id,
-        kind,
-        format: 1,
-        relativePath,
-        revision: `file-${fileSha256.slice(0, 40)}`,
-        state: 'ok',
-        metadata: null,
-        legacy: parsed.legacy,
-        body: parsed.body,
-        raw,
-        fileSha256,
-        bytes,
-      };
-    }
-    return {
-      id,
-      kind,
-      format: null,
-      relativePath,
-      revision: `file-${fileSha256.slice(0, 40)}`,
-      state: parsed.reason === 'newer_schema' ? 'newer_schema' : 'malformed',
-      metadata: null,
-      legacy: null,
-      body: '',
-      raw,
-      fileSha256,
-      bytes,
-      issue: parsed.message,
-    };
+    return pageSnapshotFromContent(kind, relativePath, raw, manifest?.pages[id]);
   }
 
   private async commitPlans(
@@ -744,6 +739,33 @@ export class WikiStore {
       { kind: 'append', path: LOG_FILE, content: renderLogEntry(logEntry) },
       { kind: 'write', path: manifestPath(this.root), content: manifestJson({ schemaVersion: VAULT_LAYOUT_VERSION, updatedAt: at, pages, sources }) },
     ];
+  }
+
+  /**
+   * The verbatim restore path (vault portability): the caller supplies complete journal
+   * steps — page bytes, catalogue, log — plus the sha each touched path held when the plan
+   * was previewed. Preconditions are re-checked inside the writer lock, so a vault that
+   * moved between preview and commit is refused rather than silently overwritten. Nothing
+   * here derives content; restored pages keep their committed bytes and revisions.
+   */
+  async commitRestore(
+    intent: string,
+    steps: JournalStep[],
+    options: { preconditions?: { path: string; sha256: string | null }[] } = {},
+  ): Promise<string> {
+    return this.lock.run(async () => {
+      for (const pre of options.preconditions ?? []) {
+        const relativePath = assertRelativeVaultPath(pre.path);
+        const current = await readBytes(vaultPath(this.root, relativePath));
+        const found = current ? sha256Hex(current) : null;
+        if (found !== pre.sha256) {
+          throw new VaultConflictError(`The vault changed since this restore was previewed: ${relativePath} no longer matches.`, [
+            { id: relativePath, expected: pre.sha256, found, reason: 'revision_changed' },
+          ]);
+        }
+      }
+      return this.commit(intent, steps, { allowRaw: true });
+    });
   }
 
   /** One journal, then the steps. Interrupted commits are finished by recover(), never half-applied. */

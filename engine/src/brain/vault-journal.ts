@@ -14,7 +14,9 @@ export const JOURNAL_SCHEMA_VERSION = 2 as const;
  * file again, so replaying a journal twice lands on the same bytes as replaying it once.
  */
 export const JournalStepSchema = z.discriminatedUnion('kind', [
-  z.strictObject({ kind: z.literal('write'), path: z.string().min(1), content: z.string() }),
+  // encoding 'base64' carries binary originals (raw/ restores) through a journal that is JSON;
+  // older engines reject the key under strict parsing, so an unreadable step fails safe.
+  z.strictObject({ kind: z.literal('write'), path: z.string().min(1), content: z.string(), encoding: z.literal('base64').optional() }),
   z.strictObject({ kind: z.literal('append'), path: z.string().min(1), content: z.string().min(1) }),
   z.strictObject({ kind: z.literal('remove'), path: z.string().min(1) }),
 ]);
@@ -74,7 +76,7 @@ export async function applyJournalSteps(root: string, steps: JournalStep[]): Pro
     const relativePath = assertRelativeVaultPath(step.path);
     const target = vaultPath(root, relativePath);
     if (step.kind === 'write') {
-      await writeFileAtomic(target, step.content);
+      await writeFileAtomic(target, step.encoding === 'base64' ? Buffer.from(step.content, 'base64') : step.content);
     } else if (step.kind === 'append') {
       await appendOnce(target, step.content);
     } else {

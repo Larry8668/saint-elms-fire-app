@@ -9,6 +9,7 @@ import { FormSkeleton } from '@/components/ui/skeletons';
 import { api, type StoredSettings } from '@/lib/api';
 import { useHealth, useSaveSettings, useSettings } from '@/lib/queries';
 import { ProfilePanel } from './ProfilePanel';
+import { VaultPanel } from './VaultPanel';
 
 const ROLE_INFO: Record<ModelRole, { label: string; hint: string; icon: typeof Cpu }> = {
   tutor: { label: 'Teachers', hint: 'Chat for the Friend, Guide and Philosopher. Needs tool calling.', icon: Cpu },
@@ -54,6 +55,7 @@ export function SettingsView() {
 
         <div className="space-y-6">
           <ProfilePanel />
+          <VaultPanel />
 
           <Panel className="grid gap-4 p-6 md:grid-cols-2">
             <div>

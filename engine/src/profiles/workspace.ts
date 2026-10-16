@@ -4,6 +4,7 @@ import type { DeviceProfile, ProfileIdentity } from '@sef/shared';
 import { WikiCompiler } from '../brain/compiler/compile';
 import { evidenceResolver } from '../brain/evidence';
 import { MaintenanceService } from '../brain/maintenance/service';
+import { VaultPortabilityService } from '../brain/portable/service';
 import { BrainService } from '../brain/service';
 import { SourceIngestor, SourceRejection } from '../brain/sources/ingest';
 import { BrainVault } from '../brain/vault';
@@ -30,6 +31,8 @@ export interface Workspace {
   sources: SourceIngestor;
   compiler: WikiCompiler;
   maintenance: MaintenanceService;
+  /** Export and restore of the student's own vault — independent of enrolment or network. */
+  portable: VaultPortabilityService;
   brain: BrainService;
   sessions: SessionStore;
   sync: ContentSync;
@@ -105,6 +108,17 @@ export class WorkspaceManager {
       sources,
       compiler,
       maintenance: new MaintenanceService({ wiki, content, settings, identity }),
+      // Identity for export provenance tolerates an unlinked profile: portability cannot wait
+      // on enrolment state, so the fallback only names who held the vault.
+      portable: new VaultPortabilityService(wiki, {
+        identity: async () => {
+          try {
+            return await identity();
+          } catch {
+            return { issuer: 'local', studentId: profileId, programmeId: profile.programmeId ?? profile.cohortId ?? 'local' };
+          }
+        },
+      }),
       brain: new BrainService(content, vault, settings, paths.quizzes, { wiki, sources, identity }),
       sessions: new SessionStore(paths.sessions),
       sync: new ContentSync(settings, content, async () => {
