@@ -96,6 +96,41 @@ test('option groups resolve into complete bundles and leave the plain row list',
   assert.equal(view.counts.bundles, 1);
 });
 
+test('an option group spanning semesters renders whole at the first referencing semester, its rows exactly once', () => {
+  const m = manifest();
+  // The schema does not pin a group to one semester; stretch the elective across 4 and 5.
+  m.programme.rows.find((row) => row.rowId === 'row-internship')!.optionGroup = 'elective-sem5';
+  m.programme.optionGroups[0]!.bundles[0]!.rowIds.push('row-internship');
+  const view = viewOfManifest(m);
+  const sem4 = view.degree.find((semester) => semester.number === 4)!;
+  const sem5 = view.degree.find((semester) => semester.number === 5)!;
+
+  assert.equal(sem4.optionGroups.length, 1, 'the group attaches to the first semester referencing a member');
+  assert.deepEqual(
+    sem4.optionGroups[0]!.bundles[0]!.rows.map((v) => v.row.rowId),
+    ['row-astro-theory', 'row-astro-lab', 'row-internship'],
+    'a bundle is indivisible: all its rows render together',
+  );
+  assert.deepEqual(sem4.rows, []);
+  assert.deepEqual(sem5.rows, [], 'a later semester must not repeat bundle members as plain rows');
+  assert.equal(sem5.optionGroups.length, 0);
+  assert.equal(view.counts.degreeRows, 6);
+
+  const rendered = [
+    ...view.degree.flatMap((semester) => [
+      ...semester.rows,
+      ...semester.optionGroups.flatMap((group) => group.bundles.flatMap((bundle) => bundle.rows)),
+    ]),
+    ...(view.support?.rows ?? []),
+    ...view.unlisted,
+  ].map((v) => v.row.rowId);
+  assert.deepEqual(
+    rendered.sort(),
+    m.programme.rows.map((row) => row.rowId).sort(),
+    'every served row renders exactly once — none dropped, none duplicated',
+  );
+});
+
 test('nullable hours and zero credits pass through with honest labels', () => {
   const view = viewOfManifest(manifest());
   const bridge = view.degree[0]!.rows.find((v) => v.row.rowId === 'row-bridge-maths')!;

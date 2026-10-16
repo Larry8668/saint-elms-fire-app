@@ -82,15 +82,17 @@ export function viewOfManifest(manifest: ProgrammeManifestResponse): ManifestVie
   };
 
   const assignedGroups = new Set<string>();
+  /** Rows claimed into an attached group's bundles — rendered there once, never again as plain rows. */
+  const groupedRowIds = new Set<string>();
   const semesterViews: SemesterView[] = [];
   for (const semester of manifest.semesters) {
-    let rows = semester.rowIds.map(resolve).filter((view): view is ManifestRowView => view !== null);
     const optionGroups: OptionGroupView[] = [];
     for (const group of manifest.programme.optionGroups) {
       if (assignedGroups.has(group.id)) continue;
       const memberIds = new Set(group.bundles.flatMap((bundle) => bundle.rowIds));
       if (!semester.rowIds.some((rowId) => memberIds.has(rowId))) continue;
       assignedGroups.add(group.id);
+      for (const rowId of memberIds) groupedRowIds.add(rowId);
       optionGroups.push({
         id: group.id,
         bundles: group.bundles.map((bundle) => ({
@@ -98,8 +100,13 @@ export function viewOfManifest(manifest: ProgrammeManifestResponse): ManifestVie
           rows: bundle.rowIds.map(resolve).filter((view): view is ManifestRowView => view !== null),
         })),
       });
-      rows = rows.filter((view) => !memberIds.has(view.row.rowId));
     }
+    // A group attaches to the first semester referencing it, and a bundle is indivisible: a member
+    // another semester also lists renders inside the bundle there, not as a second plain row here.
+    const rows = semester.rowIds
+      .filter((rowId) => !groupedRowIds.has(rowId))
+      .map(resolve)
+      .filter((view): view is ManifestRowView => view !== null);
     semesterViews.push({
       id: semester.id,
       name: semester.name,
