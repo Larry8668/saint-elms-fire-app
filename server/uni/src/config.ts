@@ -34,7 +34,12 @@ export const config = {
   demoPassword: env('DEMO_PASSWORD', DEMO_PASSWORD_DEFAULT),
   /** Student tokens are long-lived so devices can keep working offline between syncs. */
   studentTokenHours: envInt('STUDENT_TOKEN_HOURS', 24 * 30),
-  /** Offline entitlements renew daily so a suspension stops verified access within ~a day. */
+  /**
+   * Offline entitlements renew daily. Suspension gates only online re-verification:
+   * an offline device keeps using its stored entitlement until that expires, and
+   * local private data stays readable regardless — access actually stops at the
+   * device's next online check.
+   */
   entitlementHours: envInt('ENTITLEMENT_HOURS', 24),
   adminTokenHours: envInt('ADMIN_TOKEN_HOURS', 12),
   /** Public origin of this server, used for account links and trusted-origin checks. */

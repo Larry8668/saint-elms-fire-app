@@ -8,7 +8,7 @@ const MAX_TOKEN_LENGTH = 256;
 const MAX_CALLBACK_LENGTH = 2048;
 const MAX_FORM_BYTES = 16 * 1024;
 
-const SECURITY_HEADERS: Readonly<Record<string, string>> = {
+export const SECURITY_HEADERS: Readonly<Record<string, string>> = {
   'cache-control': 'no-store',
   'referrer-policy': 'strict-origin',
   'x-robots-tag': 'noindex',

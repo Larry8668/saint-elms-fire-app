@@ -386,13 +386,18 @@ export async function getStudentDetail(pool: Pool, profileId: string): Promise<A
   };
 }
 
-/** Optimistic-versioned profile patch; account suspension severs all sessions. */
+/** Optimistic-versioned profile patch under a row lock; account suspension severs all sessions. */
 export async function updateStudentProfile(
   pool: Pool,
   input: { profileId: string; actor: string; legalName?: string; preferredName?: string | null; status?: 'active' | 'suspended'; expectedVersion: number; reason: string; revokeSessions?: SessionRevoker },
 ): Promise<StudentProfileRow> {
   return withTransaction(pool, async (client) => {
-    const row = await readProfile(client, input.profileId);
+    const current = await client.query<StudentProfileRow>(
+      `SELECT id, account_user_id, legal_name, preferred_name, status, version, created_at
+       FROM student_profiles WHERE id = $1 FOR UPDATE`,
+      [input.profileId],
+    );
+    const row = current.rows[0];
     if (!row) throw new AdmissionError('not_found', 'Student profile not found');
     if (row.version !== input.expectedVersion) {
       throw new AdmissionError('version_conflict', `Profile is at version ${row.version}`);
