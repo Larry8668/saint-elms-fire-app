@@ -1,5 +1,6 @@
 import { normalizeEdgeType, type DroppedItem, type FindingEvidence, type MaintenanceFinding } from '@sef/shared';
 import { z } from 'zod';
+import { UNTRUSTED_CONTENT_NOTE } from '../../agents/prompts';
 import type { PageSnapshot } from '../wiki-store';
 import { makeFinding, pageRevisions } from './findings';
 
@@ -58,6 +59,7 @@ export type SemanticReviewDraft = z.infer<typeof SemanticReviewDraftSchema>;
 export const SEMANTIC_REVIEW_INSTRUCTIONS = `
 You review one student's markdown wiki for maintenance. You see each page's id, title,
 summary, claims (with ids and status) and outgoing links.
+${UNTRUSTED_CONTENT_NOTE}
 
 Suggest findings only where the pages genuinely support them — every suggestion must name
 real page ids and claim ids from the input. Code validates each one; invented references are

@@ -13,7 +13,7 @@ import {
 import { JobConflictError, JobStateError, SourceRejection } from '../../brain/sources/ingest';
 import { ProposalStateError } from '../../brain/compiler/compile';
 import { VaultConflictError } from '../../brain/vault-errors';
-import { INGEST_LIMITS } from '../../brain/sources/limits';
+import { INGEST_LIMITS, safeSourceFilename } from '../../brain/sources/limits';
 import { requireProfile, type EngineDeps, type EngineEnv } from '../context';
 import { friendlyError } from '../errors';
 
@@ -129,9 +129,20 @@ export function sourceRoutes(deps: EngineDeps) {
     try {
       const raw = await c.get('ws').sources.rawBytes(id.data);
       if (!raw) return c.json({ error: 'Source not found', code: 'not_found' }, 404);
+      // Only the two preview image types may render inside this origin. Everything else —
+      // including a stored type a vault restore once planted — downloads as opaque bytes,
+      // with nosniff so the declared type cannot be re-read by the browser.
+      const mediaType = raw.mediaType.split(';')[0]!.trim().toLowerCase();
+      const headers: Record<string, string> = { 'x-content-type-options': 'nosniff' };
+      if (mediaType === 'image/png' || mediaType === 'image/jpeg') {
+        headers['content-type'] = mediaType;
+      } else {
+        headers['content-type'] = 'application/octet-stream';
+        headers['content-disposition'] = `attachment; filename="${safeSourceFilename(id.data, mediaType)}"`;
+      }
       // A fresh copy: the pooled buffer is not transferable, and Hono's body types want
       // a Uint8Array over a plain ArrayBuffer.
-      return c.body(new Uint8Array(raw.bytes), 200, { 'content-type': raw.mediaType });
+      return c.body(new Uint8Array(raw.bytes), 200, headers);
     } catch (error) {
       const { body, status } = handled(error, 'source_failed');
       return c.json(body, status);

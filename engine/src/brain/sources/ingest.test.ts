@@ -41,6 +41,15 @@ test('an unsafe title is refused and nothing is written', async () => {
   assert.deepEqual(Object.keys(await store.listSources()), [], 'a refused upload leaves no trace');
 });
 
+test('a media type outside the allowlist is refused with a 415 before anything is stored', async () => {
+  const { store, ingestor } = await harness('ingest-media');
+  const refused = await ingestor.ingest({ ...note('<script>alert(1)</script>'), mediaType: 'text/html' }).catch((e: unknown) => e);
+  assert.ok(refused instanceof SourceRejection);
+  assert.equal(refused.code, 'unsupported_media');
+  assert.equal(refused.status, 415);
+  assert.deepEqual(Object.keys(await store.listSources()), [], 'a refused upload leaves no trace');
+});
+
 test('an empty source is refused with a 400 and an oversized one with a 413', async () => {
   const { ingestor } = await harness('ingest-size');
   const empty = await ingestor.ingest({ ...note(''), bytes: Buffer.alloc(0) }).catch((e: unknown) => e);

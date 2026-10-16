@@ -1,8 +1,10 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
 import {
+  ACCEPTED_MEDIA_TYPES,
   checkBytes,
   checkImageDimensions,
+  checkMediaType,
   checkPageCount,
   checkSourceCount,
   countChars,
@@ -41,6 +43,18 @@ test('image dimensions are checked on both axes and on total pixels', () => {
   assert.equal(checkImageDimensions(0, 10)?.code, 'image_too_large');
   // Under the per-axis limit but over the pixel budget.
   assert.equal(checkImageDimensions(4000, 4000, { maxImageDimension: 8000, maxImagePixels: 1000 })?.code, 'image_too_large');
+});
+
+test('the media allowlist is enforced by name, tolerating case and parameters', () => {
+  assert.deepEqual([...ACCEPTED_MEDIA_TYPES].sort(), ['application/pdf', 'image/jpeg', 'image/png', 'text/markdown', 'text/plain']);
+  assert.equal(checkMediaType('text/markdown'), null);
+  assert.equal(checkMediaType('Text/Plain; charset=utf-8'), null);
+  assert.equal(checkMediaType(' application/PDF '), null);
+  assert.equal(checkMediaType('text/html')?.code, 'unsupported_media');
+  assert.equal(checkMediaType('image/svg+xml')?.code, 'unsupported_media');
+  assert.equal(checkMediaType('application/octet-stream')?.code, 'unsupported_media');
+  assert.equal(checkMediaType('')?.code, 'unsupported_media');
+  assert.match(checkMediaType('text/html')!.message, /text\/html/);
 });
 
 test('a document over the page limit is refused outright', () => {
