@@ -84,6 +84,17 @@ test('a web citation resolves by result number as well as url', () => {
   assert.equal(resolve(evidence(), 'web', 'https://example.com/resonance', 'aeroelastic flutter collapsed tacoma narrows').verdict, 'cited');
 });
 
+test('a brain citation resolves only for a page fetched with brain_lookup, never for ambient context', () => {
+  assert.equal(resolve(evidence(), 'brain', 'energy', 'energy is always conserved no exceptions').verdict, 'cited', 'a fetched brain page is citable');
+  assert.equal(resolve(evidence(), 'brain', 'celestial-sphere').verdict, 'forged', 'a page only in the ambient context has no citable id');
+  const contextOnly = buildEvidenceSet({ sources: sources.filter((s) => s.kind !== 'brain'), evidenceText, contextBlocks: ['STUDENT BRAIN:\n- Energy: conserved'] });
+  assert.equal(
+    contextOnly.resolve({ raw: '[brain]', declared: 'brain' }, terms('energy is always conserved'), 3).verdict,
+    'forged',
+    'ambient brain context supports statements but can never be cited',
+  );
+});
+
 test('a citation to a withheld claim is withheld, and declaring it withheld is allowed', () => {
   assert.equal(resolve(evidence(), 'cited', 'c-2').verdict, 'withheld');
   assert.equal(resolve(evidence(), 'withheld', 'c-2').verdict, 'withheld');
