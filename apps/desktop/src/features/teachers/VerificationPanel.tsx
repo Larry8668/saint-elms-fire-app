@@ -3,15 +3,14 @@ import { BookOpen, Brain, CalendarClock, CheckCircle2, ChevronDown, Cpu, Globe, 
 import { useState } from 'react';
 import { cn } from '@/lib/cn';
 import { safeHref } from '@/lib/url';
-import { providerDisclosure, segmentSummary } from './verification-summary';
+import { checksSummary, providerDisclosure, segmentSummary } from './verification-summary';
 
 const SOURCE_ICON = { lesson: BookOpen, brain: Brain, web: Globe, support: LifeBuoy, logistics: CalendarClock } as const;
 
 /** "Why should I trust this answer?" — sources, checks, tool calls and the model that served it. */
 export function VerificationPanel({ verification }: { verification: Verification }) {
   const [open, setOpen] = useState(false);
-  const passed = verification.checks.filter((c) => c.passed).length;
-  const allPassed = passed === verification.checks.length;
+  const checks = checksSummary(verification.checks);
   const segments = segmentSummary(verification);
   const disclosure = providerDisclosure(verification);
 
@@ -22,10 +21,14 @@ export function VerificationPanel({ verification }: { verification: Verification
         aria-expanded={open}
         className="flex cursor-pointer flex-wrap items-center gap-x-3 gap-y-1 rounded-full border border-white/[0.06] bg-white/[0.02] px-2.5 py-1 text-[11.5px] text-night-500 transition hover:border-white/[0.12] hover:text-night-300"
       >
-        <span className={cn('flex items-center gap-1 font-medium', allPassed ? 'text-aurora-400' : 'text-ember-400')}>
-          {allPassed ? <CheckCircle2 className="size-3.5" /> : <XCircle className="size-3.5" />}
-          {passed}/{verification.checks.length} checks
-        </span>
+        {checks.tone === 'none' ? (
+          <span className="font-medium">No factual claims needed checks</span>
+        ) : (
+          <span className={cn('flex items-center gap-1 font-medium', checks.tone === 'pass' ? 'text-aurora-400' : 'text-ember-400')}>
+            {checks.tone === 'pass' ? <CheckCircle2 className="size-3.5" /> : <XCircle className="size-3.5" />}
+            {checks.passed}/{checks.total} checks
+          </span>
+        )}
         <span>{verification.sources.length} source{verification.sources.length === 1 ? '' : 's'}</span>
         {verification.withheld ? <span className="text-ember-400">{verification.withheld} withheld</span> : null}
         {verification.toolCalls.length > 0 && <span>{verification.toolCalls.length} tool call{verification.toolCalls.length === 1 ? '' : 's'}</span>}

@@ -154,6 +154,15 @@ export function ChatProvider({ profileId, children }: { profileId: string; child
     }
   }, [active, load]);
 
+  // Sign-out and profile switches remount this provider (Root keys the tree by profile id):
+  // a stream belongs to the student who started it, so it dies here rather than leaking on.
+  useEffect(() => {
+    const controllers = aborts.current;
+    return () => {
+      for (const controller of Object.values(controllers)) controller?.abort();
+    };
+  }, []);
+
   const send = useCallback<ChatStore['send']>(
     async (teacher, text, attachments) => {
       const thread = threadsRef.current[teacher];

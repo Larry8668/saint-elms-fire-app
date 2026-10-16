@@ -2,6 +2,7 @@ import type { PeerFeedItem, ShareImportResult } from '@sef/shared';
 import { EyeOff, RefreshCw, Share2, Users, WifiOff } from 'lucide-react';
 import { useEffect, useMemo, useState } from 'react';
 import { Button } from '@/components/ui/button';
+import { ConfirmButton } from '@/components/ui/confirm-button';
 import { WorkingLabel } from '@/components/ui/loading';
 import { Tabs } from '@/components/ui/overlays';
 import { Badge, EmptyState, PageHeader, Panel } from '@/components/ui/primitives';
@@ -167,16 +168,17 @@ export function PeersView() {
                     <div className="flex items-center gap-2">
                       <Badge tone={share.state === 'published' ? 'aurora' : 'ember'}>{share.state}</Badge>
                       {share.state === 'published' && (
-                        <Button
+                        <ConfirmButton
                           variant="danger"
                           size="sm"
+                          confirmLabel="Withdraw?"
                           loading={withdraw.isPending && withdraw.variables === share.id}
                           disabled={share.freshness === 'stored'}
                           title={share.freshness === 'stored' ? 'Withdrawal needs the university online' : undefined}
-                          onClick={() => withdraw.mutate(share.id)}
+                          onConfirm={() => withdraw.mutate(share.id)}
                         >
                           Withdraw
-                        </Button>
+                        </ConfirmButton>
                       )}
                     </div>
                   </div>

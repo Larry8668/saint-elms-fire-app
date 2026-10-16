@@ -192,7 +192,7 @@ export function TeachersView() {
             ) : thread.messages.length === 0 ? (
               <TeacherIntro teacher={teacher} onPick={(p) => submit(p)} anchor={thread.anchor} onAnchor={(a) => setAnchor(teacher, a)} />
             ) : (
-              <div className="space-y-7">
+              <div className="space-y-7" role="log" aria-live="polite" aria-atomic="false">
                 {thread.messages.map((m, i) =>
                   m.role === 'user' ? (
                     <UserMessage key={m.id} message={m} />

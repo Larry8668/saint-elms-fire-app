@@ -85,6 +85,7 @@ export const Composer = forwardRef<ComposerHandle, ComposerProps>(function Compo
         <textarea
           ref={textarea}
           value={draft}
+          aria-label={`Message the ${profile.name}`}
           onChange={(e) => onDraftChange(e.target.value)}
           onKeyDown={(e) => {
             if (e.key === 'Enter' && !e.shiftKey && !e.nativeEvent.isComposing) {

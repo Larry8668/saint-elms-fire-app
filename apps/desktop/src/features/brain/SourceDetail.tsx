@@ -10,6 +10,7 @@ import { Dialog } from '@/components/ui/overlays';
 import { Badge, Eyebrow, SkeletonText, Textarea } from '@/components/ui/primitives';
 import { api } from '@/lib/api';
 import { useInvalidateSource, useSourceBytes, useSourceDetail } from '@/lib/queries';
+import { useStudent } from '@/lib/session';
 import { timeAgo } from '@/lib/time';
 import { STAGE_INFO, canCorrect, formatBytes, originLabel, sourceKindLabel } from '@/features/contribute/review';
 
@@ -99,8 +100,9 @@ export function SourceDetailView({ sourceId, onReviewProposal, onErased }: { sou
     },
     onError: (e) => toast.error((e as Error).message),
   });
+  const pid = useStudent().profile.id;
   const dependents = useQuery({
-    queryKey: ['source-dependents', sourceId],
+    queryKey: ['profile', pid, 'source-dependents', sourceId],
     queryFn: () => api.sourceDependents(sourceId),
     enabled: confirmingErase,
     retry: false,

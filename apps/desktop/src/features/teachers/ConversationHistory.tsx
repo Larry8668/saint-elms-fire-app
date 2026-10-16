@@ -103,7 +103,7 @@ export function HistoryButton({ teacher }: { teacher: TeacherId }) {
           <History /> History
         </Button>
       </Tooltip>
-      <Sheet open={open} onOpenChange={setOpen}>
+      <Sheet open={open} onOpenChange={setOpen} title={`Conversations with the ${TEACHERS[teacher].name}`}>
         <div className="flex items-center justify-between border-b border-white/[0.06] px-5 py-4">
           <div className="flex items-center gap-2.5">
             <look.Icon className={cn('size-4', look.accent)} />

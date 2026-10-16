@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 import type { Verification } from '@sef/shared';
-import { providerDisclosure, segmentSummary } from './verification-summary';
+import { checksSummary, providerDisclosure, segmentSummary } from './verification-summary';
 
 const base = (over: Partial<Verification> = {}): Verification => ({ model: 'gemma4:e4b', provider: 'Ollama', sources: [], checks: [], toolCalls: [], ...over });
 
@@ -34,4 +34,14 @@ test('provider kind is disclosed honestly: local device vs hosted', () => {
   assert.match(providerDisclosure(base({ providerKind: 'anthropic' }))!, /left this device/);
   assert.match(providerDisclosure(base({ providerKind: 'openai-compatible' }))!, /hosted/);
   assert.equal(providerDisclosure(base()), null);
+});
+
+test('zero checks reads neutral — an answer with no factual claims is not a green pass', () => {
+  assert.deepEqual(checksSummary([]), { passed: 0, total: 0, tone: 'none' });
+});
+
+test('the tally passes only when every check passed', () => {
+  const check = (passed: boolean): Verification['checks'][number] => ({ id: 'c', label: 'a check', passed });
+  assert.deepEqual(checksSummary([check(true), check(true)]), { passed: 2, total: 2, tone: 'pass' });
+  assert.deepEqual(checksSummary([check(true), check(false)]), { passed: 1, total: 2, tone: 'fail' });
 });

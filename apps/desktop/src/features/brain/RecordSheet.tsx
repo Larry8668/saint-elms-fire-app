@@ -36,7 +36,7 @@ export function RecordSheet({ pageId, onClose }: { pageId: string | null; onClos
   const data = record.data ?? null;
 
   return (
-    <Sheet open={Boolean(pageId)} onOpenChange={(open) => !open && onClose()}>
+    <Sheet open={Boolean(pageId)} onOpenChange={(open) => !open && onClose()} title={data?.title ?? 'Page details'}>
       <div className="flex items-start justify-between gap-3 border-b border-white/[0.07] p-5">
         <div className="min-w-0">
           <Eyebrow>{data ? KIND_TITLE[data.kind] : 'Page'}</Eyebrow>
