@@ -1,35 +1,39 @@
 import { randomUUID } from 'node:crypto';
 import path from 'node:path';
 import {
-  brainProposalSchema,
-  conceptKey,
+  CONTRACT_VERSION,
+  type BrainDiffEntry,
+  type BrainEditOp,
   type ChatAttachment,
   type ConceptPage,
   type Evidence,
   type IngestResult,
   type Lesson,
   type LintFinding,
+  type ProfileIdentity,
+  type RejectedOp,
+  type WikiProposal,
 } from '@sef/shared';
 import { z } from 'zod';
 import { generateStructured } from '../agents/factory';
-import { BRAIN_KEEPER_INSTRUCTIONS, QUIZ_INSTRUCTIONS } from '../agents/prompts';
+import { QUIZ_INSTRUCTIONS } from '../agents/prompts';
 import { log } from '../config';
-import { excerptFor, queryTerms, searchLessons } from '../content/search';
 import type { ContentStore } from '../content/store';
-import { readJson, writeJson } from '../lib/fs';
+import { readJson, readText, writeJson } from '../lib/fs';
 import { resolveModel } from '../models/registry';
 import type { Session } from '../sessions/store';
 import type { SettingsReader } from '../settings/store';
-import { applyOps } from './applier';
+import type { CompileResult, WikiCompiler } from './compiler/compile';
 import { buildCourseGraph, type CourseGraph } from './course-graph';
 import { buildGraphView } from './graph';
 import { lintBrain } from './lint';
 import { computeStatus } from './mastery';
-import { validateProposal } from './validator';
+import { writeProposalRecord } from './proposals';
+import type { SourceIngestor } from './sources/ingest';
 import type { BrainVault } from './vault';
-
-const MAX_ALLOWED_CONCEPTS = 40;
-const LESSON_EXCERPT_CHARS = 1800;
+import { historyRelativePath, vaultPath } from './vault-layout';
+import { readPageFile } from './wiki-page-format';
+import type { PageChange, WikiStore } from './wiki-store';
 
 const NotesReadingSchema = z.object({
   topic: z.string().describe('What the notes are about, in a few words'),
@@ -66,6 +70,16 @@ interface Quiz {
   questions: QuizQuestion[];
 }
 
+/** A quiz result is persisted as its own artifact so evidenceIds can resolve to real scores. */
+interface QuizResult {
+  id: string;
+  quizId: string;
+  key: string;
+  score: number;
+  outOf: number;
+  at: string;
+}
+
 /** Keeps only well-formed questions: four distinct options, one of which is the stated answer. */
 function finalizeQuestions(draft: z.infer<typeof QuizDraftSchema>): QuizQuestion[] {
   const norm = (s: string) => s.trim().toLowerCase().replace(/\s+/g, ' ');
@@ -79,7 +93,9 @@ function finalizeQuestions(draft: z.infer<typeof QuizDraftSchema>): QuizQuestion
 
 /**
  * The second brain: deterministic engine (graph, validator, mastery, lint) plus
- * model-driven steps (brain keeper, notes reader, quiz master) that only ever propose.
+ * model-driven steps (notes reader, quiz master) that only ever propose. Every model
+ * update reaches the vault as a WikiProposal through the compiler — there is no other
+ * writer for keeper-authored content.
  */
 export class BrainService {
   private graphCache: { lessons: Lesson[]; graph: CourseGraph } | null = null;
@@ -89,6 +105,12 @@ export class BrainService {
     private readonly vault: BrainVault,
     private readonly settings: SettingsReader,
     private readonly quizzesDir: string,
+    private readonly deps: {
+      wiki: WikiStore;
+      sources: SourceIngestor;
+      compiler: WikiCompiler;
+      identity: () => Promise<ProfileIdentity>;
+    },
   ) {}
 
   async courseGraph(): Promise<CourseGraph> {
@@ -136,91 +158,99 @@ export class BrainService {
     return [`STUDENT BRAIN:`, ...pageLines, openLines.length ? `OPEN MISCONCEPTIONS:\n${openLines.join('\n')}` : ''].filter(Boolean).join('\n');
   }
 
-  /** Concepts allowed for an ingest: those from touched lessons, plus any course concept named in the text. */
-  private async allowedConcepts(touched: Lesson[], text: string): Promise<Map<string, string>> {
-    const graph = await this.courseGraph();
-    const allowed = new Map<string, string>();
-    for (const lesson of touched) {
-      for (const label of lesson.concepts) {
-        const key = conceptKey(label);
-        const concept = graph.concepts.get(key);
-        if (concept) allowed.set(key, concept.label);
+  /**
+   * Maps a compiled proposal's page changes onto the diff shape the desktop renders.
+   * `statusBefore` is read back from the page's history file — the version the commit just
+   * archived — so the before/after the student sees is the truth on disk, not a guess.
+   */
+  private async diffOf(changes: PageChange[]): Promise<BrainDiffEntry[]> {
+    const diff: BrainDiffEntry[] = [];
+    for (const change of changes) {
+      if (change.change === 'unchanged') continue;
+      const snapshot = await this.deps.wiki.readPage(change.id);
+      if (!snapshot) continue;
+      const view = snapshot.metadata ? await this.vault.conceptView(snapshot.metadata, snapshot.body) : (snapshot.legacy ?? null);
+      const before = change.revisionBefore ? await this.pageAtRevision(change.id, change.revisionBefore) : null;
+      const beforeView = before ? (before.metadata ? await this.vault.conceptView(before.metadata, before.body) : before.legacy) : null;
+      diff.push({
+        key: change.id,
+        concept: view?.concept ?? snapshot.metadata?.title ?? change.id,
+        change: change.change,
+        before: before?.raw ?? undefined,
+        after: snapshot.raw,
+        statusBefore: computeStatus(beforeView),
+        statusAfter: computeStatus(view),
+      });
+    }
+    return diff;
+  }
+
+  private async pageAtRevision(id: string, revision: string) {
+    const snapshot = await this.deps.wiki.readPage(id);
+    if (!snapshot) return null;
+    const raw = await readText(vaultPath(this.deps.wiki.root, historyRelativePath(snapshot.kind, id, revision)));
+    if (raw === null) return null;
+    const parsed = readPageFile(raw);
+    if (parsed.format === 2) return { metadata: parsed.metadata, body: parsed.body, raw, legacy: null };
+    if (parsed.format === 1) return { metadata: null, body: parsed.body, raw, legacy: parsed.legacy };
+    return null;
+  }
+
+  /** A completed compile is reported in the same shape Reflect has always returned. */
+  private async toIngestResult(compiled: CompileResult, trigger: Evidence): Promise<IngestResult> {
+    const applied: BrainEditOp[] = [];
+    const proposal = compiled.proposalId ? await this.deps.compiler.getProposal(compiled.proposalId) : null;
+    for (const op of proposal?.proposal.operations ?? []) {
+      if (op.op === 'add_link') {
+        applied.push({ op: 'add_link', from: op.fromPageId, to: op.link.toPageId, type: op.link.type, origin: op.link.origin, why: op.link.why });
       }
     }
-    const lower = text.toLowerCase();
-    for (const concept of graph.concepts.values()) {
-      if (allowed.size >= MAX_ALLOWED_CONCEPTS) break;
-      if (concept.label.length > 4 && lower.includes(concept.label.toLowerCase())) allowed.set(concept.key, concept.label);
-    }
-    return allowed;
+    const rejected: RejectedOp[] = compiled.dropped.map((drop) => ({ op: { what: drop.what }, reason: drop.reason }));
+    const diff = await this.diffOf(compiled.report?.pages ?? []);
+    return {
+      trigger: { kind: trigger.kind, ref: trigger.ref },
+      applied,
+      rejected,
+      diff,
+      model: compiled.model,
+      durationMs: compiled.durationMs,
+      jobId: compiled.job.id,
+      proposalId: compiled.proposalId ?? undefined,
+      stage: compiled.job.stage,
+    };
   }
 
-  private async runIngest(opts: {
-    evidence: Evidence;
-    touched: Lesson[];
-    material: string;
-    title: string;
-  }): Promise<IngestResult> {
-    const settings = await this.settings.get();
-    const resolved = resolveModel(settings, 'brain', { think: true });
-    const allowed = await this.allowedConcepts(opts.touched, opts.material);
-    const pages = await this.vault.all();
-    if (!allowed.size) {
-      log.info('brain_ingest_skipped', { reason: 'no concepts in scope', ref: opts.evidence.ref });
-      return { trigger: { kind: opts.evidence.kind, ref: opts.evidence.ref }, applied: [], rejected: [], diff: [], model: resolved.label, durationMs: 0 };
-    }
-
-    const openMisconceptions = [...allowed.keys()]
-      .flatMap((k) => pages.get(k)?.misconceptions.filter((m) => !m.resolved).map((m) => `- ${pages.get(k)!.concept}: "${m.claim}"`) ?? [])
-      .join('\n');
-    const terms = queryTerms(opts.material);
-    const lessonText = opts.touched
-      .slice(0, 2)
-      .map((l) => `### ${l.title}\n${excerptFor(l, terms, LESSON_EXCERPT_CHARS)}`)
-      .join('\n\n');
-
-    const prompt = [
-      `ALLOWED CONCEPTS: ${[...allowed.values()].join(' | ')}`,
-      openMisconceptions ? `OPEN MISCONCEPTIONS:\n${openMisconceptions}` : 'OPEN MISCONCEPTIONS: none',
-      `LESSON TEXT (ground truth):\n${lessonText || '(none)'}`,
-      `MATERIAL FROM THE STUDENT:\n${opts.material}`,
-    ].join('\n\n');
-
-    const labels = [...allowed.values()] as [string, ...string[]];
-    const { object, ms } = await generateStructured({
-      agentId: 'brain-keeper',
-      instructions: BRAIN_KEEPER_INSTRUCTIONS,
-      resolved,
-      prompt,
-      schema: brainProposalSchema(labels),
-    });
-
-    const { ops, rejected } = validateProposal(object, { allowed, pages, touchedLessons: opts.touched, evidence: opts.evidence });
-    const diff = await applyOps(this.vault, ops);
-    const created = diff.filter((d) => d.change === 'created').length;
-    const flagged = ops.filter((o) => o.op === 'flag_misconception').length;
-    await this.vault.appendLog({
-      kind: opts.evidence.kind,
-      title: opts.title,
-      detail: `${diff.length} pages touched (${created} new), ${flagged} misconception${flagged === 1 ? '' : 's'} flagged, ${rejected.length} proposal${rejected.length === 1 ? '' : 's'} rejected by the validator. Model: ${resolved.label}.`,
-    });
-    log.info('brain_ingested', { ref: opts.evidence.ref, applied: ops.length, rejected: rejected.length, pages: diff.length, ms });
-    return { trigger: { kind: opts.evidence.kind, ref: opts.evidence.ref }, applied: ops, rejected, diff, model: resolved.label, durationMs: ms };
-  }
-
+  /**
+   * Reflect on a tutoring session: the fresh turns are frozen as a session source — the
+   * committed transcript range travels with it — then the compiler proposes wiki updates
+   * which are auto-committed because clicking Reflect *is* the student's review.
+   */
   async ingestSession(session: Session): Promise<IngestResult> {
     const fresh = session.turns.slice(session.ingestedTurns);
-    const lessons = (await Promise.all(session.lessonIds.map((id) => this.content.lesson(id)))).filter((l): l is Lesson => Boolean(l));
     const transcript = fresh.map((t) => `${t.role === 'user' ? 'Student' : 'Teacher'}: ${t.content}`).join('\n');
-    return this.runIngest({
-      evidence: { kind: 'session', ref: session.id, at: new Date().toISOString(), note: `${session.teacher} session` },
-      touched: lessons,
-      material: transcript,
-      title: `${session.teacher[0].toUpperCase()}${session.teacher.slice(1)} session: ${fresh.find((t) => t.role === 'user')?.content.slice(0, 60) ?? 'conversation'}`,
+    const title = `${session.teacher[0]!.toUpperCase()}${session.teacher.slice(1)} session: ${fresh.find((t) => t.role === 'user')?.content.slice(0, 60) ?? 'conversation'}`;
+    const ingested = await this.deps.sources.ingest({
+      kind: 'session',
+      title,
+      mediaType: 'text/plain',
+      bytes: new TextEncoder().encode(transcript),
+      session: { sessionId: session.id, teacher: session.teacher, firstTurn: session.ingestedTurns, lastTurn: session.turns.length - 1 },
+      extraction: { method: 'text', text: transcript },
     });
+    const compiled = await this.deps.compiler.compileJob(ingested.jobId, { autoAccept: true });
+    const result = await this.toIngestResult(compiled, { kind: 'session', ref: session.id, at: new Date().toISOString() });
+    // Only a committed or honestly-empty outcome consumes the turns — a failed compile
+    // leaves them pending so a retry re-reads the same range.
+    if (compiled.job.stage === 'committed' || compiled.job.stage === 'no_changes') {
+      result.consumedTurns = session.ingestedTurns + fresh.length;
+    }
+    return result;
   }
 
-  /** Photo of notes → vision reader transcribes → brain keeper proposes. Two agents, one pipeline. */
+  /**
+   * Photo of notes → vision reader transcribes (the student sees that reading) → the photo
+   * and its transcription are frozen as an image source → compiled like any other source.
+   */
   async capture(image: ChatAttachment, note?: string): Promise<IngestResult & { reading: z.infer<typeof NotesReadingSchema> }> {
     const settings = await this.settings.get();
     const vision = resolveModel(settings, 'vision');
@@ -232,14 +262,30 @@ export class BrainService {
       images: [image],
       schema: NotesReadingSchema,
     });
-    const pool = await this.content.academicLessons();
-    const touched = searchLessons(pool, `${reading.topic} ${reading.concepts.join(' ')}`, 3).map((h) => h.lesson);
-    const result = await this.runIngest({
-      evidence: { kind: 'capture', ref: `capture-${Date.now()}`, at: new Date().toISOString(), note: reading.topic },
-      touched,
-      material: `Photo of the student's own notes on "${reading.topic}":\n${reading.transcription}${note ? `\nStudent's comment: ${note}` : ''}`,
-      title: `Captured notes: ${reading.topic}`,
+    const bytes = new Uint8Array(Buffer.from(image.data, 'base64'));
+    const ingested = await this.deps.sources.ingest({
+      kind: 'image',
+      title: `Notes photo — ${reading.topic}`,
+      mediaType: image.mimeType,
+      bytes,
+      extraction: { method: 'vision', text: reading.transcription },
     });
+    const compiled = await this.deps.compiler.compileJob(ingested.jobId, { autoAccept: true });
+    const result = await this.toIngestResult(compiled, { kind: 'capture', ref: ingested.source.id, at: new Date().toISOString(), note: reading.topic });
+
+    if (note?.trim()) {
+      const noteSource = await this.deps.sources.ingest({
+        kind: 'note',
+        title: `Note on the photo — ${reading.topic}`,
+        mediaType: 'text/markdown',
+        bytes: new TextEncoder().encode(note.trim()),
+      });
+      const noteCompiled = await this.deps.compiler.compileJob(noteSource.jobId, { autoAccept: true });
+      const extra = await this.toIngestResult(noteCompiled, { kind: 'capture', ref: noteSource.source.id, at: new Date().toISOString() });
+      result.applied.push(...extra.applied);
+      result.rejected.push(...extra.rejected);
+      result.diff.push(...extra.diff);
+    }
     return { ...result, reading };
   }
 
@@ -279,10 +325,59 @@ export class BrainService {
     const score = quiz.questions.reduce((n, q, i) => n + (answers[i] === q.answerIndex ? 1 : 0), 0);
     const graph = await this.courseGraph();
     const concept = graph.concepts.get(quiz.key);
-    const diff = await applyOps(this.vault, [
-      ...((await this.vault.get(quiz.key)) ? [] : [{ op: 'create_page' as const, key: quiz.key, concept: quiz.concept, courseRefs: concept ? [concept.introducedBy.id] : [] }]),
-      { op: 'add_evidence', key: quiz.key, evidence: { kind: 'quiz', ref: quiz.id, at: new Date().toISOString(), score, outOf: quiz.questions.length } },
-    ]);
+    const at = new Date().toISOString();
+
+    // The result is its own durable artifact: an evidence id on the page resolves to it.
+    const resultId = `res_${randomUUID().replace(/-/g, '').slice(0, 20)}`;
+    const result: QuizResult = { id: resultId, quizId: quiz.id, key: quiz.key, score, outOf: quiz.questions.length, at };
+    await writeJson(path.join(this.quizzesDir, `${resultId}.json`), result);
+
+    // Every page write goes through the proposal machinery — a format-1 page is upgraded
+    // first so the vault holds no legacy bypass writer for evidence either.
+    let snapshot = await this.deps.wiki.readPage(quiz.key);
+    if (snapshot?.format === 1) {
+      await this.deps.wiki.upgradeLegacyPage(quiz.key);
+      snapshot = await this.deps.wiki.readPage(quiz.key);
+    }
+    const meta = snapshot?.metadata ?? null;
+    const learner = meta?.learner ?? { inMyWords: '', stuck: '', connections: '', evidenceIds: [] };
+    const identity = await this.deps.identity();
+    const proposal: WikiProposal = {
+      schemaVersion: CONTRACT_VERSION,
+      id: `prop_${randomUUID().replace(/-/g, '').slice(0, 20)}`,
+      profile: identity,
+      sourceIds: [resultId],
+      conventionRevision: (await this.deps.wiki.readConventions()).conventions.revision,
+      createdAt: at,
+      baseRevisions: { [quiz.key]: snapshot?.revision ?? null },
+      operations: [
+        {
+          op: 'upsert_page',
+          page: {
+            id: quiz.key,
+            kind: 'concept',
+            title: meta?.title ?? quiz.concept,
+            summary: meta?.summary ?? `${quiz.concept} — tracked from quiz results.`,
+            markdown: snapshot?.body ?? `# ${quiz.concept}\n`,
+            courseRefs: meta?.courseRefs ?? (concept ? [{ programmeId: identity.programmeId, courseId: concept.introducedBy.courseId, conceptKey: quiz.key, lessonId: concept.introducedBy.id }] : []),
+            claims: meta?.claims ?? [],
+            links: meta?.links ?? [],
+            learner: { ...learner, evidenceIds: [...new Set([...learner.evidenceIds, resultId])] },
+          },
+        },
+      ],
+    };
+    const report = await this.deps.wiki.applyProposal(proposal);
+    // Even a code-built proposal leaves the same audit trail a keeper proposal does.
+    await writeProposalRecord(this.deps.wiki.root, {
+      schemaVersion: CONTRACT_VERSION,
+      proposal,
+      jobId: null,
+      state: 'accepted',
+      decidedAt: at,
+      decidedBy: 'system',
+    });
+    const diff = await this.diffOf(report.pages);
     await this.vault.appendLog({ kind: 'quiz', title: `Quiz on ${quiz.concept}`, detail: `Scored ${score}/${quiz.questions.length}.` });
     return {
       score,

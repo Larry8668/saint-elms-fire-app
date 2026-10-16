@@ -149,21 +149,53 @@ The `status` in frontmatter is only a cache, recomputed on every save and every 
 
 ## 3. How the brain changes
 
-Every write goes through one pipeline (`engine/src/brain/service.ts → runIngest`), used by **Reflect** (after a chat), **Capture** (photo of notes) and **quizzes**:
+Every keeper-authored write goes through one pipeline — the **compiler** in
+`engine/src/brain/compiler/` — used by **Reflect** (after a chat), **Capture** (photo of
+notes) and the `POST /api/sources/:jobId/compile` route:
 
-1. **Scope.** Build the allowed concepts: concepts of the lessons the session touched, plus course concepts named in the material (capped at 40).
-2. ***Propose.*** The brain keeper returns a flat, capped object (`brainProposalSchema`) of pages, misconceptions, resolutions and edges. Concept fields are a **Zod enum of the allowed names**, so a small model can't invent concepts.
-3. **Validate** (`validator.ts`). The proposal becomes edit ops, and anything that breaks a rule is rejected with a reason:
-   - the concept is not in the allowed set;
-   - the edge references an unknown concept, is a self-loop, has an unknown type, or would create a prerequisite cycle;
-   - a misconception doesn't cite a released lesson, or is missing the claim or the course statement;
-   - a resolution doesn't match an open misconception.
-4. **Apply** (`applier.ts`). Snapshot to `.history/`, write the page, recompute status, and return a per-page diff (before, after, status change).
-5. **Log.** Append to `log.md`.
+1. **Freeze.** The material becomes a source: the original bytes are stored immutably, the
+   extraction (transcript, transcription, parsed text) is frozen beside the record under
+   `.meta/sources/<id>/extracted/`, and a durable job tracks it. Reflect freezes exactly the
+   turns that had not been reflected on before; the transcript range travels with the source.
+2. **Context** (`context.ts`). The keeper sees the conventions revision, `index.md`, the
+   pages this material plausibly touches (source citations, title and concept matches, one
+   hop of links — capped at 10), and the source text itself. Nothing else enters the prompt.
+3. **Draft** (`draft.ts`). The model returns a loose draft: pages, claims and links, each
+   optionally carrying a *verbatim quote* of the passage it rests on.
+4. **Normalize** (`normalize.ts`) — code, not the model, decides:
+   - quotes are resolved to real citations character-for-character; a `source_fact` or
+     `student_belief` without a verbatim quote is dropped with a reason;
+   - claim merges follow `merge-policy.ts`: **add**, **duplicate** (restatement), **supersede**
+     (restated with more evidence) and **dispute** (same subject, different content — both
+     versions stay, marked disputed). Earlier supported knowledge is never blind-replaced;
+   - a student-origin link requires the student's actual statement; otherwise it is filed
+     `suggested`;
+   - a concept page's course mapping comes from the course graph, never the model; personal
+     concepts get no `courseRefs` and stay unofficial;
+   - a page that exists but was outside the prompt's scope keeps its body — claims merge in,
+     but prose the model never read is not trusted;
+   - the student's own words are only rewritten when a student-authored source backs them.
+   The result is a `WikiProposal` with an expected base revision per page, filed under
+   `.meta/proposals/` and the job moves to `awaiting_review`. A draft that survives nothing
+   ends the job as `no_changes`, honestly.
+5. **Review.** `POST /api/proposals/:id/accept` applies the proposal through the journaled
+   write path — every page is re-read and revisions re-checked, so a stale proposal is
+   refused. `POST /api/proposals/:id/reject` changes no pages and cancels the job. Reflect and
+   Capture auto-accept: clicking the button *is* the student's review, and the record marks
+   it `decidedBy: 'system'` for audit.
+6. **Checkpoint.** Only `committed` or `no_changes` consumes transcript turns — a failed
+   compile leaves them pending so a retry reads the same range.
 
-The student sees the diff, including what was rejected and why, in the "Your brain grew" dialog.
+**Quizzes** write evidence through the same machinery: the score becomes a durable result
+artifact (`res_*`), a code-built proposal adds its id to the page's `learner.evidenceIds`,
+and a page still in the earlier format is adopted (`upgradeLegacyPage`) first — there is no
+legacy bypass writer left. The old `BrainVault` only *reads* typed pages now (as concept
+views for the sky and mastery); its `save`/`writeSeeded` refuse to touch them.
 
-Quizzes add evidence directly: the score is evidence, and the next status recompute decides whether the star turns gold. **Lint** (`lint.ts`) surfaces open misconceptions, oversized pages and shaky prerequisites. These appear in Brain → Open questions, each with a "Work through it" button that opens the Guide with a prompt.
+The student sees the diff, including what the deterministic pass dropped and why, in the
+"Your brain grew" dialog. **Lint** (`lint.ts`) surfaces open misconceptions, oversized pages
+and shaky prerequisites — disputed claims appear as open misconceptions. These appear in
+Brain → Open questions, each with a "Work through it" button that opens the Guide with a prompt.
 
 ## 4. Merging the two: the graph the UI draws
 

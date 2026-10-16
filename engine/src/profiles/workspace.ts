@@ -1,6 +1,9 @@
 import { mkdir } from 'node:fs/promises';
-import type { DeviceProfile } from '@sef/shared';
+import type { DeviceProfile, ProfileIdentity } from '@sef/shared';
+import { WikiCompiler } from '../brain/compiler/compile';
+import { evidenceResolver } from '../brain/evidence';
 import { BrainService } from '../brain/service';
+import { SourceIngestor, SourceRejection } from '../brain/sources/ingest';
 import { BrainVault } from '../brain/vault';
 import { WikiStore } from '../brain/wiki-store';
 import { log, profilePaths, type ProfilePaths } from '../config';
@@ -19,6 +22,8 @@ export interface Workspace {
   content: ContentStore;
   vault: BrainVault;
   wiki: WikiStore;
+  sources: SourceIngestor;
+  compiler: WikiCompiler;
   brain: BrainService;
   sessions: SessionStore;
   sync: ContentSync;
@@ -61,8 +66,26 @@ export class WorkspaceManager {
     const wiki = new WikiStore(paths.brain);
     await wiki.init();
     await wiki.recover();
-    const vault = new BrainVault(paths.brain);
+    const vault = new BrainVault(paths.brain, evidenceResolver(paths.quizzes, wiki));
     await vault.init();
+
+    /**
+     * The identity a source or proposal is filed under. `programmeId` is learned at device
+     * sign-in; profiles from before that field existed fall back to the cohort — the honest
+     * scope the engine can assert — and a profile with neither is refused outright.
+     */
+    const identity = async (): Promise<ProfileIdentity> => {
+      const [{ uniServerUrl }, current] = await Promise.all([settings.get(), this.registry.get(profileId)]);
+      const live = current ?? profile;
+      const programmeId = live.programmeId ?? (live.cohortId || undefined);
+      if (!programmeId) {
+        throw new SourceRejection('This profile is not linked to a programme yet. Sign in online once more first.', 'no_programme', 409);
+      }
+      return { issuer: uniServerUrl, studentId: profileId, programmeId };
+    };
+
+    const sources = new SourceIngestor(wiki, identity);
+    const compiler = new WikiCompiler(wiki, { settings, content, profile: identity });
     const workspace: Workspace = {
       profile: { ...profile },
       paths,
@@ -70,7 +93,9 @@ export class WorkspaceManager {
       content,
       vault,
       wiki,
-      brain: new BrainService(content, vault, settings, paths.quizzes),
+      sources,
+      compiler,
+      brain: new BrainService(content, vault, settings, paths.quizzes, { wiki, sources, compiler, identity }),
       sessions: new SessionStore(paths.sessions),
       sync: new ContentSync(settings, content, async () => {
         const currentProfile = await this.registry.get(profileId);

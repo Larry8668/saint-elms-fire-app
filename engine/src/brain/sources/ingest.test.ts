@@ -7,7 +7,7 @@ import { PROFILE, tempRoot, vault } from '../testing/fixtures';
 const harness = async (prefix: string) => {
   const store = await vault(prefix);
   const jobsRoot = await tempRoot(`${prefix}-jobs`);
-  const ingestor = new SourceIngestor(store, jobsRoot, async () => PROFILE);
+  const ingestor = new SourceIngestor(store, async () => PROFILE);
   return { store, jobsRoot, ingestor };
 };
 
@@ -131,10 +131,11 @@ test('a job can be cancelled and a cancelled job cannot be retried', async () =>
   await assert.rejects(() => ingestor.retry(result.jobId), JobStateError);
 });
 
-test('a job owned by another profile answers 404 even over a shared job store', async () => {
-  const { ingestor, jobsRoot } = await harness('ingest-owner');
+test('a job owned by another profile answers 404 even over a shared vault root', async () => {
+  const { store, ingestor } = await harness('ingest-owner');
   const { jobId } = await ingestor.ingest(note('mine'));
-  const foreign = new SourceIngestor(await vault('ingest-owner-b'), jobsRoot, async () => ({ ...PROFILE, studentId: 'student-b' }));
+  // Sharing the vault root shares .meta/jobs — the ownership check must hold even then.
+  const foreign = new SourceIngestor(store, async () => ({ ...PROFILE, studentId: 'student-b' }));
   // 404, not 403: a different profile must not even learn that the job exists.
   await assert.rejects(() => foreign.cancel(jobId), JobConflictError);
   await assert.rejects(() => foreign.retry(jobId), JobConflictError);

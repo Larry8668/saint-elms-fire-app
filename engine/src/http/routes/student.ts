@@ -191,7 +191,9 @@ export function studentRoutes(deps: EngineDeps, conversations: ConversationRegis
     if (!session) return c.json({ error: 'Session not found' }, 404);
     if (session.turns.length <= session.ingestedTurns) return c.json({ error: 'Nothing new in this session to reflect on' }, 409);
     const result = await brain.ingestSession(session);
-    await sessions.markIngested(session);
+    // Checkpoint only the turn range the committed source covers — a failed compile or
+    // turns appended mid-flight stay pending.
+    if (result.consumedTurns !== undefined) await sessions.markIngested(session, result.consumedTurns);
     return c.json(result);
   });
 
