@@ -50,11 +50,11 @@ async function expectSqlState(operation: Promise<unknown>, code: string): Promis
   });
 }
 
-test('migrates an empty schema and creates the five persistence tables', testOptions, async () => {
+test('migrates an empty schema and creates the persistence tables', testOptions, async () => {
   await withTestSchema(async (pool) => {
     const result = await migrateDatabase(pool);
-    assert.deepEqual(result.appliedVersions, [1, 2, 3]);
-    assert.equal(result.currentVersion, 3);
+    assert.deepEqual(result.appliedVersions, [1, 2, 3, 4]);
+    assert.equal(result.currentVersion, 4);
 
     const tables = await pool.query<{ table_name: string }>(
       `SELECT table_name FROM information_schema.tables
@@ -68,8 +68,10 @@ test('migrates an empty schema and creates the five persistence tables', testOpt
       'deviceCode',
       'enrolments',
       'erasure_requests',
+      'published_shares',
       'schema_migrations',
       'session',
+      'share_moderation_events',
       'staff_memberships',
       'student_profiles',
       'twoFactor',
@@ -82,9 +84,9 @@ test('migration runs are repeatable and preserve the applied checksum', testOpti
   await withTestSchema(async (pool) => {
     const first = await migrateDatabase(pool);
     const second = await migrateDatabase(pool);
-    assert.deepEqual(first.appliedVersions, [1, 2, 3]);
+    assert.deepEqual(first.appliedVersions, [1, 2, 3, 4]);
     assert.deepEqual(second.appliedVersions, []);
-    assert.equal(second.currentVersion, 3);
+    assert.equal(second.currentVersion, 4);
   });
 });
 
@@ -108,8 +110,8 @@ test('upgrades a version-1 database, preserving its rows and the recorded checks
     );
 
     const result = await migrateDatabase(pool);
-    assert.deepEqual(result.appliedVersions, [2, 3]);
-    assert.equal(result.currentVersion, 3);
+    assert.deepEqual(result.appliedVersions, [2, 3, 4]);
+    assert.equal(result.currentVersion, 4);
 
     const retained = await pool.query<{ legal_name: string }>(
       'SELECT legal_name FROM student_profiles WHERE id = $1',

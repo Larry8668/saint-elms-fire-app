@@ -15,14 +15,14 @@ import { requireCourseAccess, requireProgrammeAccess, requireSession, type AppEn
 import { config } from '../config';
 import type { UniDeps } from '../deps';
 import { log } from '../logger';
-import { ShareBodySchema, ShareLimitError } from '../store/shares';
 import { signManifest } from '../signing';
 
 /**
- * Course delivery and peer shares. Legacy-token students are pinned to their token
- * cohort; session students are pinned to their live enrolment's cohort; staff may
- * pick a cohort explicitly. A session accessor's cohort must still exist in the
- * release plan — admission never silently widens it.
+ * Course delivery. Legacy-token students are pinned to their token cohort;
+ * session students are pinned to their live enrolment's cohort; staff may pick
+ * a cohort explicitly. A session accessor's cohort must still exist in the
+ * release plan — admission never silently widens it. Peer sharing lives in
+ * routes/shares.ts and requires an approved enrolment.
  */
 export function studentRoutes(deps: UniDeps) {
   const app = new Hono<AppEnv>();
@@ -132,40 +132,6 @@ export function studentRoutes(deps: UniDeps) {
     }
     log.info('package_served', { cohortId, courseId, version: manifest.version, files: manifest.files.length });
     return c.json(body);
-  });
-
-  app.get('/shares', guard, (c) => {
-    const cohortId = cohortFor(c);
-    if (!cohortId) return c.json({ error: 'cohort_unavailable' }, 403);
-    return c.json(deps.shares.list(cohortId, c.req.query('since')));
-  });
-
-  app.post('/shares', guard, async (c) => {
-    const accessor = c.get('accessor');
-    // Session accessors are students (or staff previewing); publication stays a
-    // student action until PR-23 introduces the reviewed sharing workflow.
-    const author =
-      accessor.kind === 'legacy'
-        ? { isStudent: accessor.claims.role === 'student', name: accessor.claims.name, id: accessor.claims.sub }
-        : { isStudent: accessor.admission.staffRoles.length === 0, name: accessor.principal.name, id: accessor.principal.userId };
-    if (!author.isStudent) return c.json({ error: 'forbidden' }, 403);
-    const cohortId = cohortFor(c);
-    if (!cohortId) return c.json({ error: 'cohort_unavailable' }, 403);
-    const parsed = ShareBodySchema.safeParse(await c.req.json().catch(() => null));
-    if (!parsed.success) return c.json({ error: 'invalid_share', issues: parsed.error.issues }, 400);
-    try {
-      const share = await deps.shares.add({
-        ...parsed.data,
-        cohortId,
-        fromStudent: author.name,
-        fromAccountId: author.id,
-      });
-      await deps.audit.record(author.id, 'share_posted', `"${share.title}" to ${share.cohortId}`);
-      return c.json(share, 201);
-    } catch (error) {
-      if (error instanceof ShareLimitError) return c.json({ error: 'rate_limited', message: error.message }, 429);
-      throw error;
-    }
   });
 
   return app;

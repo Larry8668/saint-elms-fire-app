@@ -8,6 +8,7 @@ import { portalRoutes } from './portal/routes';
 import { adminRoutes } from './routes/admin';
 import { authRoutes } from './routes/auth';
 import { meRoutes } from './routes/me';
+import { shareRoutes } from './routes/shares';
 import { staffRoutes } from './routes/staff';
 import { studentRoutes } from './routes/student';
 
@@ -70,6 +71,7 @@ export function createApp(deps: UniDeps) {
   app.route('/v1/admin', adminRoutes(deps));
   app.route('/v1/admin', staffRoutes(deps));
   app.route('/v1', meRoutes(deps));
+  app.route('/v1', shareRoutes(deps));
   app.route('/v1', studentRoutes(deps));
 
   return app;

@@ -53,6 +53,7 @@ try {
     'src/db/integration.test.ts',
     'src/account-auth.integration.test.ts',
     'src/admission.integration.test.ts',
+    'src/shares.integration.test.ts',
   ], {
     cwd: packageDir,
     env: {
