@@ -1,4 +1,5 @@
 import { mkdir } from 'node:fs/promises';
+import path from 'node:path';
 import type { DeviceProfile, ProfileIdentity } from '@sef/shared';
 import { WikiCompiler } from '../brain/compiler/compile';
 import { evidenceResolver } from '../brain/evidence';
@@ -11,6 +12,8 @@ import { ProfileSettingsStore } from '../settings/store';
 import { ContentStore } from '../content/store';
 import { ContentSync } from '../content/sync';
 import { SessionStore } from '../sessions/store';
+import { PeerShareService } from '../shares/service';
+import { PeerShareStore } from '../shares/store';
 import type { SettingsStore } from '../settings/store';
 import type { ProfileRegistry } from './registry';
 
@@ -27,6 +30,7 @@ export interface Workspace {
   brain: BrainService;
   sessions: SessionStore;
   sync: ContentSync;
+  peerShares: PeerShareService;
 }
 
 export class WorkspaceManager {
@@ -103,6 +107,21 @@ export class WorkspaceManager {
           cohortId: currentProfile?.cohortId ?? profile.cohortId,
           uniToken: await this.registry.uniToken(profileId),
         };
+      }),
+      peerShares: new PeerShareService({
+        wiki,
+        sources,
+        compiler,
+        store: new PeerShareStore(path.join(paths.root, 'shares.json')),
+        uniUrl: async () => (await settings.get()).uniServerUrl,
+        uniToken: () => this.registry.uniToken(profileId),
+        enrolment: async () => {
+          const currentProfile = await this.registry.get(profileId);
+          return {
+            programmeId: (await identity()).programmeId,
+            cohortId: currentProfile?.cohortId ?? profile.cohortId ?? null,
+          };
+        },
       }),
     };
     log.info('workspace_opened', { profileId, root: paths.root });

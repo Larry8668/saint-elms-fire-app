@@ -21,7 +21,8 @@ interface UniRequest {
   timeoutMs?: number;
 }
 
-export async function uniFetch<T>(baseUrl: string, pathname: string, req: UniRequest = {}): Promise<T> {
+/** uniFetch with the response status preserved, for endpoints where 200 and 201 mean different things. */
+export async function uniRequest<T>(baseUrl: string, pathname: string, req: UniRequest = {}): Promise<{ status: number; data: T }> {
   const url = `${baseUrl.replace(/\/+$/, '')}${pathname}`;
   const headers: Record<string, string> = {};
   if (req.token) headers.authorization = `Bearer ${req.token}`;
@@ -39,10 +40,14 @@ export async function uniFetch<T>(baseUrl: string, pathname: string, req: UniReq
   }
   if (!res.ok) throw new UniHttpError(res.status, await res.json().catch(() => null), url);
   const text = await res.text();
-  if (!text.trim()) return undefined as T;
+  if (!text.trim()) return { status: res.status, data: undefined as T };
   try {
-    return JSON.parse(text) as T;
+    return { status: res.status, data: JSON.parse(text) as T };
   } catch {
     throw new UniHttpError(res.status, { error: 'University server sent a response that is not JSON' }, url);
   }
+}
+
+export async function uniFetch<T>(baseUrl: string, pathname: string, req: UniRequest = {}): Promise<T> {
+  return (await uniRequest<T>(baseUrl, pathname, req)).data;
 }
