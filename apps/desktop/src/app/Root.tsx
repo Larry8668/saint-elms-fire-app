@@ -1,4 +1,4 @@
-import { lazy, Suspense, useCallback, useState } from 'react';
+import { useCallback, useState } from 'react';
 import { AdmissionGate } from '@/features/auth/AdmissionGate';
 import { admissionOf, mayEnterDashboard } from '@/features/auth/admission';
 import { limitedReasonOf } from '@/features/auth/limited-access';
@@ -10,9 +10,7 @@ import { useSession } from '@/lib/session';
 import { App } from './App';
 import { BootSplash } from './BootSplash';
 
-const AdminApp = lazy(() => import('@/features/admin/AdminApp').then((m) => ({ default: m.AdminApp })));
-
-/** Picks the shell for whoever is signed in. Keys force a clean remount when the user changes. */
+/** Picks the shell for the signed-in student. Keys force a clean remount when the user changes. */
 export function Root() {
   const { state, refresh, signOut } = useSession();
   const [refreshing, setRefreshing] = useState(false);
@@ -30,14 +28,6 @@ export function Root() {
   if (state.status === 'signed-out') return <SignInView />;
 
   const { session } = state;
-  if (session.kind === 'admin') {
-    return (
-      <Suspense fallback={<BootSplash label="Opening the registrar's desk" />}>
-        <AdminApp key={session.account.id} />
-      </Suspense>
-    );
-  }
-
   // A read/export-only session (expired entitlement, suspended or withdrawn enrolment)
   // gets its own honest screen, not a dashboard full of clicks the engine would 403.
   const limitedReason = limitedReasonOf(session.access);

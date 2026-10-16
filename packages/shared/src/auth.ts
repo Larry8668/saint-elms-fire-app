@@ -105,10 +105,14 @@ export interface SessionAccess {
   reason?: LimitedAccessReason;
 }
 
-export type EngineLoginResponse =
-  | { role: 'student'; token: string; profile: DeviceProfile; mode: SessionMode; access?: SessionAccess }
-  /** Admins are not engine users: the engine just relays the uni login so the UI can talk to the uni directly. */
-  | { role: 'admin'; uniToken: string; uniUrl: string; account: Account };
+/** Students only: staff accounts sign in at the uni-hosted /admin portal, never through the engine. */
+export interface EngineLoginResponse {
+  role: 'student';
+  token: string;
+  profile: DeviceProfile;
+  mode: SessionMode;
+  access?: SessionAccess;
+}
 
 export interface EngineMe {
   profile: DeviceProfile;

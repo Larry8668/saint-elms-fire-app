@@ -7,7 +7,7 @@ Start here if you are a coding agent (or a new developer) picking up Saint Elms 
 - An offline-first study app for a university programme: three Socratic AI teachers (Friend, Guide, Philosopher) running on local Gemma 4, plus a per-student **second brain** (a markdown vault) drawn over a **course sky** (the star map of released concepts).
 - `server/uni` is the university's server: accounts, cohorts, course releases, ed25519-signed course packages, and the registrar admin API.
 - `engine` is the student's local runtime: per-profile workspaces, agents, the brain pipeline, course sync, chat history and offline sign-in.
-- `apps/desktop` is the React UI (with a Tauri shell): the student app, plus the registrar app for admins.
+- `apps/desktop` is the React UI (with a Tauri shell): the student app. The registrar surface is `apps/admin`, a static build the uni serves at `/admin`.
 - `packages/shared` holds the contracts shared by all three.
 
 ## Read next
