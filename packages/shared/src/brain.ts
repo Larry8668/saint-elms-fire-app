@@ -153,6 +153,13 @@ export interface IngestResult {
   diff: BrainDiffEntry[];
   model: string;
   durationMs: number;
+  /** Set when the update ran through the wiki proposal pipeline. */
+  jobId?: string;
+  proposalId?: string;
+  /** Where the job ended; 'committed' or 'no_changes' means the material is consumed. */
+  stage?: import('./wiki').WikiJob['stage'];
+  /** How many session turns the accepted source actually covered — the checkpoint ceiling. */
+  consumedTurns?: number;
 }
 
 export interface LintFinding {

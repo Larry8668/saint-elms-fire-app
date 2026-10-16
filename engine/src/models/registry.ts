@@ -61,7 +61,9 @@ export const OLLAMA_OPTIONS = {
 };
 
 function providerOptionsFor(kind: ProviderConfig['kind'], think: boolean): Record<string, Record<string, unknown>> {
-  if (kind === 'ollama') return { ollama: { think, options: OLLAMA_OPTIONS } };
+  // Ollama rejects the `think` field outright on models without a thinking mode, so it is
+  // only sent when actually wanted — `think: false` is not the same as absent there.
+  if (kind === 'ollama') return { ollama: { ...(think ? { think: true } : {}), options: OLLAMA_OPTIONS } };
   return {};
 }
 

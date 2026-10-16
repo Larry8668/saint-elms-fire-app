@@ -1,11 +1,13 @@
 import { appendFile, mkdir, readdir } from 'node:fs/promises';
 import path from 'node:path';
-import type { BrainLogEntry, ConceptPage } from '@sef/shared';
+import type { BrainLogEntry, ConceptPage, Evidence, PageLink } from '@sef/shared';
 import { log } from '../config';
 import { readText, writeFileAtomic } from '../lib/fs';
 import { recentLogEntries, renderLogEntry } from './log-format';
 import { computeStatus } from './mastery';
 import { parsePage, serializePage } from './page-format';
+import { VaultSchemaError } from './vault-errors';
+import { conceptPageFromWikiPage, readPageFile, type PageMetadata } from './wiki-page-format';
 
 const SCHEMA_MD = `# Brain schema
 
@@ -23,13 +25,22 @@ Rules the brain keeper follows:
 4. Nothing from a peer enters this folder unless you accept it.
 `;
 
-/** The student's brain on disk: markdown pages plus index, log and history. */
+/** Resolves an evidence id (quiz result, source record) back to the evidence it points at. */
+export type EvidenceResolver = (id: string) => Promise<Evidence | null>;
+
+/**
+ * The student's brain on disk. Both page formats read back through the same ConceptPage
+ * view: earlier concept pages verbatim, typed wiki pages via conceptPageFromWikiPage plus
+ * the parts provenance cannot carry (resolved evidence ids, typed links, disputed claims).
+ */
 export class BrainVault {
   private readonly conceptsDir: string;
   private readonly historyDir: string;
-  private pages: Map<string, ConceptPage> | null = null;
 
-  constructor(readonly root: string) {
+  constructor(
+    readonly root: string,
+    private readonly resolveEvidence: EvidenceResolver = async () => null,
+  ) {
     this.conceptsDir = path.join(root, 'concepts');
     this.historyDir = path.join(root, '.history');
   }
@@ -43,18 +54,46 @@ export class BrainVault {
     }
   }
 
+  /** Fresh reads, always: the wiki store can commit pages this vault never saw coming. */
   async all(): Promise<Map<string, ConceptPage>> {
-    if (this.pages) return this.pages;
     const pages = new Map<string, ConceptPage>();
     for (const name of await readdir(this.conceptsDir).catch(() => [] as string[])) {
       if (!name.endsWith('.md')) continue;
       const raw = await readText(path.join(this.conceptsDir, name));
-      const page = raw ? parsePage(raw) : null;
+      if (!raw) continue;
+      const parsed = readPageFile(raw);
+      const page = parsed.format === 1 ? parsed.legacy : parsed.format === 2 ? await this.conceptView(parsed.metadata, parsed.body) : null;
       if (page?.key) pages.set(page.key, page);
       else log.warn('brain_page_unreadable', { file: name });
     }
-    this.pages = pages;
     return pages;
+  }
+
+  /**
+   * A typed wiki page rendered as the concept view the rest of the app understands.
+   * Evidence ids resolve back to quiz results and sources; claims still standing are the
+   * knowledge — a disputed one is an open misconception, and typed links keep their origin.
+   */
+  async conceptView(metadata: PageMetadata, body: string): Promise<ConceptPage | null> {
+    if (metadata.kind !== 'concept') return null;
+    const view = conceptPageFromWikiPage(metadata, body);
+    if (!view) return null;
+    for (const id of metadata.learner?.evidenceIds ?? []) {
+      const evidence = await this.resolveEvidence(id).catch(() => null);
+      if (evidence && !view.evidence.some((e) => e.ref === evidence.ref && e.kind === evidence.kind)) view.evidence.push(evidence);
+    }
+    for (const claim of metadata.claims) {
+      if (claim.status === 'disputed') {
+        view.misconceptions.push({ claim: claim.text, course: 'Contradicted by another claim on this page.', flagged: metadata.updatedAt, resolved: false });
+      }
+    }
+    const links: PageLink[] = metadata.links.map((link) => ({ to: link.toPageId, type: link.type, origin: link.origin, why: link.why }));
+    for (const link of links) {
+      if (!view.links.some((l) => l.to === link.to && l.type === link.type)) view.links.push(link);
+    }
+    view.status = computeStatus(view);
+    view.updated = metadata.updatedAt;
+    return view;
   }
 
   async get(key: string): Promise<ConceptPage | undefined> {
@@ -69,25 +108,36 @@ export class BrainVault {
     return path.join(this.conceptsDir, `${key}.md`);
   }
 
-  /** Writes a page, snapshotting the previous version and recomputing status. */
+  /**
+   * Writes a legacy-format page, snapshotting the previous version and recomputing status.
+   * A page that has been adopted into the typed wiki format must not be written here —
+   * that would silently drop its claims and provenance — so the write refuses and the
+   * caller routes through the proposal machinery instead.
+   */
   async save(page: ConceptPage): Promise<{ before: string | null; after: string }> {
     const before = await readText(this.pagePath(page.key));
     if (before) {
+      const parsed = readPageFile(before);
+      if (parsed.format === 2) {
+        throw new VaultSchemaError(`Page ${page.key} is in the typed wiki format; write through a proposal, not the legacy section editor.`);
+      }
       const stamp = new Date().toISOString().replace(/[:.]/g, '-');
       await writeFileAtomic(path.join(this.historyDir, page.key, `${stamp}.md`), before);
     }
     const next = { ...page, status: computeStatus(page), updated: new Date().toISOString() };
     const after = serializePage(next);
     await writeFileAtomic(this.pagePath(page.key), after);
-    (await this.all()).set(next.key, next);
     return { before, after };
   }
 
   /** Writes a page exactly as given (timestamps included), without history. Used by the demo seeder. */
   async writeSeeded(page: ConceptPage): Promise<void> {
+    const before = await readText(this.pagePath(page.key));
+    if (before && readPageFile(before).format === 2) {
+      throw new VaultSchemaError(`Page ${page.key} is in the typed wiki format; seeding would silently drop its claims.`);
+    }
     const next = { ...page, status: computeStatus(page) };
     await writeFileAtomic(this.pagePath(page.key), serializePage(next));
-    (await this.all()).set(next.key, next);
   }
 
   async isEmpty(): Promise<boolean> {

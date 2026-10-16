@@ -47,8 +47,12 @@ export class SessionStore {
     return session;
   }
 
-  async markIngested(session: Session): Promise<void> {
-    session.ingestedTurns = session.turns.length;
+  /**
+   * Checkpoints ingestion. `through` is a turn *count*: only turns the source committed
+   * may be marked — anything appended after the transcript was frozen stays pending.
+   */
+  async markIngested(session: Session, through?: number): Promise<void> {
+    session.ingestedTurns = Math.max(session.ingestedTurns, Math.min(through ?? session.turns.length, session.turns.length));
     await writeJson(this.fileFor(session.id), session);
   }
 

@@ -86,7 +86,8 @@ export function planProposal(proposal: WikiProposal, snapshots: Map<string, Page
     };
     if (expected === null) {
       if (snapshot) conflict('exists', snapshot.revision);
-      else if (op.op === 'upsert_page') createdIds.add(id);
+      // A link onto a page created earlier in this proposal is valid — its base is the plan.
+      else if (op.op === 'upsert_page' || createdIds.has(id)) createdIds.add(id);
       else conflict('missing', null);
       continue;
     }
@@ -138,12 +139,13 @@ export function planProposal(proposal: WikiProposal, snapshots: Map<string, Page
 
     const previous = plans.get(op.fromPageId);
     const snapshot = previous?.snapshot ?? snapshots.get(op.fromPageId) ?? null;
+    // A page created earlier in this same proposal has no snapshot yet — its plan is the base.
     const base = previous ? previous.content.metadata : metadataInputOf(snapshot, at);
-    if (!snapshot || !base) continue;
+    if (!base) continue;
     const links = mergeLinks(base.links, [op.link]);
     plans.set(op.fromPageId, {
       snapshot,
-      content: { metadata: { ...base, updatedAt: at, links }, body: previous ? previous.content.body : snapshot.body },
+      content: { metadata: { ...base, updatedAt: at, links }, body: previous ? previous.content.body : snapshot!.body },
       created: false,
       changed: previous?.changed ?? links.length !== base.links.length,
     });

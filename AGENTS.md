@@ -26,7 +26,7 @@ pnpm install
 pnpm dev                          # uni :4200, engine :4100, UI :5173 (all with hot reload)
 pnpm typecheck                    # all packages; must pass
 pnpm test                         # node:test suites; must pass
-pnpm --filter @sef/engine test    # engine only (validator, mastery, attribution, offline auth)
+pnpm --filter @sef/engine test    # engine only (compiler, mastery, attribution, offline auth)
 pnpm --filter @sef/desktop build  # production build of the UI
 pnpm preflight                    # checks tools, models and services
 ```
@@ -35,7 +35,7 @@ You'll need Node 22+, pnpm, Ollama with `gemma4:e4b`, and optionally SearXNG (`p
 
 ## Invariants: do not break these
 
-1. **Models propose, code decides.** Never let model output directly set mastery status, write a brain page without `validator.ts`, or decide a contract check. Add a deterministic check or repair instead.
+1. **Models propose, code decides.** Never let model output directly set mastery status, write a brain page outside the proposal pipeline (`compiler/` → `applyProposal`), or decide a contract check. Add a deterministic check or repair instead.
 2. **Mastery is computed** from evidence in `engine/src/brain/mastery.ts`. The `status` field in frontmatter is only a cache.
 3. **Released lessons only.** Teachers see only installed lessons, and only signed, released packages can be installed. Don't add a code path that reads courseware straight from the repo for a student.
 4. **Per-student isolation.** Everything a student owns lives in their workspace (`engine/src/profiles/workspace.ts`). Route handlers must use `c.get('ws')`, never a global store.

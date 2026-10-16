@@ -235,6 +235,59 @@ export const WikiJobSchema = z
   });
 export type WikiJob = z.infer<typeof WikiJobSchema>;
 
+export const PROPOSAL_STATES = ['pending', 'accepted', 'rejected'] as const;
+export type ProposalState = (typeof PROPOSAL_STATES)[number];
+
+/**
+ * A proposal plus its review outcome. The proposal body itself is immutable once filed —
+ * the review decision lives beside it, never inside it, so a re-read always shows exactly
+ * what the keeper drafted.
+ */
+export const WikiProposalRecordSchema = z
+  .strictObject({
+    schemaVersion: ContractVersionSchema,
+    proposal: WikiProposalSchema,
+    /** The source job that produced it; null for code-built proposals (e.g. quiz evidence). */
+    jobId: IdentifierSchema.nullable(),
+    state: z.enum(PROPOSAL_STATES),
+    decidedAt: TimestampSchema.nullable(),
+    /** 'student' for an explicit review choice; 'system' when the student's own gesture (Reflect, capture) auto-commits. */
+    decidedBy: z.enum(['student', 'system']).nullable(),
+    note: z.string().max(500).optional(),
+  })
+  .superRefine((value, ctx) => {
+    if ((value.state === 'pending') !== (value.decidedAt === null && value.decidedBy === null)) {
+      ctx.addIssue({ code: 'custom', path: ['decidedAt'], message: 'Only pending proposals lack a decision' });
+    }
+  });
+export type WikiProposalRecord = z.infer<typeof WikiProposalRecordSchema>;
+
+/** The review queue the contribution UI renders. */
+export const ProposalListSchema = z.strictObject({
+  schemaVersion: ContractVersionSchema,
+  proposals: z.array(WikiProposalRecordSchema),
+  /** Proposals still waiting on a decision. */
+  pending: z.number().int().nonnegative(),
+});
+export type ProposalList = z.infer<typeof ProposalListSchema>;
+
+/** What a proposal would do if accepted, computed fresh — never trusted from storage. */
+export const ProposalPreviewSchema = z.strictObject({
+  record: WikiProposalRecordSchema,
+  pages: z.array(
+    z.strictObject({
+      id: IdentifierSchema,
+      kind: z.enum(['concept', 'source_summary', 'synthesis', 'question']),
+      change: z.enum(['created', 'updated', 'unchanged']),
+      title: z.string(),
+      summaryBefore: z.string().optional(),
+      summaryAfter: z.string(),
+    }),
+  ),
+  conflicts: z.array(z.string()),
+});
+export type ProposalPreview = z.infer<typeof ProposalPreviewSchema>;
+
 /** What the engine reports about one source to the desktop and admin apps. */
 export const SourceSummarySchema = z.strictObject({
   id: IdentifierSchema,

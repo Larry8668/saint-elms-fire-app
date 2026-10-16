@@ -1,17 +1,17 @@
-import path from 'node:path';
 import { Hono } from 'hono';
+import type { ContentfulStatusCode } from 'hono/utils/http-status';
 import { z } from 'zod';
-import { JobConflictError, JobStateError, SourceIngestor, SourceRejection } from '../../brain/sources/ingest';
+import { JobConflictError, JobStateError, SourceRejection } from '../../brain/sources/ingest';
+import { ProposalStateError } from '../../brain/compiler/compile';
+import { VaultConflictError } from '../../brain/vault-errors';
 import { INGEST_LIMITS } from '../../brain/sources/limits';
 import { requireProfile, type EngineDeps, type EngineEnv } from '../context';
 import { friendlyError } from '../errors';
-import type { ProfileIdentity } from '@sef/shared';
-import type { Workspace } from '../../profiles/workspace';
 
 /**
- * Source ingestion over HTTP. Every route sits behind the signed-in profile guard and
- * resolves its workspace from `c.get('ws')`, so nothing here can reach another student's
- * vault.
+ * Source ingestion and the wiki proposal pipeline over HTTP. Every route sits behind the
+ * signed-in profile guard and resolves its workspace from `c.get('ws')`, so nothing here
+ * can reach another student's vault.
  */
 
 // Base64 carries 3 bytes in 4 characters; the envelope cap derives from the decoded-byte
@@ -28,21 +28,7 @@ const ingestBody = z
   })
   .strict();
 
-/**
- * The identity a source is filed under, taken from the workspace rather than the request so
- * a client cannot file someone else's material.
- *
- * `DeviceProfile.programmeId` is learned at device sign-in from the enrolment. Profiles
- * created before that field existed fall back to the cohort — the honest scope the engine
- * can assert — and a profile with neither is refused rather than filed under a fake id.
- */
-const identityOf = (ws: Workspace, uniServerUrl: string): ProfileIdentity => {
-  const programmeId = ws.profile.programmeId ?? (ws.profile.cohortId || undefined);
-  if (!programmeId) {
-    throw new SourceRejection('This profile is not linked to a programme yet. Sign in online once more first.', 'no_programme', 409);
-  }
-  return { issuer: uniServerUrl, studentId: ws.profile.id, programmeId };
-};
+const rejectBody = z.object({ note: z.string().max(500).optional() }).strict();
 
 /**
  * Decodes a base64 envelope — standard or URL-safe alphabet, whitespace tolerated.
@@ -66,17 +52,21 @@ export function sourceRoutes(deps: EngineDeps) {
   // cannot file material into a vault.
   const guard = requireProfile(deps, { approved: true });
 
-  const ingestorFor = async (ws: Workspace): Promise<SourceIngestor> => {
-    const { uniServerUrl } = await ws.settings.get();
-    return new SourceIngestor(ws.wiki, path.join(ws.paths.brain, 'jobs'), async () => identityOf(ws, uniServerUrl));
+  const handled = (error: unknown, fallbackCode: string): { body: { error: string; code: string; details?: unknown }; status: ContentfulStatusCode } => {
+    if (error instanceof SourceRejection) return { body: { error: error.message, code: error.code }, status: error.status };
+    if (error instanceof JobConflictError) return { body: { error: error.message, code: 'job_conflict' }, status: 404 };
+    if (error instanceof JobStateError) return { body: { error: error.message, code: 'job_state' }, status: 409 };
+    if (error instanceof ProposalStateError) return { body: { error: error.message, code: 'proposal_state' }, status: 409 };
+    if (error instanceof VaultConflictError) return { body: { error: error.message, code: 'stale_proposal', details: error.details }, status: 409 };
+    return { body: { error: friendlyError(error), code: fallbackCode }, status: 500 };
   };
 
   app.get('/sources', guard, async (c) => {
     try {
-      return c.json(await (await ingestorFor(c.get('ws'))).list());
+      return c.json(await c.get('ws').sources.list());
     } catch (error) {
-      if (error instanceof SourceRejection) return c.json({ error: error.message, code: error.code }, error.status);
-      throw error;
+      const { body, status } = handled(error, 'list_failed');
+      return c.json(body, status);
     }
   });
 
@@ -94,37 +84,87 @@ export function sourceRoutes(deps: EngineDeps) {
     if (!bytes) return c.json({ error: 'That file could not be decoded', code: 'undecodable' }, 400);
 
     try {
-      const result = await (await ingestorFor(c.get('ws'))).ingest({ kind, title, mediaType, bytes });
+      const result = await c.get('ws').sources.ingest({ kind, title, mediaType, bytes });
       return c.json(result, 201);
     } catch (error) {
-      if (error instanceof SourceRejection) return c.json({ error: error.message, code: error.code }, error.status);
-      if (error instanceof JobConflictError) return c.json({ error: error.message, code: 'job_conflict' }, 404);
-      if (error instanceof JobStateError) return c.json({ error: error.message, code: 'job_state' }, 409);
-      return c.json({ error: friendlyError(error), code: 'ingest_failed' }, 500);
+      const { body, status } = handled(error, 'ingest_failed');
+      return c.json(body, status);
+    }
+  });
+
+  /**
+   * Runs the compile stage: keeper draft → normalized proposal → awaiting review. Stays
+   * synchronous so a caller gets the proposal id or an honest no_changes/failed answer.
+   */
+  app.post('/sources/:jobId/compile', guard, async (c) => {
+    try {
+      const result = await c.get('ws').compiler.compileJob(c.req.param('jobId'));
+      return c.json(result, 200);
+    } catch (error) {
+      const { body, status } = handled(error, 'compile_failed');
+      return c.json(body, status);
     }
   });
 
   app.post('/sources/:jobId/cancel', guard, async (c) => {
     try {
-      await (await ingestorFor(c.get('ws'))).cancel(c.req.param('jobId'));
+      await c.get('ws').sources.cancel(c.req.param('jobId'));
       return c.body(null, 204);
     } catch (error) {
-      if (error instanceof SourceRejection) return c.json({ error: error.message, code: error.code }, error.status);
-      if (error instanceof JobConflictError) return c.json({ error: error.message, code: 'job_conflict' }, 404);
-      if (error instanceof JobStateError) return c.json({ error: error.message, code: 'job_state' }, 409);
-      return c.json({ error: friendlyError(error), code: 'cancel_failed' }, 500);
+      const { body, status } = handled(error, 'cancel_failed');
+      return c.json(body, status);
     }
   });
 
   app.post('/sources/:jobId/retry', guard, async (c) => {
     try {
-      await (await ingestorFor(c.get('ws'))).retry(c.req.param('jobId'));
+      await c.get('ws').sources.retry(c.req.param('jobId'));
       return c.body(null, 202);
     } catch (error) {
-      if (error instanceof SourceRejection) return c.json({ error: error.message, code: error.code }, error.status);
-      if (error instanceof JobConflictError) return c.json({ error: error.message, code: 'job_conflict' }, 404);
-      if (error instanceof JobStateError) return c.json({ error: error.message, code: 'job_state' }, 409);
-      return c.json({ error: friendlyError(error), code: 'retry_failed' }, 500);
+      const { body, status } = handled(error, 'retry_failed');
+      return c.json(body, status);
+    }
+  });
+
+  app.get('/proposals', guard, async (c) => {
+    try {
+      return c.json(await c.get('ws').compiler.listProposals());
+    } catch (error) {
+      const { body, status } = handled(error, 'proposals_failed');
+      return c.json(body, status);
+    }
+  });
+
+  app.get('/proposals/:id', guard, async (c) => {
+    try {
+      const preview = await c.get('ws').compiler.preview(c.req.param('id'));
+      if (!preview) return c.json({ error: 'Proposal not found', code: 'not_found' }, 404);
+      return c.json(preview);
+    } catch (error) {
+      const { body, status } = handled(error, 'proposal_failed');
+      return c.json(body, status);
+    }
+  });
+
+  /** Accept applies the proposal through the journal; a stale proposal answers 409. */
+  app.post('/proposals/:id/accept', guard, async (c) => {
+    try {
+      const { record, report } = await c.get('ws').compiler.accept(c.req.param('id'));
+      return c.json({ record, report });
+    } catch (error) {
+      const { body, status } = handled(error, 'accept_failed');
+      return c.json(body, status);
+    }
+  });
+
+  app.post('/proposals/:id/reject', guard, async (c) => {
+    const parsed = rejectBody.safeParse(await c.req.json().catch(() => ({})));
+    if (!parsed.success) return c.json({ error: 'Send an optional note', code: 'invalid_request' }, 400);
+    try {
+      return c.json(await c.get('ws').compiler.reject(c.req.param('id'), parsed.data.note));
+    } catch (error) {
+      const { body, status } = handled(error, 'reject_failed');
+      return c.json(body, status);
     }
   });
 

@@ -33,6 +33,7 @@ export const LearnerSchema = z.strictObject({
   connections: z.string(),
   evidenceIds: IdentifierListSchema,
 });
+export type LearnerData = z.infer<typeof LearnerSchema>;
 
 /**
  * What the earlier concept vault recorded that the typed model cannot resolve: evidence without a

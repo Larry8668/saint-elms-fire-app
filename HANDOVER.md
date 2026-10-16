@@ -15,11 +15,11 @@ Everything a new teammate needs to understand, run, demo and extend Saint Elms F
 | **Release** | The registrar switches a course on for a cohort. Only released courses appear in a student's Library and can be installed. |
 | **Course package** | A course's lessons plus a manifest of SHA-256 hashes, signed with the university's ed25519 key. The engine pins the key on first sync and rejects anything that doesn't verify. |
 | **Dispersal** | Which version of each course each student has installed, so the registrar can see who is out of date. Devices report it on every catalogue check. |
-| **Second brain** | A markdown vault of concept pages written in the student's own words. Models propose edits; a validator accepts or rejects them. |
+| **Second brain** | A markdown vault of typed wiki pages. Models draft; the compiler normalizes them into proposals that are reviewed (or auto-committed for the student's own gestures) before the journaled write path touches a page. |
 | **Mastery** | `unseen` / `met` / `shaky` / `solid`, computed from evidence (quizzes, open misconceptions). Never written by a model. |
 | **Sky** | The visual map of every course concept. Stars light up as the brain grows; aurora lines are links the student made. |
-| **Reflect** | After a chat, send the session to the brain keeper to propose updates. The student sees a diff of what landed and what was rejected. |
-| **Capture** | Photograph handwritten notes; the vision model transcribes them and the brain keeper proposes updates from them. |
+| **Reflect** | After a chat, freeze the new turns as a session source and send them through the compile pipeline. The student sees a diff of what landed and what was dropped. |
+| **Capture** | Photograph handwritten notes; the vision model transcribes them and the compile pipeline proposes updates from the transcription. |
 | **Peer share** | A student sends a brain page to a classmate through the uni relay. The registrar can remove shares. |
 | **Sources** | The lessons, brain pages and web results behind an answer. Lesson sources are checked against the finished answer: only lessons it measurably drew on are shown as cited, and each links to the exact section of the lesson. |
 | **Chat history** | Every conversation is saved as JSON in the student's workspace, including each answer's sources and checks. Reopen it from History; a reload restores the open conversation. |
@@ -45,7 +45,7 @@ apps/desktop/          React 19 + Tailwind 4 UI (also the Tauri 2 shell in src-t
 engine/src/
   profiles/            registry (local accounts + scrypt verifiers), sessions, workspace manager, auth
   agents/              harness, prompts, tools, lanes, validators, attribution, Mastra factory
-  brain/               vault, validator, applier, mastery, lint, graph, course-graph
+  brain/               wiki-store, proposals, compiler/ (context → draft → normalize → review), vault views, mastery, lint, graph, course-graph
   sessions/            chat history store (one JSON file per conversation)
   content/ + sync/     installed lessons, search, package download and verification
   demo/                personas, deterministic seed generator, bootstrap

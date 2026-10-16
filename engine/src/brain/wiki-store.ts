@@ -22,6 +22,7 @@ import {
   VAULT_DIRECTORIES,
   VAULT_LAYOUT_VERSION,
   assertRecordId,
+  assertSafeRevision,
   historyRelativePath,
   isRawPath,
   pageIdFromFileName,
@@ -41,6 +42,8 @@ import {
 } from './vault-manifest';
 import { indexEntryOf, indexEntryOfContent, planProposal, planUpgrade, stamped, type PageChange, type PagePlan, type PageSnapshot } from './wiki-plan';
 import { readPageFile, revisionMatches, serializePageFile } from './wiki-page-format';
+
+export type { PageChange, PageSnapshot } from './wiki-plan';
 
 export interface WikiStoreOptions extends VaultLockOptions {
   /** Injectable clock, so a commit's timestamps are deterministic in tests. */
@@ -327,11 +330,16 @@ export class WikiStore {
   }
 
   /**
-   * Records an extraction pass on the stored record — metadata only; the frozen bytes and
-   * revision never move. Without this the ledger stays empty and a later `listSources` could
-   * not honestly say what was read.
+   * Records an extraction pass on the stored record. The ledger entry is metadata; when the
+   * caller also hands over the extracted text it is frozen beside the record under
+   * `.meta/sources/<id>/extracted/`, so a later compile does not have to re-run the reader
+   * (vision especially) to get back the same words.
    */
-  async recordExtraction(id: string, entry: { method: SourceRecord['extractions'][number]['method']; sha256: string; chars: number; partial: boolean }): Promise<void> {
+  async recordExtraction(
+    id: string,
+    entry: { method: SourceRecord['extractions'][number]['method']; sha256: string; chars: number; partial: boolean },
+    text?: string,
+  ): Promise<void> {
     const safeId = assertRecordId(id, 'Source id');
     await this.lock.run(async () => {
       const record = await this.readSource(safeId);
@@ -342,16 +350,31 @@ export class WikiStore {
       const manifest = read.manifest ?? emptyManifest(at);
       const existing = manifest.sources[safeId];
       if (!existing) return;
-      const value = SourceRecordSchema.parse({
-        ...record,
-        extractions: [...record.extractions, { revision: record.revision, createdAt: at, ...entry }],
-      });
+      const extraction = { revision: record.revision, createdAt: at, ...entry };
+      const value = SourceRecordSchema.parse({ ...record, extractions: [...record.extractions, extraction] });
       const sources = { ...manifest.sources, [safeId]: { ...existing, extractions: value.extractions.length } };
-      await this.commit(`wiki.extraction:${safeId}`, [
+      const steps: JournalStep[] = [
         { kind: 'write', path: sourceRecordStepPath(safeId), content: `${JSON.stringify(value, null, 2)}\n` },
         { kind: 'write', path: manifestPath(this.root), content: manifestJson({ ...manifest, updatedAt: at, sources }) },
-      ]);
+      ];
+      if (text !== undefined) {
+        steps.push({ kind: 'write', path: extractionTextPath(safeId, extraction.revision, extraction.method), content: text });
+      }
+      await this.commit(`wiki.extraction:${safeId}`, steps);
     });
+  }
+
+  /**
+   * Reads back what an extraction pass produced, defaulting to the latest recorded pass.
+   * Returns null when the text was never persisted (records written before text freezing
+   * existed, or a reader that produced nothing).
+   */
+  async readExtractionText(id: string, revision?: string): Promise<string | null> {
+    const record = await this.readSource(id);
+    if (!record) return null;
+    const extraction = [...record.extractions].reverse().find((e) => (revision ? e.revision === revision : true));
+    if (!extraction) return null;
+    return readText(vaultPath(this.root, extractionTextPath(record.id, extraction.revision, extraction.method)));
   }
 
   /** Student-controlled erasure: the only path that may touch raw/. */
@@ -613,6 +636,11 @@ function sourceRecordPath(root: string, id: string): string {
 
 function sourceRecordStepPath(id: string): string {
   return `${META_DIRECTORY}/${META_SOURCES_DIRECTORY}/${id}.json`;
+}
+
+/** Extracted text is derived data: a revision+method pair names it, never content hashes the model could collide. */
+function extractionTextPath(id: string, revision: string, method: string): string {
+  return `${META_DIRECTORY}/${META_SOURCES_DIRECTORY}/${assertRecordId(id, 'Source id')}/extracted/${assertSafeRevision(revision, 'Source revision')}-${assertSafeRevision(method, 'Extraction method')}.txt`;
 }
 
 function manifestJson(manifest: VaultManifest): string {

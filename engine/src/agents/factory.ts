@@ -68,7 +68,8 @@ async function ollamaStructured<T extends z.ZodTypeAny>(req: StructuredRequest<T
       body: JSON.stringify({
         model: req.resolved.modelId,
         stream: true,
-        think,
+        // Ollama 400s on `think` for models without a thinking mode, even when false.
+        ...(think ? { think: true } : {}),
         format: grammarSchema(req.schema),
         options: { ...OLLAMA_OPTIONS, temperature: 0.2, repeat_penalty: 1.1, num_predict: STRUCTURED_MAX_TOKENS },
         messages: [

@@ -8,12 +8,13 @@ import {
   type ProfileIdentity,
   type SourceRecord,
   type SourceSummary,
+  type TeacherId,
 } from '@sef/shared';
 import type { ContentfulStatusCode } from 'hono/utils/http-status';
 import { errorFields, log } from '../../config';
-import { extractPdf, extractText, sha256, type ExtractionResult } from './extract';
+import { extractPdf, extractText, sha256, type ExtractionMethod, type ExtractionResult } from './extract';
 import { assertJobCapacity, advanceJob, cancelJob, createJob, jobStore, JobConflictError, JobStateError, listProfileJobs, retryJob } from './jobs';
-import { checkBytes, countChars, sanitiseTitle, titleIsSafe, type Limits } from './limits';
+import { checkBytes, countChars, sanitiseTitle, sliceChars, titleIsSafe, INGEST_LIMITS, type Limits } from './limits';
 import { openPdf, PdfParseError } from './pdf';
 import type { WikiStore } from '../wiki-store';
 
@@ -33,13 +34,28 @@ export class SourceRejection extends Error {
   }
 }
 
-export type IngestKind = 'note' | 'document' | 'image';
+export type IngestKind = 'note' | 'document' | 'image' | 'session';
+
+/** The committed transcript range a session source covers — the checkpoint written with it. */
+export interface SessionRef {
+  sessionId: string;
+  teacher: TeacherId;
+  firstTurn: number;
+  lastTurn: number;
+}
 
 export interface IngestInput {
   kind: IngestKind;
   title: string;
   mediaType: string;
   bytes: Uint8Array;
+  /** Required for kind 'session'; ignored otherwise. */
+  session?: SessionRef;
+  /**
+   * A reading the caller already made (e.g. the vision transcription shown to the student).
+   * Recorded as this source's extraction so the compiler never pays for the same read twice.
+   */
+  extraction?: { method: ExtractionMethod; text: string };
 }
 
 export interface IngestResult {
@@ -55,6 +71,7 @@ const ORIGIN: Record<IngestKind, 'student' | 'external'> = {
   note: 'student',
   document: 'external',
   image: 'student',
+  session: 'student',
 };
 
 export class SourceIngestor {
@@ -62,10 +79,10 @@ export class SourceIngestor {
 
   constructor(
     private readonly store: WikiStore,
-    private readonly jobsRoot: string,
     private readonly profile: () => Promise<ProfileIdentity>,
   ) {
-    this.jobs = jobStore(jobsRoot);
+    // Jobs live under the vault's own .meta/jobs — the same place WikiStore.readJob looks.
+    this.jobs = jobStore(store.root);
   }
 
   /**
@@ -81,6 +98,9 @@ export class SourceIngestor {
     const { active } = await listProfileJobs(this.jobs, identity);
     assertJobCapacity(active, limits);
 
+    if (input.kind === 'session' && !input.session) {
+      throw new SourceRejection('A session source must name the session and turns it covers.', 'missing_session_ref', 400);
+    }
     const record = SourceRecordSchema.parse({
       schemaVersion: CONTRACT_VERSION,
       id: newSourceId(),
@@ -95,6 +115,7 @@ export class SourceIngestor {
       bytes: input.bytes.byteLength,
       attribution: {},
       extractions: [],
+      ...(input.kind === 'session' ? { session: input.session } : {}),
     });
 
     // The original is durable before anything is read out of it.
@@ -102,12 +123,17 @@ export class SourceIngestor {
     let stored = storedAt;
     log.info('source_stored', { sourceId: stored.id, kind: stored.kind, bytes: stored.bytes, alreadyPresent });
 
-    const extraction = await this.extract(stored, input.bytes, limits);
+    const extraction = input.extraction ? this.adopted(input.extraction, input.bytes, limits) : await this.extract(stored, input.bytes, limits);
     // The extraction pass is part of the record: without it a later listing cannot say
-    // whether the source ever produced text.
+    // whether the source ever produced text. The text itself is frozen beside the record
+    // so the compiler reads back the same words rather than re-running the reader.
     if (extraction) {
       const chars = countChars(extraction.text);
-      await this.store.recordExtraction(stored.id, { method: extraction.method, sha256: extraction.sha256, chars, partial: extraction.partial });
+      await this.store.recordExtraction(
+        stored.id,
+        { method: extraction.method, sha256: extraction.sha256, chars, partial: extraction.partial },
+        extraction.text || undefined,
+      );
       stored = { ...stored, extractions: [...stored.extractions, { revision: stored.revision, method: extraction.method, sha256: extraction.sha256, createdAt: new Date().toISOString(), chars, partial: extraction.partial }] };
     }
     const job = await this.track(stored.id, limits, identity);
@@ -125,6 +151,23 @@ export class SourceIngestor {
     if (record.mediaType.startsWith('application/pdf')) return 'pdf';
     if (record.mediaType.startsWith('image/')) return 'vision';
     return 'text';
+  }
+
+  /**
+   * Wraps a caller-provided reading with the same limits an internal pass would get: the
+   * text is counted and capped the same way, and the hash is of the source bytes, matching
+   * what extract() records.
+   */
+  private adopted(provided: { method: ExtractionMethod; text: string }, bytes: Uint8Array, limits: Limits): ExtractionResult {
+    const maxChars = limits.maxExtractedChars ?? INGEST_LIMITS.maxExtractedChars;
+    const partial = countChars(provided.text) > maxChars;
+    return {
+      method: provided.method,
+      text: sliceChars(provided.text, maxChars),
+      sha256: sha256(bytes),
+      partial,
+      ...(partial ? { note: `Only the first ${maxChars.toLocaleString('en-GB')} characters of the reading were kept.` } : {}),
+    };
   }
 
   /** Reads the source. A failure is reported in the result, never thrown: the original is safe. */
