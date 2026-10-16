@@ -1,0 +1,5 @@
+# OpenQodex writes reports, caches and graphs here; only the team config is committed.
+*
+!.gitignore
+!config.yaml
+!custom-instructions.md

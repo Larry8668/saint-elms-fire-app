@@ -310,7 +310,122 @@ test('the legacy save path refuses to clobber a typed page', async () => {
   await assert.rejects(() => vaultView.save(view), VaultSchemaError);
 });
 
-test('Reflect on a session freezes exactly the new turns and checkpoints them', async () => {
+test('the preview shows what the proposal would do to the pages as they are now', async () => {
+  const { sources, compiler } = await harness('pipe-preview', async () =>
+    draft({
+      pages: [
+        pageDraft({
+          claims: [{ text: 'Force changes momentum', kind: 'source_fact', quote: 'Force changes momentum over time.' }],
+        }),
+        pageDraft({ title: 'Energy', summary: 'Energy in the system.', markdown: '# Energy', claims: [] }),
+      ],
+      links: [{ from: 'Momentum', to: 'Energy', type: 'related_to', why: 'Both mechanics', quote: 'Momentum and energy' }],
+    }),
+  );
+  const { jobId } = await ingestNote(sources, 'Force changes momentum over time. Momentum and energy.');
+  const compiled = await compiler.compileJob(jobId);
+  const preview = await compiler.preview(compiled.proposalId!);
+
+  assert.ok(preview, 'a filed proposal always previews');
+  const momentum = preview!.pages.find((page) => page.title === 'Momentum');
+  assert.equal(momentum?.change, 'created');
+  assert.equal(momentum?.summaryBefore, undefined);
+  assert.match(momentum?.summaryAfter ?? '', /momentum says now/i);
+  assert.equal(momentum?.addedClaims.length, 1, 'claims the page does not have yet are listed');
+  assert.equal(momentum?.addedClaims[0]?.text, 'Force changes momentum');
+  assert.equal(momentum?.addedLinks.length, 1, 'links the page does not have yet are listed');
+  assert.equal(preview!.conflicts.length, 0);
+
+  // After the write the same proposal cannot apply again: the page it expected to create
+  // now exists, so the preview says conflict rather than pretending it would be unchanged.
+  await compiler.accept(compiled.proposalId!);
+  const after = await compiler.preview(compiled.proposalId!);
+  assert.equal(after!.pages.length, 0);
+  assert.ok(after!.conflicts.some((conflict) => /exists/.test(conflict)), 'a consumed proposal previews as conflicted');
+});
+
+test('selective accept writes only the chosen pages and says so on the original record', async () => {
+  const { store, sources, compiler } = await harness('pipe-partial', async () =>
+    draft({
+      pages: [pageDraft({}), pageDraft({ title: 'Energy', summary: 'Energy in the system.', markdown: '# Energy', claims: [] })],
+    }),
+  );
+  const { jobId } = await ingestNote(sources, 'Momentum and energy notes.');
+  const compiled = await compiler.compileJob(jobId);
+  const original = await readProposalRecord(store.root, compiled.proposalId!);
+  const pageIds = original!.proposal.operations.flatMap((op) => (op.op === 'upsert_page' ? [op.page.id] : []));
+  assert.equal(pageIds.length, 2);
+
+  const keep = pageIds[0]!;
+  const { record, report } = await compiler.accept(compiled.proposalId!, 'student', { only: [keep] });
+  assert.equal(record.state, 'accepted');
+  assert.equal(record.proposal.id !== compiled.proposalId, true, 'the accepted subset is its own proposal');
+  assert.deepEqual(report.pages.map((page) => page.id), [keep], 'only the kept page was written');
+  assert.ok(await store.readPage(keep));
+  assert.equal(await store.readPage(pageIds[1]!), null, 'the unticked page never landed');
+
+  const decided = await readProposalRecord(store.root, compiled.proposalId!);
+  assert.equal(decided?.state, 'rejected');
+  assert.match(decided?.note ?? '', /applied in part/i);
+  assert.equal((await store.readJob(jobId))?.stage, 'committed');
+});
+
+test('a student correction is what the keeper drafts from — the frozen pass is not re-read', async () => {
+  let prompt = '';
+  const { sources, compiler } = await harness('pipe-corrected', async (p) => {
+    prompt = p;
+    return draft({ pages: [pageDraft()] });
+  });
+  const { source, jobId } = await ingestNote(sources, 'momentum is mas times velocity');
+  await sources.correct(source.id, 'momentum is mass times velocity');
+
+  await compiler.compileJob(jobId);
+  assert.match(prompt, /mass times velocity/, 'the compile reads the corrected text');
+  assert.doesNotMatch(prompt, /mas times velocity/);
+});
+
+test('a frozen session stays pending until the proposal it produced is accepted', async () => {
+  const store = await vault('pipe-review-session');
+  const sources = new SourceIngestor(store, identity);
+  const compiler = new WikiCompiler(store, {
+    settings,
+    content,
+    profile: identity,
+    propose: async () => draft({ pages: [pageDraft({ title: 'Impulse' })] }),
+  });
+  const vaultView = new BrainVault(store.root);
+  await vaultView.init();
+  const brain = new BrainService(content, vaultView, settings, await tempRoot('pipe-quizzes'), { wiki: store, sources, identity });
+
+  const session: Session = {
+    id: 'sess-review',
+    teacher: 'guide',
+    startedAt: T0,
+    updatedAt: T0,
+    turns: [
+      { role: 'user', content: 'What is impulse?', at: T0 },
+      { role: 'assistant', content: 'Force over time.', at: T0 },
+    ],
+    lessonIds: [],
+    sources: [],
+    ingestedTurns: 0,
+  };
+
+  const frozen = await brain.freezeSession(session);
+  assert.equal(frozen.source.kind, 'session');
+  assert.equal((await store.readJob(frozen.jobId))?.stage, 'awaiting_source_review', 'a frozen session waits for review');
+
+  const compiled = await compiler.compileJob(frozen.jobId);
+  assert.equal(compiled.job.stage, 'awaiting_review');
+  assert.ok(compiled.proposalId, 'the proposal is filed, not applied');
+  assert.equal((await store.listPages()).length, 0, 'nothing reaches the vault before accept');
+
+  const { record } = await compiler.accept(compiled.proposalId!);
+  assert.equal(record.decidedBy, 'student');
+  assert.equal((await store.readJob(frozen.jobId))?.stage, 'committed');
+});
+
+test('Reflect freezes exactly the fresh turns — earlier ones are not re-filed', async () => {
   const store = await vault('pipe-session');
   const sources = new SourceIngestor(store, identity);
   const compiler = new WikiCompiler(store, {
@@ -322,7 +437,7 @@ test('Reflect on a session freezes exactly the new turns and checkpoints them', 
   const vaultView = new BrainVault(store.root);
   await vaultView.init();
   const quizzesDir = await tempRoot('pipe-quizzes');
-  const brain = new BrainService(content, vaultView, settings, quizzesDir, { wiki: store, sources, compiler, identity });
+  const brain = new BrainService(content, vaultView, settings, quizzesDir, { wiki: store, sources, identity });
 
   const session: Session = {
     id: 'sess-1',
@@ -338,15 +453,15 @@ test('Reflect on a session freezes exactly the new turns and checkpoints them', 
     sources: [],
     ingestedTurns: 1, // the first turn was ingested before — only the last two are fresh
   };
-  const result = await brain.ingestSession(session);
-  assert.equal(result.stage, 'committed');
-  assert.equal(result.consumedTurns, 3, 'the checkpoint covers the committed range');
-  assert.ok(result.proposalId);
+  const frozen = await brain.freezeSession(session);
 
-  const record = await readProposalRecord(store.root, result.proposalId!);
-  const sessionSource = record?.proposal.sourceIds[0];
-  const source = sessionSource ? await store.readSource(sessionSource) : null;
+  const source = await store.readSource(frozen.source.id);
   assert.equal(source?.kind, 'session');
   assert.equal(source?.session?.firstTurn, 1);
   assert.equal(source?.session?.lastTurn, 2);
+  // The frozen transcript is exactly the fresh range — the already-reflected turn is not repeated.
+  const text = await store.readExtractionText(frozen.source.id);
+  assert.doesNotMatch(text ?? '', /What is impulse\?/);
+  assert.match(text ?? '', /Force over time\./);
+  assert.match(text ?? '', /And momentum\?/);
 });

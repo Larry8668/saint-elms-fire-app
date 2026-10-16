@@ -45,6 +45,10 @@ export const CourseConceptRefSchema = z.strictObject({
 });
 export type CourseConceptRef = z.infer<typeof CourseConceptRefSchema>;
 
+/** How a source's text was produced — the last ledger entry is the text a compile would read. */
+export const ExtractionMethodSchema = z.enum(['text', 'pdf', 'vision', 'student_correction']);
+export type ExtractionMethod = z.infer<typeof ExtractionMethodSchema>;
+
 const sourceBase = z.strictObject({
   schemaVersion: ContractVersionSchema,
   id: IdentifierSchema,
@@ -59,13 +63,15 @@ const sourceBase = z.strictObject({
   extractions: z.array(
     z.strictObject({
       revision: RevisionSchema,
-      method: z.enum(['text', 'pdf', 'vision', 'student_correction']),
+      method: ExtractionMethodSchema,
       sha256: Sha256Schema,
       createdAt: TimestampSchema,
       /** Characters of text the pass produced; absent on records written before it was tracked. */
       chars: z.number().int().nonnegative().optional(),
       /** Whether that pass stopped short of the whole source. */
       partial: z.boolean().optional(),
+      /** Why a pass stopped short or produced nothing; absent on records written before notes were kept. */
+      note: z.string().max(500).optional(),
     }),
   ),
 });
@@ -238,6 +244,10 @@ export type WikiJob = z.infer<typeof WikiJobSchema>;
 export const PROPOSAL_STATES = ['pending', 'accepted', 'rejected'] as const;
 export type ProposalState = (typeof PROPOSAL_STATES)[number];
 
+/** A draft entry the deterministic pass dropped, with the reason it was refused. */
+export const DroppedItemSchema = z.strictObject({ what: z.string(), reason: z.string() });
+export type DroppedItem = z.infer<typeof DroppedItemSchema>;
+
 /**
  * A proposal plus its review outcome. The proposal body itself is immutable once filed —
  * the review decision lives beside it, never inside it, so a re-read always shows exactly
@@ -251,9 +261,11 @@ export const WikiProposalRecordSchema = z
     jobId: IdentifierSchema.nullable(),
     state: z.enum(PROPOSAL_STATES),
     decidedAt: TimestampSchema.nullable(),
-    /** 'student' for an explicit review choice; 'system' when the student's own gesture (Reflect, capture) auto-commits. */
+    /** 'student' for an explicit review choice; 'system' for code-built proposals (e.g. quiz evidence). */
     decidedBy: z.enum(['student', 'system']).nullable(),
     note: z.string().max(500).optional(),
+    /** What the deterministic pass dropped on the way to this proposal — part of what a review sees. */
+    dropped: z.array(DroppedItemSchema).optional(),
   })
   .superRefine((value, ctx) => {
     if ((value.state === 'pending') !== (value.decidedAt === null && value.decidedBy === null)) {
@@ -282,6 +294,9 @@ export const ProposalPreviewSchema = z.strictObject({
       title: z.string(),
       summaryBefore: z.string().optional(),
       summaryAfter: z.string(),
+      /** Claims and links this proposal would add on top of the page's current state. */
+      addedClaims: z.array(WikiClaimSchema),
+      addedLinks: z.array(WikiLinkSchema),
     }),
   ),
   conflicts: z.array(z.string()),
@@ -316,6 +331,100 @@ export const JobListSchema = z.strictObject({
   activeJobs: z.number().int().nonnegative(),
 });
 export type JobList = z.infer<typeof JobListSchema>;
+
+/** What POST /api/sources returns: the source is retained before anything reads it. */
+export const SourceReceiptSchema = z.strictObject({
+  schemaVersion: ContractVersionSchema,
+  source: SourceSummarySchema,
+  extraction: z
+    .strictObject({
+      method: ExtractionMethodSchema,
+      text: z.string(),
+      partial: z.boolean(),
+      note: z.string().optional(),
+    })
+    .nullable(),
+  jobId: IdentifierSchema,
+  /** True when the same material or a live covering job was already on file. */
+  reused: z.boolean(),
+});
+export type SourceReceipt = z.infer<typeof SourceReceiptSchema>;
+
+/**
+ * One retained source in full: the immutable record, the latest extraction pass (the text a
+ * compile would read and a correction replaces), and the newest job covering it.
+ */
+export const SourceDetailSchema = z.strictObject({
+  schemaVersion: ContractVersionSchema,
+  record: SourceRecordSchema,
+  extraction: z
+    .strictObject({
+      method: ExtractionMethodSchema,
+      text: z.string(),
+      partial: z.boolean(),
+      note: z.string().optional(),
+      at: TimestampSchema,
+    })
+    .nullable(),
+  job: WikiJobSchema.nullable(),
+});
+export type SourceDetail = z.infer<typeof SourceDetailSchema>;
+
+/** POST /api/sources/:id/read — a fresh vision pass over a kept image, recorded as its extraction. */
+export const SourceReadResultSchema = z.strictObject({
+  schemaVersion: ContractVersionSchema,
+  detail: SourceDetailSchema,
+  reading: z.strictObject({ topic: z.string(), transcription: z.string(), concepts: z.array(z.string()) }),
+});
+export type SourceReadResult = z.infer<typeof SourceReadResultSchema>;
+
+/** One page touched by an applied proposal. */
+export const PageChangeReportSchema = z.strictObject({
+  id: IdentifierSchema,
+  kind: z.enum(['concept', 'source_summary', 'synthesis', 'question']),
+  change: z.enum(['created', 'updated', 'unchanged']),
+  revisionBefore: z.string().nullable(),
+  revisionAfter: z.string(),
+});
+export type PageChangeReport = z.infer<typeof PageChangeReportSchema>;
+
+/** The journaled outcome of an accepted proposal. */
+export const ProposalReportSchema = z.strictObject({
+  proposalId: IdentifierSchema,
+  committed: z.boolean(),
+  journalId: z.string().nullable(),
+  pages: z.array(PageChangeReportSchema),
+  logEntry: z.strictObject({ at: TimestampSchema, kind: z.string(), title: z.string(), detail: z.string().optional() }),
+});
+export type ProposalReport = z.infer<typeof ProposalReportSchema>;
+
+/** POST /api/sources/:jobId/compile — the job's new stage plus the proposal it filed. */
+export const CompileResultSchema = z.strictObject({
+  schemaVersion: ContractVersionSchema,
+  job: WikiJobSchema,
+  proposalId: IdentifierSchema.nullable(),
+  dropped: z.array(DroppedItemSchema),
+  model: z.string(),
+  durationMs: z.number(),
+});
+export type CompileResult = z.infer<typeof CompileResultSchema>;
+
+/** Every saved revision of one page: the current file plus the .history/ snapshots. */
+export const PageRevisionListSchema = z.strictObject({
+  pageId: IdentifierSchema,
+  current: RevisionSchema.nullable(),
+  revisions: z.array(z.strictObject({ revision: z.string(), at: TimestampSchema, current: z.boolean() })),
+});
+export type PageRevisionList = z.infer<typeof PageRevisionListSchema>;
+
+/** One revision's page file exactly as it committed — frontmatter included. */
+export const PageRevisionContentSchema = z.strictObject({
+  pageId: IdentifierSchema,
+  revision: z.string(),
+  raw: z.string(),
+  current: z.boolean(),
+});
+export type PageRevisionContent = z.infer<typeof PageRevisionContentSchema>;
 
 export const LearningEventSchema = z
   .strictObject({

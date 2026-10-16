@@ -1,6 +1,16 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
-import { decodeSourceBytes } from './sources';
+import type { CompileResult, EngineSettings, JobList, ProposalAcceptance, SourceDetail, SourceReceipt } from '@sef/shared';
+import type { ContentStore } from '../../content/store';
+import type { SettingsReader } from '../../settings/store';
+import { SessionStore, type Session } from '../../sessions/store';
+import type { WikiStore } from '../../brain/wiki-store';
+import { SourceIngestor } from '../../brain/sources/ingest';
+import { WikiCompiler } from '../../brain/compiler/compile';
+import type { KeeperDraft } from '../../brain/compiler/draft';
+import { readProposalRecord } from '../../brain/proposals';
+import { PROFILE, T0, tempRoot, vault } from '../../brain/testing/fixtures';
+import { decodeSourceBytes, sourceRoutes } from './sources';
 
 test('standard base64 decodes, and padding is not required to match byte-for-byte', () => {
   const body = 'a note body';
@@ -27,4 +37,227 @@ test('whitespace a transport folded in is tolerated', () => {
 test('input that is not base64 at all is refused, not silently zero-filled', () => {
   assert.equal(decodeSourceBytes('!!! not base64 !!!'), null);
   assert.equal(decodeSourceBytes('@@@@'), null);
+});
+
+/**
+ * Route-level coverage over a real vault: the workspace stub is the same shape the
+ * profile manager hands out, so the ownership guard and the honest {error} answers are
+ * exercised, not assumed.
+ */
+const settings: SettingsReader = {
+  get: async () =>
+    ({
+      uniServerUrl: 'https://uni.example.test',
+      searxngUrl: '',
+      thinking: false,
+      providers: [{ id: 'p', kind: 'ollama', label: 'Test model' }],
+      roles: { tutor: { provider: 'p', model: 'm' }, brain: { provider: 'p', model: 'm' }, vision: { provider: 'p', model: 'm' } },
+    }) as EngineSettings,
+};
+const content = { academicLessons: async () => [], installed: async () => ({}) } as unknown as ContentStore;
+
+const draft = (over: Partial<KeeperDraft> = {}): KeeperDraft => ({ pages: [], links: [], ...over });
+const pageDraft = (over: Partial<KeeperDraft['pages'][number]> = {}): KeeperDraft['pages'][number] => ({
+  title: 'Momentum',
+  kind: 'concept',
+  summary: 'What momentum says now.',
+  markdown: '# Momentum\n\nForce changes momentum.',
+  claims: [],
+  ...over,
+});
+
+const AUTH = { authorization: 'Bearer valid', 'content-type': 'application/json' };
+
+interface RouteHarness {
+  app: ReturnType<typeof sourceRoutes>;
+  store: WikiStore;
+  sources: SourceIngestor;
+  compiler: WikiCompiler;
+  sessions: SessionStore;
+}
+
+async function routeHarness(prefix: string, opts: { store?: WikiStore; studentId?: string; propose?: (prompt: string) => Promise<KeeperDraft> } = {}): Promise<RouteHarness> {
+  const store = opts.store ?? (await vault(prefix));
+  const identity = { ...PROFILE, studentId: opts.studentId ?? PROFILE.studentId };
+  const sources = new SourceIngestor(store, async () => identity);
+  const compiler = new WikiCompiler(store, { settings, content, profile: async () => identity, propose: opts.propose });
+  const sessions = new SessionStore(await tempRoot(`${prefix}-sessions`));
+  const profile = { id: identity.studentId, name: 'Student', email: 's@example.test', cohortId: 'cohort-a' };
+  const brain = { pageDiffs: async () => [], readImageSource: async () => null };
+  const ws = { profile, sources, compiler, wiki: store, brain, sessions };
+  const app = sourceRoutes({
+    settings: {},
+    auth: { resolve: async (token: string) => (token === 'valid' ? { profile, mode: 'offline' as const } : null) },
+    workspaces: { get: async () => ws },
+  } as never);
+  return { app, store, sources, compiler, sessions };
+}
+
+const post = (app: RouteHarness['app'], path: string, body?: unknown) => app.request(path, { method: 'POST', headers: AUTH, body: body === undefined ? undefined : JSON.stringify(body) });
+
+test('a source is filed, read back in detail, corrected and previewed — all over HTTP', async () => {
+  const { app, store } = await routeHarness('route-flow', {
+    propose: async () => draft({ pages: [pageDraft({ claims: [{ text: 'Force changes momentum', kind: 'source_fact', quote: 'Force changes momentum over time.' }] })] }),
+  });
+
+  const filed = await post(app, '/sources', {
+    kind: 'note',
+    title: 'Lecture notes',
+    mediaType: 'text/markdown',
+    data: Buffer.from('Force changes momentum over time.', 'utf8').toString('base64'),
+    origin: 'student',
+  });
+  assert.equal(filed.status, 201);
+  const receipt = (await filed.json()) as SourceReceipt;
+  assert.equal(receipt.source.extracted, true);
+  const jobId = receipt.jobId;
+
+  const detailRes = await app.request(`/sources/${receipt.source.id}`, { headers: AUTH });
+  assert.equal(detailRes.status, 200);
+  const detail = (await detailRes.json()) as SourceDetail;
+  assert.match(detail.extraction?.text ?? '', /Force changes momentum/);
+  assert.equal(detail.job?.id, jobId);
+  assert.equal(detail.job?.stage, 'awaiting_source_review');
+
+  const corrected = await app.request(`/sources/${receipt.source.id}/extraction`, {
+    method: 'PUT',
+    headers: AUTH,
+    body: JSON.stringify({ text: 'Force changes momentum over time. Impulse follows.' }),
+  });
+  assert.equal(corrected.status, 200);
+  assert.equal(((await corrected.json()) as SourceDetail).extraction?.method, 'student_correction');
+
+  // The raw route serves the frozen original, not the correction.
+  const raw = await app.request(`/sources/${receipt.source.id}/raw`, { headers: AUTH });
+  assert.equal(raw.status, 200);
+  assert.equal(raw.headers.get('content-type'), 'text/markdown');
+  assert.equal(await raw.text(), 'Force changes momentum over time.');
+
+  const compiled = await post(app, `/sources/${jobId}/compile`, {});
+  assert.equal(compiled.status, 200);
+  const result = (await compiled.json()) as CompileResult;
+  assert.equal(result.job.stage, 'awaiting_review');
+  assert.ok(result.proposalId);
+
+  const preview = await app.request(`/proposals/${result.proposalId}`, { headers: AUTH });
+  const body = (await preview.json()) as { pages: Array<{ title: string; addedClaims: unknown[] }> };
+  assert.equal(body.pages[0]?.title, 'Momentum');
+  assert.equal(body.pages[0]?.addedClaims.length, 1);
+
+  const accepted = await post(app, `/proposals/${result.proposalId}/accept`, {});
+  assert.equal(accepted.status, 200);
+  const acceptance = (await accepted.json()) as ProposalAcceptance;
+  assert.equal(acceptance.record.state, 'accepted');
+  assert.equal(acceptance.record.decidedBy, 'student');
+  assert.equal(acceptance.report.committed, true);
+  assert.equal((await store.readJob(jobId))?.stage, 'committed');
+});
+
+test('another profile cannot see, correct or compile the source — 404, not 403', async () => {
+  const mine = await routeHarness('route-foreign-a');
+  const { source, jobId } = await mine.sources.ingest({
+    kind: 'note',
+    title: 'Private',
+    mediaType: 'text/markdown',
+    bytes: Buffer.from('private words', 'utf8'),
+  });
+  const foreign = await routeHarness('route-foreign-b', { store: mine.store, studentId: 'student-b' });
+
+  assert.equal((await foreign.app.request(`/sources/${source.id}`, { headers: AUTH })).status, 404);
+  assert.equal(
+    (await foreign.app.request(`/sources/${source.id}/extraction`, { method: 'PUT', headers: AUTH, body: JSON.stringify({ text: 'vandalised' }) })).status,
+    404,
+  );
+  assert.equal((await foreign.app.request(`/sources/${source.id}/raw`, { headers: AUTH })).status, 404);
+  assert.equal((await post(foreign.app, `/sources/${jobId}/compile`, {})).status, 404);
+  const listed = await foreign.app.request('/sources', { headers: AUTH });
+  const board = (await listed.json()) as JobList;
+  assert.equal(board.sources.length, 0, 'the foreign catalogue lists nothing');
+  assert.equal(board.jobs.length, 0, 'the foreign job board lists nothing');
+});
+
+test('accepting a session proposal checkpoints only the frozen turn range', async () => {
+  const { app, sources, compiler, sessions } = await routeHarness('route-session', {
+    propose: async () => draft({ pages: [pageDraft()] }),
+  });
+  const session: Session = {
+    id: 'sess-checkpoint',
+    teacher: 'guide',
+    startedAt: T0,
+    updatedAt: T0,
+    turns: [
+      { role: 'user', content: 'What is impulse?', at: T0 },
+      { role: 'assistant', content: 'Force over time.', at: T0 },
+      { role: 'user', content: 'And after the freeze?', at: T0 },
+    ],
+    lessonIds: [],
+    sources: [],
+    ingestedTurns: 0,
+  };
+  await sessions.put(session);
+
+  const transcript = 'Student: What is impulse?\nTeacher: Force over time.';
+  const { jobId } = await sources.ingest({
+    kind: 'session',
+    title: 'Guide session',
+    mediaType: 'text/plain',
+    bytes: Buffer.from(transcript, 'utf8'),
+    session: { sessionId: session.id, teacher: 'guide', firstTurn: 0, lastTurn: 1 },
+    extraction: { method: 'text', text: transcript },
+  });
+  const compiled = await compiler.compileJob(jobId);
+  assert.ok(compiled.proposalId);
+
+  const accepted = await post(app, `/proposals/${compiled.proposalId}/accept`, {});
+  assert.equal(accepted.status, 200);
+  const after = await sessions.get(session.id);
+  assert.equal(after?.ingestedTurns, 2, 'only turns 0–1 checkpoint; turn 2 arrived after the freeze');
+});
+
+test('a pageIds selection writes only those pages; the original closes as applied-in-part', async () => {
+  const { app, sources, compiler, store } = await routeHarness('route-partial', {
+    propose: async () => draft({ pages: [pageDraft({}), pageDraft({ title: 'Energy', summary: 'Energy in the system.', markdown: '# Energy', claims: [] })] }),
+  });
+  const { jobId } = await sources.ingest({
+    kind: 'note',
+    title: 'Mechanics notes',
+    mediaType: 'text/markdown',
+    bytes: Buffer.from('Momentum and energy notes.', 'utf8'),
+  });
+  const compiled = await compiler.compileJob(jobId);
+  const original = await readProposalRecord(store.root, compiled.proposalId!);
+  const ids = original!.proposal.operations.flatMap((op) => (op.op === 'upsert_page' ? [op.page.id] : []));
+
+  const accepted = await post(app, `/proposals/${compiled.proposalId}/accept`, { pageIds: [ids[0]] });
+  assert.equal(accepted.status, 200);
+  const acceptance = (await accepted.json()) as ProposalAcceptance;
+  assert.deepEqual(acceptance.report.pages.map((page) => page.id), [ids[0]]);
+  assert.equal((await store.readPage(ids[1]!)) === null, true);
+
+  const decided = await readProposalRecord(store.root, compiled.proposalId!);
+  assert.equal(decided?.state, 'rejected');
+  assert.match(decided?.note ?? '', /applied in part/i);
+});
+
+test('job and proposal state errors surface as honest 409s, never silent no-ops', async () => {
+  const { app, sources, compiler } = await routeHarness('route-state', {
+    propose: async () => draft({ pages: [pageDraft()] }),
+  });
+  const { jobId } = await sources.ingest({ kind: 'note', title: 'Notes', mediaType: 'text/markdown', bytes: Buffer.from('text', 'utf8') });
+  const compiled = await compiler.compileJob(jobId);
+
+  assert.equal((await post(app, `/sources/${jobId}/compile`, {})).status, 409, 'a job awaiting review cannot compile again');
+  assert.equal((await post(app, `/sources/${jobId}/retry`, {})).status, 409, 'only a failed job retries');
+  assert.equal((await post(app, '/proposals/prop_missing/accept', {})).status, 404);
+
+  const rejected = await post(app, `/proposals/${compiled.proposalId}/reject`, { note: 'not this one' });
+  assert.equal(rejected.status, 200);
+  assert.equal((await post(app, `/proposals/${compiled.proposalId}/accept`, {})).status, 409, 'a decided proposal cannot be decided again');
+});
+
+test('a malformed envelope answers 400 with a code, never a crash', async () => {
+  const { app } = await routeHarness('route-invalid');
+  assert.equal((await post(app, '/sources', { kind: 'note', title: 'x', mediaType: 'text/plain', data: '%%%' })).status, 400);
+  assert.equal((await post(app, '/sources', { kind: 'session', title: 'x', mediaType: 'text/plain', data: 'eA==' })).status, 400, 'sessions cannot be smuggled over the contribute route');
+  assert.equal((await post(app, '/sources', { kind: 'note', title: 'x', mediaType: 'text/plain', data: 'eA==', sneaky: true })).status, 400);
 });

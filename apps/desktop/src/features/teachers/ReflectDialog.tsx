@@ -1,13 +1,9 @@
-import type { IngestResult } from '@sef/shared';
-import { ArrowRight } from 'lucide-react';
-import { Button } from '@/components/ui/button';
 import { WorkingLabel } from '@/components/ui/loading';
 import { Dialog } from '@/components/ui/overlays';
 import { Skeleton } from '@/components/ui/primitives';
-import { BrainDiff } from '@/features/brain/BrainDiff';
 
-/** Shape of a brain diff, shown while the brain keeper is still reading. */
-function BrainDiffSkeleton() {
+/** Shape of a proposal draft, shown while the keeper is still reading. */
+function DraftSkeleton() {
   return (
     <div className="space-y-5">
       <div className="flex gap-2">
@@ -29,40 +25,23 @@ function BrainDiffSkeleton() {
   );
 }
 
-interface ReflectDialogProps {
-  open: boolean;
-  startedAt?: number;
-  result: IngestResult | null;
-  onClose: () => void;
-  onSeeSky: () => void;
-}
-
-export function ReflectDialog({ open, startedAt, result, onClose, onSeeSky }: ReflectDialogProps) {
+/**
+ * The freeze + draft wait: the session's fresh turns are kept as a source and the keeper
+ * drafts a proposal. The dialog closes into the review screen — the write itself is the
+ * student's decision there, never this dialog's.
+ */
+export function ReflectDialog({ open, startedAt, onClose }: { open: boolean; startedAt?: number; onClose: () => void }) {
   return (
     <Dialog
       open={open}
       onOpenChange={(o) => !o && onClose()}
-      title={result ? 'Your brain grew' : 'Reflecting on this session'}
-      description={result ? 'Proposed by the brain keeper, checked by the validator, written to markdown on this device.' : 'The brain keeper is reading the conversation and drafting page updates. Nothing is written until the validator approves it.'}
+      title="Reflecting on this session"
+      description="The conversation is frozen as a kept source, then the brain keeper drafts page updates. What it proposes comes back to you for review."
     >
-      {result ? (
-        <div className="space-y-5 animate-rise">
-          <BrainDiff diff={result.diff} applied={result.applied} rejected={result.rejected} model={result.model} durationMs={result.durationMs} />
-          <div className="flex justify-end gap-2">
-            <Button variant="ghost" onClick={onClose}>
-              Keep talking
-            </Button>
-            <Button variant="primary" onClick={onSeeSky}>
-              See it in the sky <ArrowRight />
-            </Button>
-          </div>
-        </div>
-      ) : (
-        <div className="space-y-5">
-          <WorkingLabel label="Reading the session" startedAt={startedAt} className="text-gold-300" />
-          <BrainDiffSkeleton />
-        </div>
-      )}
+      <div className="space-y-5">
+        <WorkingLabel label="Keeping the session, drafting changes" startedAt={startedAt} className="text-gold-300" />
+        <DraftSkeleton />
+      </div>
     </Dialog>
   );
 }

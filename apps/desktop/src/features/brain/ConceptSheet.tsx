@@ -9,6 +9,7 @@ import { SectionsSkeleton } from '@/components/ui/skeletons';
 import { LESSON_HEX, ORIGIN_STYLE, STATUS_STYLE } from '@/lib/brain-style';
 import { useNav } from '@/lib/nav';
 import { usePage } from '@/lib/queries';
+import { PageHistory } from './PageHistory';
 import { QuizDialog } from './QuizDialog';
 
 /** Details for one star: the student's own page, misconceptions, links and next actions. */
@@ -100,6 +101,7 @@ export function ConceptSheet({ node, graph, onSelect }: { node: GraphNode | null
                   ))}
                 </div>
               </section>
+              {node.key && <PageHistory pageKey={node.key} />}
             </div>
           )}
 

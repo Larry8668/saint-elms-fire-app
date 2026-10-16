@@ -1,7 +1,7 @@
 import { AnimatePresence, motion } from 'motion/react';
 import { Component, type ErrorInfo, type ReactNode } from 'react';
 import { BrainView } from '@/features/brain/BrainView';
-import { CaptureView } from '@/features/capture/CaptureView';
+import { ContributeView } from '@/features/contribute/ContributeView';
 import { LibraryView } from '@/features/library/LibraryView';
 import { SettingsView } from '@/features/settings/SettingsView';
 import { SkyView } from '@/features/sky/SkyView';
@@ -13,7 +13,7 @@ import { Sidebar } from './Sidebar';
 const VIEWS: Record<View, () => ReactNode> = {
   sky: SkyView,
   teachers: TeachersView,
-  capture: CaptureView,
+  contribute: ContributeView,
   brain: BrainView,
   library: LibraryView,
   settings: SettingsView,

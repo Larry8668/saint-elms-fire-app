@@ -18,7 +18,8 @@ const TRANSITIONS: Record<WikiJob['stage'], WikiJob['stage'][]> = {
   extracting: ['awaiting_source_review', 'compiling', 'failed', 'cancelled'],
   awaiting_source_review: ['extracting', 'compiling', 'cancelled', 'failed'],
   compiling: ['awaiting_review', 'no_changes', 'failed', 'cancelled'],
-  awaiting_review: ['committed', 'compiling', 'cancelled', 'failed'],
+  // An accepted proposal that changed nothing on disk ends the job as no_changes.
+  awaiting_review: ['committed', 'no_changes', 'compiling', 'cancelled', 'failed'],
   committed: [],
   no_changes: [],
   failed: ['queued'],

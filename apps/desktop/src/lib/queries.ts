@@ -1,5 +1,5 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
-import type { TeacherId } from '@sef/shared';
+import type { TeacherId, WikiJob } from '@sef/shared';
 import { toast } from 'sonner';
 import { api, type StoredSettings } from './api';
 
@@ -19,9 +19,16 @@ export const keys = {
     graph: (p: string) => ['profile', p, 'graph'] as const,
     pages: (p: string) => ['profile', p, 'pages'] as const,
     page: (p: string, key: string) => ['profile', p, 'page', key] as const,
+    pageRevisions: (p: string, key: string) => ['profile', p, 'page-revisions', key] as const,
+    pageRevision: (p: string, key: string, revision: string) => ['profile', p, 'page-revisions', key, revision] as const,
     brainLog: (p: string) => ['profile', p, 'brain-log'] as const,
     lint: (p: string) => ['profile', p, 'lint'] as const,
     sessions: (p: string, teacher: string) => ['profile', p, 'sessions', teacher] as const,
+    jobBoard: (p: string) => ['profile', p, 'jobs'] as const,
+    source: (p: string, id: string) => ['profile', p, 'source', id] as const,
+    sourceBytes: (p: string, id: string) => ['profile', p, 'source-bytes', id] as const,
+    proposals: (p: string) => ['profile', p, 'proposals'] as const,
+    proposal: (p: string, id: string) => ['profile', p, 'proposal', id] as const,
   },
 };
 
@@ -39,7 +46,15 @@ const profile = () => activeProfile ?? NO_PROFILE;
 /** Everything that changes when the brain changes, for the current profile. */
 const brainKeys = () => {
   const p = profile();
-  return [keys.scoped.graph(p), keys.scoped.pages(p), keys.scoped.brainLog(p), keys.scoped.lint(p), keys.scoped.sessions(p, 'all')];
+  return [
+    keys.scoped.graph(p),
+    keys.scoped.pages(p),
+    keys.scoped.brainLog(p),
+    keys.scoped.lint(p),
+    keys.scoped.sessions(p, 'all'),
+    keys.scoped.jobBoard(p),
+    keys.scoped.proposals(p),
+  ];
 };
 
 export function useInvalidateBrain() {
@@ -47,6 +62,16 @@ export function useInvalidateBrain() {
   return () => {
     for (const key of brainKeys()) void client.invalidateQueries({ queryKey: key });
     void client.invalidateQueries({ queryKey: ['profile', profile(), 'page'] });
+  };
+}
+
+/** One kept source plus the board it moves on — after a correction, a read or a stage change. */
+export function useInvalidateSource(id: string) {
+  const client = useQueryClient();
+  const p = profile();
+  return () => {
+    void client.invalidateQueries({ queryKey: keys.scoped.source(p, id) });
+    void client.invalidateQueries({ queryKey: keys.scoped.jobBoard(p) });
   };
 }
 
@@ -64,6 +89,36 @@ export const useBrainLog = () => useQuery({ queryKey: keys.scoped.brainLog(profi
 export const useLint = () => useQuery({ queryKey: keys.scoped.lint(profile()), queryFn: api.lint });
 export const useSessions = (teacher?: TeacherId) =>
   useQuery({ queryKey: keys.scoped.sessions(profile(), teacher ?? 'all'), queryFn: () => api.sessions(teacher) });
+
+/** Terminal stages: a job here never moves again. Anything else is worth polling. */
+const JOB_TERMINAL: ReadonlySet<WikiJob['stage']> = new Set(['committed', 'no_changes', 'failed', 'cancelled']);
+
+/**
+ * The durable job board. While any job is still moving this polls the engine — the UI
+ * shows the stage the journal recorded, never a simulated progress bar.
+ */
+export const useJobBoard = () =>
+  useQuery({
+    queryKey: keys.scoped.jobBoard(profile()),
+    queryFn: api.jobBoard,
+    refetchInterval: (query) => (query.state.data?.jobs.some((job) => !JOB_TERMINAL.has(job.stage)) ? 2_000 : false),
+  });
+export const useSourceDetail = (id: string | null) =>
+  useQuery({ queryKey: keys.scoped.source(profile(), id ?? ''), queryFn: () => api.source(id!), enabled: Boolean(id), retry: false });
+export const useSourceBytes = (id: string | null) =>
+  useQuery({ queryKey: keys.scoped.sourceBytes(profile(), id ?? ''), queryFn: () => api.sourceBytes(id!), enabled: Boolean(id), staleTime: Infinity, retry: false });
+export const useProposals = () => useQuery({ queryKey: keys.scoped.proposals(profile()), queryFn: api.proposals });
+export const useProposalPreview = (id: string | null) =>
+  useQuery({ queryKey: keys.scoped.proposal(profile(), id ?? ''), queryFn: () => api.proposalPreview(id!), enabled: Boolean(id), retry: false });
+export const usePageRevisions = (key: string | null) =>
+  useQuery({ queryKey: keys.scoped.pageRevisions(profile(), key ?? ''), queryFn: () => api.pageRevisions(key!), enabled: Boolean(key), retry: false });
+export const usePageRevision = (key: string | null, revision: string | null) =>
+  useQuery({
+    queryKey: keys.scoped.pageRevision(profile(), key ?? '', revision ?? ''),
+    queryFn: () => api.pageRevision(key!, revision!),
+    enabled: Boolean(key && revision),
+    retry: false,
+  });
 
 export function useSaveSettings() {
   const client = useQueryClient();

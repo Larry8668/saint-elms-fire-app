@@ -146,7 +146,8 @@ export function planProposal(proposal: WikiProposal, snapshots: Map<string, Page
     plans.set(op.fromPageId, {
       snapshot,
       content: { metadata: { ...base, updatedAt: at, links }, body: previous ? previous.content.body : snapshot!.body },
-      created: false,
+      // A link onto a page created earlier in this proposal does not turn it into an update.
+      created: previous?.created ?? createdIds.has(op.fromPageId),
       changed: previous?.changed ?? links.length !== base.links.length,
     });
   }

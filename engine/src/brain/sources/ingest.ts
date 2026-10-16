@@ -9,10 +9,11 @@ import {
   type SourceRecord,
   type SourceSummary,
   type TeacherId,
+  type WikiJob,
 } from '@sef/shared';
 import type { ContentfulStatusCode } from 'hono/utils/http-status';
 import { errorFields, log } from '../../config';
-import { extractPdf, extractText, sha256, type ExtractionMethod, type ExtractionResult } from './extract';
+import { extractPdf, extractText, recordStudentCorrection, sha256, type ExtractionMethod, type ExtractionResult } from './extract';
 import { assertJobCapacity, advanceJob, cancelJob, createJob, jobStore, JobConflictError, JobStateError, listProfileJobs, retryJob } from './jobs';
 import { checkBytes, countChars, sanitiseTitle, sliceChars, titleIsSafe, INGEST_LIMITS, type Limits } from './limits';
 import { openPdf, PdfParseError } from './pdf';
@@ -52,6 +53,13 @@ export interface IngestInput {
   /** Required for kind 'session'; ignored otherwise. */
   session?: SessionRef;
   /**
+   * Who the student says wrote this. Kinds restrict the choice: a note is always the
+   * student's own words, a document always external; only an image can be either.
+   */
+  origin?: 'student' | 'external';
+  /** Who made it and where it came from, when the student knows. */
+  attribution?: { creator?: string; url?: string };
+  /**
    * A reading the caller already made (e.g. the vision transcription shown to the student).
    * Recorded as this source's extraction so the compiler never pays for the same read twice.
    */
@@ -72,6 +80,14 @@ const ORIGIN: Record<IngestKind, 'student' | 'external'> = {
   document: 'external',
   image: 'student',
   session: 'student',
+};
+
+/** Which provenance claims each kind will carry — the record schema refuses the rest. */
+const ALLOWED_ORIGIN: Record<IngestKind, ReadonlyArray<'student' | 'external'>> = {
+  note: ['student'],
+  document: ['external'],
+  image: ['student', 'external'],
+  session: ['student'],
 };
 
 export class SourceIngestor {
@@ -101,19 +117,23 @@ export class SourceIngestor {
     if (input.kind === 'session' && !input.session) {
       throw new SourceRejection('A session source must name the session and turns it covers.', 'missing_session_ref', 400);
     }
+    const origin = input.origin ?? ORIGIN[input.kind];
+    if (!ALLOWED_ORIGIN[input.kind].includes(origin)) {
+      throw new SourceRejection(`A ${input.kind} cannot be filed as '${origin}' material.`, 'origin_mismatch', 400);
+    }
     const record = SourceRecordSchema.parse({
       schemaVersion: CONTRACT_VERSION,
       id: newSourceId(),
       profile: identity,
       revision: 'r1',
       kind: input.kind,
-      origin: ORIGIN[input.kind],
+      origin,
       title: sanitiseTitle(input.title),
       createdAt: new Date().toISOString(),
       mediaType: input.mediaType,
       sha256: sha256(input.bytes),
       bytes: input.bytes.byteLength,
-      attribution: {},
+      attribution: input.attribution ?? {},
       extractions: [],
       ...(input.kind === 'session' ? { session: input.session } : {}),
     });
@@ -131,10 +151,10 @@ export class SourceIngestor {
       const chars = countChars(extraction.text);
       await this.store.recordExtraction(
         stored.id,
-        { method: extraction.method, sha256: extraction.sha256, chars, partial: extraction.partial },
+        { method: extraction.method, sha256: extraction.sha256, chars, partial: extraction.partial, ...(extraction.note ? { note: extraction.note } : {}) },
         extraction.text || undefined,
       );
-      stored = { ...stored, extractions: [...stored.extractions, { revision: stored.revision, method: extraction.method, sha256: extraction.sha256, createdAt: new Date().toISOString(), chars, partial: extraction.partial }] };
+      stored = { ...stored, extractions: [...stored.extractions, { revision: stored.revision, method: extraction.method, sha256: extraction.sha256, createdAt: new Date().toISOString(), chars, partial: extraction.partial, ...(extraction.note ? { note: extraction.note } : {}) }] };
     }
     const job = await this.track(stored.id, limits, identity);
 
@@ -242,15 +262,23 @@ export class SourceIngestor {
       // total is the job's own source count, not a hard-coded one.
       await advanceJob(this.jobs, job.id, 'extracting', { progress: { completed: 1, total: job.sourceIds.length } });
     }
+    const stage = (await this.jobs.read(job.id))?.stage;
+    if (stage === 'extracting') {
+      // Extraction is done; the reading now waits for the student to check it before a
+      // compile spends model time on words they have not seen.
+      await advanceJob(this.jobs, job.id, 'awaiting_source_review');
+    }
     return { id: job.id, reused };
   }
 
   async list(): Promise<JobList> {
     const identity = await this.profile();
     const { jobs, active } = await listProfileJobs(this.jobs, identity);
-    const records = Object.values(await this.store.listSources()).sort(
-      (a, b) => Date.parse(b.createdAt) - Date.parse(a.createdAt),
-    );
+    const records = Object.values(await this.store.listSources())
+      // The vault root is already per-profile; the filter is stated anyway so a store
+      // that ever becomes shared cannot leak another student's catalogue.
+      .filter((record) => record.profile.studentId === identity.studentId)
+      .sort((a, b) => Date.parse(b.createdAt) - Date.parse(a.createdAt));
     return JobListSchema.parse({
       schemaVersion: CONTRACT_VERSION,
       jobs,
@@ -258,6 +286,70 @@ export class SourceIngestor {
       sources: records.map((record) => this.summaryOf(record, null)),
       activeJobs: active,
     });
+  }
+
+  /**
+   * The full retained record for one source: its latest extraction text (what a compile
+   * would read) and the newest job covering it. A foreign source answers null — its
+   * existence is not another profile's business.
+   */
+  async detail(id: string): Promise<{
+    record: SourceRecord;
+    extraction: { method: ExtractionMethod; text: string; partial: boolean; note?: string; at: string } | null;
+    job: WikiJob | null;
+  } | null> {
+    const [record, identity] = await Promise.all([this.store.readSource(id), this.profile()]);
+    if (!record || record.profile.studentId !== identity.studentId) return null;
+    const latest = record.extractions.at(-1);
+    const text = latest ? await this.store.readExtractionText(record.id) : null;
+    const extraction = latest
+      ? { method: latest.method, text: text ?? '', partial: latest.partial ?? false, ...(latest.note ? { note: latest.note } : {}), at: latest.createdAt }
+      : null;
+    const { jobs } = await listProfileJobs(this.jobs, identity);
+    const job = jobs.find((candidate) => candidate.sourceIds.includes(record.id)) ?? null;
+    return { record, extraction, job };
+  }
+
+  /**
+   * The student rewrites what the reader produced — fixing OCR, a transcription, a paste.
+   * The original bytes never change; the correction is appended to the extraction ledger
+   * as its own pass, so a compile reads it and a later re-read can still be told apart.
+   */
+  /** The original bytes for the student's own eyes — e.g. the photo beside its transcription. */
+  async rawBytes(id: string): Promise<{ bytes: Uint8Array; mediaType: string } | null> {
+    const [record, identity] = await Promise.all([this.store.readSource(id), this.profile()]);
+    if (!record || record.profile.studentId !== identity.studentId) return null;
+    const bytes = await this.store.readSourceBytes(record.id);
+    return bytes ? { bytes: new Uint8Array(bytes), mediaType: record.mediaType } : null;
+  }
+
+  async correct(id: string, text: string, limits: Limits = {}) {
+    const [record, identity] = await Promise.all([this.store.readSource(id), this.profile()]);
+    if (!record || record.profile.studentId !== identity.studentId) {
+      throw new SourceRejection('Source not found.', 'not_found', 404);
+    }
+    if (!text.trim()) {
+      throw new SourceRejection('There is no corrected text to keep.', 'empty', 400);
+    }
+    const maxChars = limits.maxExtractedChars ?? INGEST_LIMITS.maxExtractedChars;
+    if (countChars(text) > maxChars) {
+      throw new SourceRejection(`That correction is longer than the ${maxChars.toLocaleString('en-GB')} character limit.`, 'too_large', 413);
+    }
+    const bytes = await this.store.readSourceBytes(record.id);
+    if (!bytes) {
+      throw new SourceRejection('The original bytes are missing; this source cannot be corrected.', 'missing_source', 409);
+    }
+    const outcome = recordStudentCorrection(bytes, text, limits);
+    if (!outcome.ok) {
+      throw new SourceRejection(outcome.rejection.message, outcome.rejection.code, 400);
+    }
+    await this.store.recordExtraction(
+      record.id,
+      { method: 'student_correction', sha256: outcome.result.sha256, chars: countChars(outcome.result.text), partial: outcome.result.partial, ...(outcome.result.note ? { note: outcome.result.note } : {}) },
+      outcome.result.text || undefined,
+    );
+    log.info('source_correction_recorded', { sourceId: record.id, chars: countChars(outcome.result.text) });
+    return this.detail(record.id);
   }
 
   /**

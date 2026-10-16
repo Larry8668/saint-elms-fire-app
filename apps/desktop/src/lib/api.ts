@@ -2,7 +2,9 @@ import { CONTRACT_VERSION } from '@sef/shared';
 import type {
   BrainLogEntry,
   ChatStreamEvent,
+  CompileResult,
   ConceptPage,
+  ContributeBody,
   CourseSummary,
   DeviceProfile,
   DevicePollResult,
@@ -13,13 +15,23 @@ import type {
   GraphResponse,
   HealthResponse,
   IngestResult,
+  JobList,
   Lesson,
   LessonMeta,
   LintFinding,
+  PageRevisionContent,
+  PageRevisionList,
+  ProposalAcceptance,
+  ProposalList,
+  ProposalPreview,
   SessionDetail,
   SessionSummary,
+  SourceDetail,
+  SourceReadResult,
+  SourceReceipt,
   SyncStatus,
   TeacherId,
+  WikiProposalRecord,
 } from '@sef/shared';
 import { log } from './log';
 
@@ -68,6 +80,22 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
 
 const post = <T>(path: string, body?: unknown) => request<T>(path, { method: 'POST', body: body ? JSON.stringify(body) : undefined });
 
+/** Binary responses bypass the JSON path — the raw file goes to an <img> or a download. */
+async function requestBlob(path: string): Promise<Blob> {
+  let res: Response;
+  try {
+    res = await fetch(`${ENGINE_URL}${path}`, { headers: authHeaders() });
+  } catch (error) {
+    log.error('engine_unreachable', { path, error: String(error) });
+    throw new EngineError('The local engine is not running. Start it with "pnpm dev".', 0);
+  }
+  if (!res.ok) {
+    const body = (await res.json().catch(() => ({}))) as { error?: string };
+    throw new EngineError(body.error ?? `Request failed (${res.status})`, res.status);
+  }
+  return res.blob();
+}
+
 export interface InstalledCourse extends CourseSummary {
   installedAt: string;
 }
@@ -88,9 +116,6 @@ export interface QuizResult {
   outOf: number;
   review: Array<{ correct: number; chosen: number; explanation: string }>;
   diff: IngestResult['diff'];
-}
-export interface CaptureResult extends IngestResult {
-  reading: { topic: string; transcription: string; concepts: string[] };
 }
 export type { SessionDetail, SessionSummary };
 
@@ -122,13 +147,30 @@ export const api = {
   graph: () => request<GraphResponse>('/api/graph'),
   pages: () => request<ConceptPage[]>('/api/brain/pages'),
   page: (key: string) => request<ConceptPage>(`/api/brain/pages/${encodeURIComponent(key)}`),
+  pageRevisions: (key: string) => request<PageRevisionList>(`/api/brain/pages/${encodeURIComponent(key)}/revisions`),
+  pageRevision: (key: string, revision: string) => request<PageRevisionContent>(`/api/brain/pages/${encodeURIComponent(key)}/revisions/${encodeURIComponent(revision)}`),
   brainLog: () => request<BrainLogEntry[]>('/api/brain/log'),
   lint: () => request<LintFinding[]>('/api/brain/lint'),
-  ingest: (sessionId: string) => post<IngestResult>(`/api/brain/ingest/${encodeURIComponent(sessionId)}`),
-  capture: (image: { mimeType: string; data: string }, note?: string) => post<CaptureResult>('/api/brain/capture', { image: { kind: 'image', ...image }, note }),
+  /** Freeze a session's fresh turns as a source and stop — the compile and the decision are the student's. */
+  reflectReview: (sessionId: string) => post<SourceReceipt>(`/api/brain/ingest/${encodeURIComponent(sessionId)}`, { review: true }),
   sessions: (teacher?: TeacherId) => request<SessionSummary[]>(`/api/sessions${teacher ? `?teacher=${teacher}` : ''}`),
   session: (id: string) => request<SessionDetail>(`/api/sessions/${encodeURIComponent(id)}`),
   deleteSession: (id: string) => request<{ ok: true }>(`/api/sessions/${encodeURIComponent(id)}`, { method: 'DELETE' }),
+
+  // Contribute → job → proposal → review. No write happens without an accept.
+  jobBoard: () => request<JobList>('/api/sources'),
+  contribute: (body: ContributeBody) => post<SourceReceipt>('/api/sources', body),
+  source: (id: string) => request<SourceDetail>(`/api/sources/${encodeURIComponent(id)}`),
+  sourceBytes: (id: string) => requestBlob(`/api/sources/${encodeURIComponent(id)}/raw`),
+  correctExtraction: (id: string, text: string) => request<SourceDetail>(`/api/sources/${encodeURIComponent(id)}/extraction`, { method: 'PUT', body: JSON.stringify({ text }) }),
+  readSource: (id: string) => post<SourceReadResult>(`/api/sources/${encodeURIComponent(id)}/read`),
+  compileJob: (jobId: string) => post<CompileResult>(`/api/sources/${encodeURIComponent(jobId)}/compile`),
+  cancelJob: (jobId: string) => post<void>(`/api/sources/${encodeURIComponent(jobId)}/cancel`),
+  retryJob: (jobId: string) => post<void>(`/api/sources/${encodeURIComponent(jobId)}/retry`),
+  proposals: () => request<ProposalList>('/api/proposals'),
+  proposalPreview: (id: string) => request<ProposalPreview>(`/api/proposals/${encodeURIComponent(id)}`),
+  acceptProposal: (id: string, only?: { pageIds: string[] }) => post<ProposalAcceptance>(`/api/proposals/${encodeURIComponent(id)}/accept`, only ?? {}),
+  rejectProposal: (id: string, note?: string) => post<WikiProposalRecord>(`/api/proposals/${encodeURIComponent(id)}/reject`, { note }),
 
   createQuiz: (key: string) => post<QuizPayload>(`/api/quiz/${encodeURIComponent(key)}`),
   submitQuiz: (id: string, answers: number[]) => post<QuizResult>(`/api/quiz/${encodeURIComponent(id)}/submit`, { answers }),
@@ -220,12 +262,12 @@ export async function streamTurn(turn: TurnPayload, onEvent: (event: ChatStreamE
   }
 }
 
-export function fileToBase64(file: File): Promise<{ mimeType: string; data: string; preview: string }> {
+export function fileToBase64(file: File, mimeType?: string): Promise<{ mimeType: string; data: string; preview: string }> {
   return new Promise((resolve, reject) => {
     const reader = new FileReader();
     reader.onload = () => {
       const url = String(reader.result);
-      resolve({ mimeType: file.type || 'image/png', data: url.slice(url.indexOf(',') + 1), preview: url });
+      resolve({ mimeType: mimeType ?? (file.type || 'image/png'), data: url.slice(url.indexOf(',') + 1), preview: url });
     };
     reader.onerror = () => reject(reader.error);
     reader.readAsDataURL(file);
