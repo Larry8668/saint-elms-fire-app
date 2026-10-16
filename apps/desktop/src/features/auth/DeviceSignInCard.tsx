@@ -8,6 +8,7 @@ import { Label } from '@/components/ui/primitives';
 import { api } from '@/lib/api';
 import { log } from '@/lib/log';
 import { useSession } from '@/lib/session';
+import { formatCountdown, initialPollInterval, nextPollIntervalSeconds, outcomeMessage, type GrantOutcome } from './device-grant';
 
 /**
  * First-time university sign-in. The engine opens a device grant; the person approves it
@@ -80,55 +81,74 @@ export function DeviceSignInCard({ uniOffline }: { uniOffline: boolean }) {
 
 /** Polls the grant the engine is holding and reports the outcome honestly. */
 function DeviceGrantPending({ grant, poll, onCancel }: { grant: DeviceSignInStart; poll: () => Promise<DevicePollResult>; onCancel: () => void }) {
-  const [secondsLeft, setSecondsLeft] = useState(Math.ceil(grant.expiresInSeconds / 1000));
+  const [secondsLeft, setSecondsLeft] = useState(grant.expiresInSeconds);
+  const [outcome, setOutcome] = useState<GrantOutcome | null>(null);
   const [message, setMessage] = useState<string | null>(null);
-  const stopped = useRef(false);
+  const pollInterval = useRef(initialPollInterval(grant));
 
   const target = grant.verificationUriComplete ?? grant.verificationUri;
 
   useEffect(() => {
-    stopped.current = false;
-    let interval = setInterval(() => setSecondsLeft((s) => Math.max(0, s - 1)), 1000);
+    let stopped = false;
+    let pollHandle: ReturnType<typeof setTimeout> | undefined;
+    const countdown = setInterval(() => setSecondsLeft((s) => Math.max(0, s - 1)), 1000);
 
     const tick = async () => {
       try {
         const result = await poll();
-        if (stopped.current) return;
+        if (stopped) return;
         if (result.status === 'pending') {
           setMessage(null);
+          pollInterval.current = nextPollIntervalSeconds(pollInterval.current, result);
+        } else if (result.status === 'approved') {
+          // The session is live now; Root swaps shells on its own.
+          stopped = true;
+          clearInterval(countdown);
+          setMessage('Approved. Opening your dashboard…');
+          return;
+        } else {
+          // Denied or expired: the card stays mounted so the outcome is actually seen.
+          stopped = true;
+          clearInterval(countdown);
+          setOutcome(result.status);
           return;
         }
-        clearInterval(interval);
-        stopped.current = true;
-        if (result.status === 'approved') {
-          // The session is live now; Root swaps shells on its own.
-          setMessage('Approved. Opening your dashboard…');
-        } else if (result.status === 'denied') {
-          setMessage('That request was denied. You can start again.');
-          onCancel();
-        } else {
-          setMessage('That code expired. Start again to get a new one.');
-          onCancel();
-        }
       } catch (err) {
+        if (stopped) return;
         log.warn('device_poll_failed', { error: String(err) });
         setMessage('Lost contact with the university server. Still trying…');
       }
+      pollHandle = setTimeout(() => void tick(), pollInterval.current * 1000);
     };
 
-    const pollHandle = setInterval(() => void tick(), Math.max(2, grant.intervalSeconds) * 1000);
     void tick();
     return () => {
-      clearInterval(interval);
-      clearInterval(pollHandle);
-      stopped.current = true;
+      stopped = true;
+      clearInterval(countdown);
+      clearTimeout(pollHandle);
     };
-  }, [grant, poll, onCancel]);
+  }, [poll]);
 
   const copy = () => {
     void navigator.clipboard?.writeText(grant.userCode);
     toast.success('Code copied');
   };
+
+  if (outcome) {
+    return (
+      <div className="space-y-4">
+        <div>
+          <h2 className="font-display text-3xl text-night-100">Confirm this device</h2>
+        </div>
+        <p role="alert" className="rounded-xl border border-rose-400/25 bg-rose-400/10 p-3 text-[13px] text-rose-400">
+          {outcomeMessage(outcome)}
+        </p>
+        <Button variant="primary" size="lg" className="w-full" onClick={onCancel}>
+          Start again
+        </Button>
+      </div>
+    );
+  }
 
   const expired = secondsLeft <= 0;
 
@@ -136,7 +156,7 @@ function DeviceGrantPending({ grant, poll, onCancel }: { grant: DeviceSignInStar
     <div className="space-y-4">
       <div>
         <h2 className="font-display text-3xl text-night-100">Confirm this device</h2>
-        <p className="mt-1 text-[13px] text-night-400">Open the university site and enter this code. It expires in {Math.floor(secondsLeft / 60)}:{String(secondsLeft % 60).padStart(2, '0')}.</p>
+        <p className="mt-1 text-[13px] text-night-400">Open the university site and enter this code. It expires in {formatCountdown(secondsLeft)}.</p>
       </div>
 
       <div className="flex items-center gap-3 rounded-2xl border border-white/[0.08] bg-white/[0.03] p-4">
@@ -153,7 +173,7 @@ function DeviceGrantPending({ grant, poll, onCancel }: { grant: DeviceSignInStar
         href={target}
         target="_blank"
         rel="noreferrer noopener"
-        className="inline-flex w-full items-center justify-center gap-2 rounded-xl bg-beacon-500 px-6 py-3 text-[15px] font-medium text-white transition hover:bg-beacon-400 disabled:opacity-50"
+        className="inline-flex w-full items-center justify-center gap-2 rounded-xl bg-beacon-500 px-6 py-3 text-[15px] font-medium text-white transition hover:bg-beacon-400 aria-disabled:opacity-50"
         aria-disabled={expired}
         onClick={(e) => {
           if (expired) e.preventDefault();
