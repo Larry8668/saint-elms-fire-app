@@ -7,9 +7,7 @@ import { Badge, Eyebrow, Panel } from '@/components/ui/primitives';
 import { api } from '@/lib/api';
 import { log } from '@/lib/log';
 import { useStudent } from '@/lib/session';
-
-const formatBytes = (bytes: number) =>
-  bytes >= 1024 * 1024 ? `${(bytes / (1024 * 1024)).toFixed(1)} MB` : bytes >= 1024 ? `${(bytes / 1024).toFixed(1)} KB` : `${bytes} B`;
+import { downloadVaultExport, exportNotice, formatBytes } from '@/lib/vault-export';
 
 /**
  * Portable ownership: export the whole vault as one checksummed file, and restore one here —
@@ -27,17 +25,8 @@ export function VaultPanel() {
   const [notice, setNotice] = useState<string | null>(null);
 
   const exporter = useMutation({
-    mutationFn: () => api.exportVault(),
-    onSuccess: (exported) => {
-      const blob = new Blob([JSON.stringify(exported, null, 2)], { type: 'application/json' });
-      const url = URL.createObjectURL(blob);
-      const anchor = document.createElement('a');
-      anchor.href = url;
-      anchor.download = `sef-vault-${exported.createdAt.slice(0, 10)}.json`;
-      anchor.click();
-      URL.revokeObjectURL(url);
-      setNotice(`Exported ${exported.counts.files} files (${formatBytes(exported.counts.bytes)})${exported.skipped.length ? ` — ${exported.skipped.length} path${exported.skipped.length === 1 ? '' : 's'} left out and listed inside the file` : ''}.`);
-    },
+    mutationFn: downloadVaultExport,
+    onSuccess: (exported) => setNotice(exportNotice(exported)),
     onError: (error) => log.warn('vault_export_failed', { error: String(error) }),
   });
 

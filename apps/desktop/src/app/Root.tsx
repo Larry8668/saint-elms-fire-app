@@ -1,6 +1,8 @@
 import { lazy, Suspense, useCallback, useState } from 'react';
 import { AdmissionGate } from '@/features/auth/AdmissionGate';
 import { admissionOf, mayEnterDashboard } from '@/features/auth/admission';
+import { limitedReasonOf } from '@/features/auth/limited-access';
+import { LimitedAccessView } from '@/features/auth/LimitedAccessView';
 import { SignInView } from '@/features/auth/SignInView';
 import { ChatProvider } from '@/features/teachers/chat-store';
 import { NavProvider } from '@/lib/nav';
@@ -34,6 +36,13 @@ export function Root() {
         <AdminApp key={session.account.id} />
       </Suspense>
     );
+  }
+
+  // A read/export-only session (expired entitlement, suspended or withdrawn enrolment)
+  // gets its own honest screen, not a dashboard full of clicks the engine would 403.
+  const limitedReason = limitedReasonOf(session.access);
+  if (limitedReason !== null) {
+    return <LimitedAccessView reason={limitedReason} onSignOut={() => void signOut()} />;
   }
 
   // Admission is server-derived: anything other than an approval never reaches the dashboard.

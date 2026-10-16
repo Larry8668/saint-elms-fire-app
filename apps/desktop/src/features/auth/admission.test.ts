@@ -57,6 +57,9 @@ test('the pending portal link is not labelled like the "Check again" refresh but
 test('withdrawn and suspended tell the student their own files are still theirs', () => {
   for (const status of ['withdrawn', 'suspended'] as const) {
     assert.match(admissionCopy(status).body, /stay on this device/i, status);
+    // Limited access is delivered by a fresh sign-in (a read/export-only session),
+    // so the gate — a fallback for older sessions — must point at it, not at nothing.
+    assert.match(admissionCopy(status).body, /sign out and back in/i, status);
   }
 });
 
