@@ -9,6 +9,7 @@ import type { ContentStore } from '../content/store';
 import { searchLessons } from '../content/search';
 import { webSearch } from '../web/searxng';
 import type { TurnContext } from './context';
+import { anchorWebQuery } from './web-query';
 
 export interface ToolDeps {
   content: ContentStore;
@@ -20,6 +21,8 @@ export interface ToolDeps {
   wiki?: WikiReader;
   /** Per-turn consent. Without it the Philosopher's web tool refuses rather than reaching out. */
   webConsented?: boolean;
+  /** The consented anchor topic: code prefixes it to every web query this turn. */
+  webAnchorTopic?: string;
 }
 
 /**
@@ -123,13 +126,20 @@ export function buildTools(teacher: TeacherId, deps: ToolDeps, ctx: TurnContext)
       if (!can(teacher, 'tool:web_search')) return refuse('tool:web_search');
       if (teacherPolicy(teacher).web !== 'explicit_consent') return refuse('tool:web_search');
       if (!deps.webConsented) return refuse('tool:web_search');
+      // The model's words are normalized and anchored in code: the consented topic leads the
+      // query and the whole of it is bounded before anything leaves the device.
+      const outgoing = anchorWebQuery(deps.webAnchorTopic, query);
+      if (!outgoing) {
+        ctx.recordTool('web_search', 'refused — the query carried no usable text');
+        return { error: 'That search query could not be used.' };
+      }
       try {
-        const results = await webSearch(deps.searxngUrl, query, 4);
-        ctx.recordTool('web_search', `"${query}" → ${results.length} results`);
+        const results = await webSearch(deps.searxngUrl, outgoing, 4);
+        ctx.recordTool('web_search', `"${outgoing}" → ${results.length} results`);
         for (const r of results) ctx.addSource({ kind: 'web', id: r.url, title: r.title, url: r.url }, `${r.title}\n${r.snippet}`);
         return results;
       } catch (error) {
-        ctx.recordTool('web_search', `"${query}" → unavailable`);
+        ctx.recordTool('web_search', `"${outgoing}" → unavailable`);
         return { error: `Web search unavailable: ${(error as Error).message}` };
       }
     },

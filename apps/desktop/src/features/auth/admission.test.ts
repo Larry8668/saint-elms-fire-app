@@ -45,9 +45,21 @@ test('every state has honest copy and only pending offers a retry', () => {
   assert.ok(admissionCopy('pending').action, 'a pending student needs a way to check again');
 });
 
+test('the pending portal link is not labelled like the "Check again" refresh button', () => {
+  // Regression: AdmissionGate renders a "Check again" refresh button beside this
+  // link, so sharing the label showed two identical actions doing different things.
+  const action = admissionCopy('pending').action;
+  assert.ok(action);
+  assert.notEqual(action, 'Check again');
+  assert.match(action, /portal|university site/i);
+});
+
 test('withdrawn and suspended tell the student their own files are still theirs', () => {
   for (const status of ['withdrawn', 'suspended'] as const) {
     assert.match(admissionCopy(status).body, /stay on this device/i, status);
+    // Limited access is delivered by a fresh sign-in (a read/export-only session),
+    // so the gate — a fallback for older sessions — must point at it, not at nothing.
+    assert.match(admissionCopy(status).body, /sign out and back in/i, status);
   }
 });
 

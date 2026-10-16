@@ -1,7 +1,7 @@
 import { PERSONAL_SKY_ID, type GraphResponse } from '@sef/shared';
-import { AlertTriangle, ArrowRight, Download, Eye, EyeOff, Maximize2, Minus, Plus, Search, Sparkles, X } from 'lucide-react';
+import { AlertTriangle, ArrowRight, Download, Eye, EyeOff, List, Maximize2, Minus, Plus, Search, Sparkles, X } from 'lucide-react';
 import { motion } from 'motion/react';
-import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
+import { useCallback, useEffect, useId, useMemo, useRef, useState, type ReactNode } from 'react';
 import { Button } from '@/components/ui/button';
 import { Tooltip } from '@/components/ui/overlays';
 import { EmptyState } from '@/components/ui/primitives';
@@ -11,6 +11,7 @@ import { KIND_STYLE, LESSON_HEX, ORIGIN_STYLE, starHex, STATUS_STYLE } from '@/l
 import { cn } from '@/lib/cn';
 import { useNav } from '@/lib/nav';
 import { useGraph } from '@/lib/queries';
+import { useMediaQuery } from '@/lib/use-media-query';
 import { buildLabels, courseProgress, READABLE_ZOOM, tierForZoom, type DetailTier } from './labels';
 import { emptyBounds, growBounds, layoutSky, type SkyLayout } from './layout';
 import type { FrameRequest, Insets, MapCameraApi } from './MapCamera';
@@ -21,6 +22,8 @@ import { SkyLabels } from './SkyLabels';
 /** Width of the concept sheet plus its margin, so a selected star centres in the space left over. */
 const SHEET_INSET = 464;
 const HUD_INSETS: Insets = { top: 96, right: 24, bottom: 96, left: 330 };
+/** Below md the side panels collapse, so the camera stops reserving their width. */
+const HUD_INSETS_NARROW: Insets = { top: 72, right: 16, bottom: 96, left: 24 };
 const NEIGHBOURHOOD_PAD = 70;
 
 export function SkyView() {
@@ -47,10 +50,11 @@ export function SkyView() {
 }
 
 function SkyChart({ graph }: { graph: GraphResponse }) {
-  const { conceptKey, page } = useNav();
+  const { conceptKey, page, go } = useNav();
   const layout = useMemo(() => layoutSky(graph), [graph]);
   const progress = useMemo(() => courseProgress(graph), [graph]);
   const suggestions = useMemo(() => nextUp(graph), [graph]);
+  const wide = useMediaQuery('(min-width: 768px)');
 
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [hoveredId, setHoveredId] = useState<string | null>(null);
@@ -62,7 +66,10 @@ function SkyChart({ graph }: { graph: GraphResponse }) {
   const labelRegistry = useRef(new Map<string, HTMLDivElement>());
 
   const selectedNode = selectedId ? (graph.nodes.find((n) => n.id === selectedId) ?? null) : null;
-  const insets = useMemo<Insets>(() => ({ ...HUD_INSETS, right: selectedNode ? SHEET_INSET : HUD_INSETS.right }), [selectedNode]);
+  const insets = useMemo<Insets>(() => {
+    const base = wide ? HUD_INSETS : HUD_INSETS_NARROW;
+    return { ...base, right: selectedNode && wide ? SHEET_INSET : base.right };
+  }, [wide, selectedNode]);
 
   const focus = useMemo(() => {
     if (selectedId) return new Set([selectedId, ...(layout.neighbours.get(selectedId) ?? [])]);
@@ -123,7 +130,7 @@ function SkyChart({ graph }: { graph: GraphResponse }) {
   });
 
   const onZoom = useCallback((zoom: number) => setTier((t) => (tierForZoom(zoom) === t ? t : tierForZoom(zoom))), []);
-  const minZoom = useMemo(() => fitZoom(layout) * 0.6, [layout]);
+  const minZoom = useMemo(() => fitZoom(layout, insets) * 0.6, [layout, insets]);
   const sheetOpen = Boolean(selectedNode);
 
   return (
@@ -147,16 +154,16 @@ function SkyChart({ graph }: { graph: GraphResponse }) {
         />
       </div>
       <SkyLabels items={labels} registry={labelRegistry} />
-      <div className="pointer-events-none absolute inset-y-0 left-0 w-[380px] bg-gradient-to-r from-[#04060d] via-[#04060d]/75 to-transparent" />
+      <div className="pointer-events-none absolute inset-y-0 left-0 hidden w-[380px] bg-gradient-to-r from-[#04060d] via-[#04060d]/75 to-transparent md:block" />
 
-      <div className="pointer-events-none absolute top-5 left-6 flex w-[290px] flex-col gap-4">
+      <div className="pointer-events-none absolute top-5 left-6 hidden w-[290px] flex-col gap-4 md:flex">
         <Stats graph={graph} />
         <NextUp items={suggestions} selectedId={selectedId} onPick={select} />
       </div>
 
-      <SearchBox graph={graph} className={cn('absolute top-5 w-72 transition-[right] duration-300', sheetOpen ? 'right-[476px]' : 'right-6')} onPick={select} />
+      <SearchBox graph={graph} className={cn('absolute top-5 w-56 transition-[right] duration-300 sm:w-72', sheetOpen ? 'right-[476px] max-md:hidden' : 'right-6')} onPick={select} />
 
-      <div className={cn('absolute bottom-5 left-6 flex flex-col gap-3 transition-[right] duration-300', sheetOpen ? 'right-[476px]' : 'right-6')}>
+      <div className={cn('absolute bottom-5 left-6 flex flex-col gap-3 transition-[right] duration-300', sheetOpen ? 'right-[476px] max-md:right-6' : 'right-6')}>
         <div className="flex items-end gap-3">
           <div className="flex min-w-0 flex-1 gap-2 overflow-x-auto pb-1">
             <Chip active={!focusCourseId} onClick={() => focusCourse(null)}>
@@ -201,6 +208,10 @@ function SkyChart({ graph }: { graph: GraphResponse }) {
           {(['student', 'suggested', 'peer'] as const).map((o) => (
             <Legend key={o} color={ORIGIN_STYLE[o].hex} label={ORIGIN_STYLE[o].label} line />
           ))}
+          <span className="mx-1 h-3 w-px bg-white/10" />
+          <button onClick={() => go('brain')} className="flex cursor-pointer items-center gap-1.5 text-night-300 underline decoration-white/20 underline-offset-2 transition hover:text-night-100">
+            <List className="size-3.5" /> Browse your pages as a list
+          </button>
           <span className="ml-auto hidden text-night-500 xl:block">Drag to pan · scroll to zoom · click a star</span>
         </div>
       </div>
@@ -210,9 +221,9 @@ function SkyChart({ graph }: { graph: GraphResponse }) {
   );
 }
 
-function fitZoom(layout: SkyLayout): number {
-  const w = window.innerWidth - HUD_INSETS.left - HUD_INSETS.right;
-  const h = window.innerHeight - HUD_INSETS.top - HUD_INSETS.bottom;
+function fitZoom(layout: SkyLayout, insets: Insets): number {
+  const w = window.innerWidth - insets.left - insets.right;
+  const h = window.innerHeight - insets.top - insets.bottom;
   const b = layout.bounds;
   return Math.min(w / Math.max(1, b.maxX - b.minX), h / Math.max(1, b.maxY - b.minY), 1);
 }
@@ -289,43 +300,80 @@ function NextUp({ items, selectedId, onPick }: { items: ReturnType<typeof nextUp
 
 function SearchBox({ graph, className, onPick }: { graph: GraphResponse; className?: string; onPick: (id: string) => void }) {
   const [query, setQuery] = useState('');
+  const [active, setActive] = useState(0);
+  const [dismissed, setDismissed] = useState(false);
+  const listId = useId();
   const matches = useMemo(() => {
     const q = query.trim().toLowerCase();
     return q ? graph.nodes.filter((n) => n.label.toLowerCase().includes(q)).slice(0, 8) : [];
   }, [query, graph]);
+  const open = !dismissed && matches.length > 0;
+  const current = Math.min(active, Math.max(0, matches.length - 1));
+
+  const choose = (id: string) => {
+    onPick(id);
+    setQuery('');
+    setActive(0);
+  };
 
   return (
     <div className={className}>
       <div className="glass flex items-center gap-2 rounded-xl px-3">
         <Search className="size-4 text-night-400" />
         <input
+          role="combobox"
+          aria-expanded={open}
+          aria-controls={listId}
+          aria-activedescendant={open ? `${listId}-${matches[current]!.id}` : undefined}
+          aria-label="Find a star"
           value={query}
-          onChange={(e) => setQuery(e.target.value)}
+          onChange={(e) => {
+            setQuery(e.target.value);
+            setActive(0);
+            setDismissed(false);
+          }}
           onKeyDown={(e) => {
-            if (e.key === 'Enter' && matches[0]) {
-              onPick(matches[0].id);
-              setQuery('');
+            if (e.key === 'ArrowDown') {
+              e.preventDefault();
+              setDismissed(false);
+              setActive((a) => Math.min(a + 1, matches.length - 1));
+            } else if (e.key === 'ArrowUp') {
+              e.preventDefault();
+              setActive((a) => Math.max(a - 1, 0));
+            } else if (e.key === 'Enter' && open) {
+              e.preventDefault();
+              choose(matches[current]!.id);
+            } else if (e.key === 'Escape') {
+              setDismissed(true);
             }
           }}
           placeholder="Find a star…"
           className="h-10 flex-1 bg-transparent text-sm text-night-100 placeholder:text-night-500 focus:outline-none"
         />
         {query && (
-          <button onClick={() => setQuery('')} className="text-night-400 hover:text-night-100" aria-label="Clear">
+          <button
+            onClick={() => {
+              setQuery('');
+              setActive(0);
+            }}
+            className="text-night-400 hover:text-night-100"
+            aria-label="Clear"
+          >
             <X className="size-4" />
           </button>
         )}
       </div>
-      {matches.length > 0 && (
-        <div className="glass-strong mt-2 overflow-hidden rounded-xl">
-          {matches.map((n) => (
+      {open && (
+        <div role="listbox" id={listId} aria-label="Matching stars" className="glass-strong mt-2 overflow-hidden rounded-xl">
+          {matches.map((n, i) => (
             <button
               key={n.id}
-              onClick={() => {
-                onPick(n.id);
-                setQuery('');
-              }}
-              className="flex w-full cursor-pointer items-center gap-2 px-3 py-2 text-left text-sm hover:bg-white/[0.06]"
+              id={`${listId}-${n.id}`}
+              role="option"
+              aria-selected={i === current}
+              onMouseEnter={() => setActive(i)}
+              onClick={() => choose(n.id)}
+              className={cn('flex w-full cursor-pointer items-center gap-2 px-3 py-2 text-left text-sm', i === current ? 'bg-white/[0.08]' : 'hover:bg-white/[0.06]')}
             >
               <span className="size-2 shrink-0 rounded-full" style={{ background: starHex(n) }} />
               <span className="flex-1 truncate text-night-100">{n.label}</span>

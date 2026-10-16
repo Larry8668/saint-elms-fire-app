@@ -8,6 +8,9 @@ import { portalUrl } from '@/lib/uni-url';
  * Stands between a signed-in student and the dashboard when the university has not
  * approved them. The state is server-derived, so this screen never guesses: anything
  * other than an approval (or a legacy profile) is shown as-is, with no way to skip past.
+ * Suspended and withdrawn enrolments rarely get here — a fresh sign-in is a limited
+ * session that Root routes to the limited-access screen — but a session issued before
+ * the enrolment changed still lands on this gate.
  */
 export function AdmissionGate({ state, onRefresh, onSignOut, refreshing }: { state: AdmissionState; onRefresh: () => void; onSignOut: () => void; refreshing: boolean }) {
   // Defence in depth: the engine already refuses data routes, so this should be unreachable.

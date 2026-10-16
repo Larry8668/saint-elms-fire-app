@@ -2,6 +2,8 @@ import { can, conceptKey, TEACHERS, teacherPolicy, type CapabilityId, type ChatR
 import type { ClaimReader } from '../brain/claim-evidence';
 import { WikiQuery, type WikiReader } from '../brain/query';
 import type { BrainService } from '../brain/service';
+import { probeImageDimensions } from '../brain/sources/image';
+import { checkImageDimensions } from '../brain/sources/limits';
 import { errorFields, log } from '../config';
 import { searchLessons, type LessonHit } from '../content/search';
 import type { ContentStore } from '../content/store';
@@ -20,9 +22,10 @@ import { buildEvidenceSet } from './evidence';
 import { makeAgent } from './factory';
 import { ACADEMIC_REDIRECT, classifyFriendInput, declaredAttachmentText, extractedTextLane, PRIVACY_REFUSAL } from './lanes';
 import { toModelMessages } from './messages';
-import { teacherInstructions } from './prompts';
+import { teacherInstructions, UNTRUSTED_CONTENT_NOTE } from './prompts';
 import { buildTools, claimBlock } from './tools';
 import { assessAnswer } from './validators';
+import { sanitizeWebQuery } from './web-query';
 
 export interface HarnessDeps {
   settings: SettingsReader;
@@ -62,7 +65,7 @@ function lessonBlock(title: string, hits: LessonHit[]): string {
 function webBlock(results: WebResult[] | null): string {
   if (results === null) return 'WEB RESULTS: web search is unavailable right now — use [course] lines only and say the web was unreachable.';
   if (!results.length) return 'WEB RESULTS: no results.';
-  return `WEB RESULTS:\n${results.map((r, i) => `${i + 1}. ${r.title} — ${r.url}\n${r.snippet}`).join('\n')}`;
+  return `WEB RESULTS:\n${UNTRUSTED_CONTENT_NOTE}\n${results.map((r, i) => `${i + 1}. ${r.title} — ${r.url}\n${r.snippet}`).join('\n')}`;
 }
 
 function capabilityChecks(denied: CapabilityId[]): VerificationCheck[] {
@@ -134,7 +137,23 @@ export async function runChatTurn(req: ChatRequest, deps: HarnessDeps, emit: (ev
     }
   }
 
-  // 3. Anchor seam. A teacher that cannot prove where it starts says so; it does not improvise.
+  // 3. Image bytes are measured before any model sees them: a picture too large to read on
+  //    this device is refused by name, not handed over on hope. An unreadable header is not
+  //    refused here — the byte cap already bounds it, and the reader says honestly when it fails.
+  if (hasImage) {
+    for (const attachment of attachments) {
+      if (attachment.kind !== 'image') continue;
+      const dimensions = probeImageDimensions(Buffer.from(attachment.data, 'base64'));
+      if (!dimensions) continue;
+      const rejection = checkImageDimensions(dimensions.width, dimensions.height);
+      if (rejection) {
+        log.warn('chat_image_too_large', { teacher: req.teacher, width: dimensions.width, height: dimensions.height });
+        return finish(`${rejection.message} Try a tighter crop or a lower-resolution photo.`, null, [{ id: 'image_size', label: 'Image size checked before the model', passed: true, detail: rejection.code }], 'refused');
+      }
+    }
+  }
+
+  // 4. Anchor seam. A teacher that cannot prove where it starts says so; it does not improvise.
   //    The resolver re-reads the page from disk: a page id, a claimed revision or a concept
   //    key from the client is only an input to the check, never proof.
   const policy = teacherPolicy(req.teacher);
@@ -189,7 +208,7 @@ export async function runChatTurn(req: ChatRequest, deps: HarnessDeps, emit: (ev
       const wikiHits = await new WikiQuery(deps.wiki).search(question, 3);
       ctx.contextBlocks.push(
         wikiHits.length
-          ? `WIKI PAGES THAT ALREADY COVER THIS (read one with read_wiki_page before leaning on it; a source_summary, synthesis or question page is generated text, citable as context but never evidence):\n${wikiHits
+          ? `WIKI PAGES THAT ALREADY COVER THIS (read one with read_wiki_page before leaning on it; a source_summary, synthesis or question page is generated text, citable as context but never evidence):\n${UNTRUSTED_CONTENT_NOTE}\n${wikiHits
               .map((hit) => `- [${hit.kind}] ${hit.id} — ${hit.title}: ${hit.summary}`)
               .join('\n')}`
           : 'WIKI PAGES THAT ALREADY COVER THIS: none matched — the wiki holds no worked answer for this yet.',
@@ -198,13 +217,17 @@ export async function runChatTurn(req: ChatRequest, deps: HarnessDeps, emit: (ev
   }
   blocks.push(...ctx.contextBlocks, ...ctx.shieldedBlocks);
 
+  // The consented topic: the anchored concept's released-course label, derived in code —
+  // the same text the consent preview showed. A resolved anchor without a catalogue row
+  // still yields only its concept key. Every query this turn is anchored to it in code.
+  const webTopic = anchored ? anchorTopic(anchored.candidate ?? null, anchored.anchor.courseConceptKey) : undefined;
+
   let webResults: WebResult[] | null = null;
   const webConsented = req.consent?.web === true;
   if (can(req.teacher, 'tool:web_search') && policy.web === 'explicit_consent' && webConsented) {
-    // Nothing the student typed leaves this device: the query is the anchored concept's
-    // released-course label, derived in code — the same text the consent preview showed.
-    // A resolved anchor without a catalogue row still yields only its concept key.
-    const webQuery = anchored ? anchorTopic(anchored.candidate ?? null, anchored.anchor.courseConceptKey) : question;
+    // Nothing the student typed leaves this device: the up-front query is the topic alone,
+    // bounded like anything else that may reach the network.
+    const webQuery = sanitizeWebQuery(webTopic ?? question);
     ctx.status('Searching the web…');
     try {
       webResults = await (deps.searchWeb ?? webSearch)((await deps.settings.get()).searxngUrl, webQuery, 4);
@@ -221,7 +244,12 @@ export async function runChatTurn(req: ChatRequest, deps: HarnessDeps, emit: (ev
   const resolved = resolveModel(settings, hasImage ? 'vision' : 'tutor');
   const instructions = `${teacherInstructions(req.teacher, deps.studentName)}\n\n---\n${blocks.join('\n\n')}`;
   const build = deps.makeAgent ?? makeAgent;
-  const agent = build(req.teacher, instructions, resolved, buildTools(req.teacher, { content: deps.content, brain: deps.brain, searxngUrl: settings.searxngUrl, claims: deps.claims, wiki: deps.wiki, webConsented }, ctx));
+  const agent = build(
+    req.teacher,
+    instructions,
+    resolved,
+    buildTools(req.teacher, { content: deps.content, brain: deps.brain, searxngUrl: settings.searxngUrl, claims: deps.claims, wiki: deps.wiki, webConsented, webAnchorTopic: webTopic }, ctx),
+  );
 
   /**
    * A Friend image turn also proposes a logistics extraction from the attachment, in
@@ -252,7 +280,7 @@ export async function runChatTurn(req: ChatRequest, deps: HarnessDeps, emit: (ev
   for await (const chunk of stream.textStream) text += chunk;
   text = text.trim() || "I couldn't put an answer together just now. Could you rephrase that?";
 
-  // 4. What the model read out of an image is untrusted input. Re-classified, and never served
+  // 5. What the model read out of an image is untrusted input. Re-classified, and never served
   //    if it reads out someone else's details. The parallel extraction judges its own text
   //    the same way; whatever it still files sits behind the student's confirmation.
   if (req.teacher === 'friend' && hasImage && extractedTextLane(text) === 'privacy') {

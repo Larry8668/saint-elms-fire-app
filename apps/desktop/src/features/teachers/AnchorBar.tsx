@@ -1,6 +1,7 @@
 import type { AnchorCandidate } from '@sef/shared';
 import { BookMarked, ChevronDown, Globe, Search, Telescope, X } from 'lucide-react';
 import { useState } from 'react';
+import { Button } from '@/components/ui/button';
 import { Badge, Eyebrow } from '@/components/ui/primitives';
 import { SkeletonText } from '@/components/ui/primitives';
 import { STATUS_STYLE } from '@/lib/brain-style';
@@ -41,6 +42,16 @@ export function AnchorPicker({ selected, onPick }: { selected?: string | null; o
   const filtered = q ? list.filter((a) => `${a.title} ${a.conceptLabel} ${a.courseName}`.toLowerCase().includes(q)) : list;
 
   if (anchors.isLoading) return <SkeletonText lines={3} />;
+  if (anchors.isError) {
+    return (
+      <div className="rounded-xl border border-ember-400/25 bg-ember-500/[0.06] p-4 text-[13px] leading-6 text-night-300">
+        <p>Your committed pages could not be loaded — {(anchors.error as Error).message}</p>
+        <Button size="sm" variant="outline" className="mt-2.5" onClick={() => void anchors.refetch()}>
+          Try again
+        </Button>
+      </div>
+    );
+  }
   if (!list.length) {
     return (
       <p className="rounded-xl border border-white/[0.06] bg-white/[0.03] p-4 text-sm leading-6 text-night-400">

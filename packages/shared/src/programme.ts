@@ -113,10 +113,20 @@ export const ProgrammeSemesterSchema = z.strictObject({
 });
 export type ProgrammeSemester = z.infer<typeof ProgrammeSemesterSchema>;
 
+/**
+ * What the uni derives from the rows and serves as `derivedCounts`. Row counts are plain
+ * aggregates; degree credits are a range, because exactly one bundle per option group is
+ * selected and the alternatives must not inflate the total.
+ */
 export const ProgrammeCountsSchema = z.strictObject({
-  total: z.number().int().min(0),
+  /** Every row in the programme, support included. */
+  rows: z.number().int().min(0),
   bySemester: z.record(z.string(), z.number().int().min(0)),
   byStatus: z.record(z.string(), z.number().int().min(0)),
+  /** Rows that count toward the degree: semester rows, support excluded. */
+  degreeRows: z.number().int().min(0),
+  /** Degree credit if exactly one bundle per option group is selected. */
+  degreeCredits: z.strictObject({ min: z.number().nonnegative(), max: z.number().nonnegative() }),
 });
 export type ProgrammeCounts = z.infer<typeof ProgrammeCountsSchema>;
 
@@ -124,7 +134,7 @@ export const ProgrammeManifestResponseSchema = z.strictObject({
   programme: ProgrammeSchema,
   semesters: z.array(ProgrammeSemesterSchema),
   derivedCounts: ProgrammeCountsSchema,
-  /** Keyed by course id; a course absent here is simply not available to this student. */
+  /** Keyed by row id; a row absent here is simply not available to this student. */
   availability: z.record(IdentifierSchema, CourseAvailabilitySchema),
 });
 export type ProgrammeManifestResponse = z.infer<typeof ProgrammeManifestResponseSchema>;

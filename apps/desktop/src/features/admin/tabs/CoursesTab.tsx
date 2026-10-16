@@ -64,7 +64,7 @@ export function CoursesTab() {
           </div>
         )}
       </QueryState>
-      <Sheet open={Boolean(open)} onOpenChange={(v) => !v && setOpen(null)}>
+      <Sheet open={Boolean(open)} onOpenChange={(v) => !v && setOpen(null)} title={open?.title ?? 'Course details'}>
         {open && <CourseSheet course={open} />}
       </Sheet>
     </>

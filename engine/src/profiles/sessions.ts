@@ -1,11 +1,13 @@
 import { createHash, randomBytes } from 'node:crypto';
-import type { SessionMode } from '@sef/shared';
+import type { SessionAccess, SessionMode } from '@sef/shared';
 import { config } from '../config';
 import { readJson, writeJson } from '../lib/fs';
 
 interface AuthSession {
   profileId: string;
   mode: SessionMode;
+  /** Decided when the session is issued; rows written before limited access existed have none and read as full. */
+  access?: SessionAccess;
   expiresAt: string;
 }
 
@@ -39,10 +41,10 @@ export class AuthSessions {
     await writeJson(config.paths.authSessions, Object.fromEntries(sessions));
   }
 
-  async create(profileId: string, mode: SessionMode): Promise<string> {
+  async create(profileId: string, mode: SessionMode, access: SessionAccess = { mode: 'full' }): Promise<string> {
     const token = randomBytes(32).toString('base64url');
     const expiresAt = new Date(Date.now() + config.sessionHours * 3600_000).toISOString();
-    (await this.load()).set(hash(token), { profileId, mode, expiresAt });
+    (await this.load()).set(hash(token), { profileId, mode, access, expiresAt });
     await this.persist();
     return token;
   }

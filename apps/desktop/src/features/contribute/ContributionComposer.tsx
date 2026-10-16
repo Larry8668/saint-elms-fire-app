@@ -8,6 +8,7 @@ import { Tabs } from '@/components/ui/overlays';
 import { Badge, Eyebrow, Input, Label, Panel, Textarea } from '@/components/ui/primitives';
 import { api, fileToBase64 } from '@/lib/api';
 import { cn } from '@/lib/cn';
+import { log } from '@/lib/log';
 import { useInvalidateBrain, useSessions } from '@/lib/queries';
 import { timeAgo } from '@/lib/time';
 import { normalizeMediaType, textContribution, uploadContribution } from './review';
@@ -123,9 +124,14 @@ export function ContributionComposer({ onFiled }: { onFiled: (receipt: SourceRec
   const pick = async (chosen: File | undefined) => {
     if (!chosen) return;
     const mediaType = normalizeMediaType(chosen);
-    const encoded = await fileToBase64(chosen, mediaType);
-    setFile({ name: chosen.name, mediaType, data: encoded.data, preview: encoded.preview });
-    if (!title) setTitle(chosen.name.replace(/\.[^.]+$/, ''));
+    try {
+      const encoded = await fileToBase64(chosen, mediaType);
+      setFile({ name: chosen.name, mediaType, data: encoded.data, preview: encoded.preview });
+      if (!title) setTitle(chosen.name.replace(/\.[^.]+$/, ''));
+    } catch (error) {
+      log.error('contribution_file_read_failed', { error: String(error) });
+      toast.error('Could not read that file.');
+    }
   };
 
   const submitText = () => {

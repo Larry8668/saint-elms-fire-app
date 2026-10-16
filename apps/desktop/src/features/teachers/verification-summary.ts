@@ -17,3 +17,11 @@ export function providerDisclosure(verification: Verification): string | null {
   if (!verification.providerKind) return null;
   return verification.providerKind === 'ollama' ? 'on this device' : 'hosted — your messages left this device';
 }
+
+/** The checks tally. Zero checks is a neutral statement about the answer — never a green pass. */
+export function checksSummary(checks: Verification['checks']): { passed: number; total: number; tone: 'pass' | 'fail' | 'none' } {
+  const total = checks.length;
+  const passed = checks.filter((c) => c.passed).length;
+  if (!total) return { passed: 0, total, tone: 'none' };
+  return { passed, total, tone: passed === total ? 'pass' : 'fail' };
+}

@@ -130,6 +130,7 @@ test('a verified entitlement unlocks offline; tampered and wrong-device credenti
   await registry.recordEntitlement('dev-student', issueEntitlement('dev-student', 'dev-test'));
   const res = await auth.unlockOffline('dev-student');
   assert.ok(res && res.role === 'student' && res.mode === 'offline');
+  assert.deepEqual(res.role === 'student' && res.access, { mode: 'full' });
 
   // Same student, entitlement minted for a different device — refused.
   await registry.recordEntitlement('dev-student', issueEntitlement('dev-student', 'other-device'));

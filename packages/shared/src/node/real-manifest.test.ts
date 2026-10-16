@@ -2,7 +2,8 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { loadProgrammeManifest } from './programme';
+import { ProgrammeManifestResponseSchema } from '../programme';
+import { availabilityFor, courseFilesIn, loadProgrammeManifest } from './programme';
 
 // The checked-in courseware is the project's source of truth; these tests
 // pin the normalized model to it so manifest edits are verified by CI.
@@ -73,4 +74,27 @@ test('internship null hours and zero-credit orientation survive in the real mani
   assert.equal(support.credits, 0);
   const external = result.programme.rows.filter((r) => r.deliveryMode === 'external');
   assert.equal(external.length, 13);
+});
+
+test('the response the uni serves parses as ProgrammeManifestResponse', async () => {
+  // server/uni routes/student.ts serves exactly this envelope; the engine validates it
+  // with this schema before any UI sees it, so a drift here 503s every student.
+  const result = await loadProgrammeManifest(COURSEWARE);
+  const availability: Record<string, unknown> = {};
+  for (const row of result.programme.rows) {
+    availability[row.rowId] = availabilityFor(row, await courseFilesIn(COURSEWARE, row));
+  }
+  const served = {
+    programme: result.programme,
+    semesters: result.semesters,
+    derivedCounts: result.derivedCounts,
+    availability,
+  };
+  const parsed = ProgrammeManifestResponseSchema.safeParse(served);
+  assert.equal(parsed.success, true, parsed.success ? undefined : JSON.stringify(parsed.error.issues.slice(0, 5)));
+  if (parsed.success) {
+    assert.equal(parsed.data.derivedCounts.degreeRows, 71);
+    assert.equal(parsed.data.derivedCounts.rows, 72, 'support rows stay in the total, out of degreeRows');
+    assert.ok(Object.keys(parsed.data.availability).length > 0);
+  }
 });
