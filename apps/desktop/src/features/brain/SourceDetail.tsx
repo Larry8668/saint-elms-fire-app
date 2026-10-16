@@ -1,5 +1,5 @@
-import { useMutation } from '@tanstack/react-query';
-import { FileText, Image as ImageIcon, MessagesSquare, NotebookPen, Pencil, ScanText, Share2, ShieldQuestion, type LucideIcon } from 'lucide-react';
+import { useMutation, useQuery } from '@tanstack/react-query';
+import { FileText, Image as ImageIcon, MessagesSquare, NotebookPen, Pencil, ScanText, Share2, ShieldQuestion, Trash2, type LucideIcon } from 'lucide-react';
 import { useEffect, useMemo, useState } from 'react';
 import { toast } from 'sonner';
 import type { SourceRecord } from '@sef/shared';
@@ -47,11 +47,12 @@ function Meta({ label, children }: { label: string; children: React.ReactNode })
  * The raw bytes never change — the student edits the reading, and each correction is a
  * new ledger entry the compiler then reads.
  */
-export function SourceDetailView({ sourceId, onReviewProposal }: { sourceId: string; onReviewProposal?: (proposalId: string) => void }) {
+export function SourceDetailView({ sourceId, onReviewProposal, onErased }: { sourceId: string; onReviewProposal?: (proposalId: string) => void; onErased?: () => void }) {
   const detail = useSourceDetail(sourceId);
   const invalidate = useInvalidateSource(sourceId);
   const [editing, setEditing] = useState(false);
   const [draft, setDraft] = useState('');
+  const [confirmingErase, setConfirmingErase] = useState(false);
 
   const corrected = (label: string) => {
     invalidate();
@@ -95,6 +96,26 @@ export function SourceDetailView({ sourceId, onReviewProposal }: { sourceId: str
     onSuccess: () => {
       invalidate();
       toast('Contribution withdrawn — nothing was written');
+    },
+    onError: (e) => toast.error((e as Error).message),
+  });
+  const dependents = useQuery({
+    queryKey: ['source-dependents', sourceId],
+    queryFn: () => api.sourceDependents(sourceId),
+    enabled: confirmingErase,
+    retry: false,
+  });
+  const erase = useMutation({
+    mutationFn: (revision: string) => api.eraseSource(sourceId, revision),
+    onSuccess: (result) => {
+      invalidate();
+      setConfirmingErase(false);
+      toast.success(
+        result.dependents.length
+          ? `Source erased — ${result.dependents.length} page${result.dependents.length === 1 ? '' : 's'} still cite it`
+          : 'Source erased',
+      );
+      onErased?.();
     },
     onError: (e) => toast.error((e as Error).message),
   });
@@ -236,6 +257,51 @@ export function SourceDetailView({ sourceId, onReviewProposal }: { sourceId: str
           <ImageIcon className="size-3.5" /> {extraction?.text ? 'Read it again' : 'Have Gemma read it'}
         </Button>
       )}
+
+      <section className="border-t border-white/[0.06] pt-4">
+        <Button size="sm" variant="danger" onClick={() => setConfirmingErase(true)}>
+          <Trash2 /> Erase this source
+        </Button>
+        <p className="mt-1.5 text-[11.5px] text-night-500">
+          Erasure removes the original, the record and the readings; pages that cited it are listed first. An erasure marker remains so a future
+          restore does not quietly bring it back.
+        </p>
+      </section>
+
+      <Dialog
+        open={confirmingErase}
+        onOpenChange={(open) => !open && setConfirmingErase(false)}
+        title={`Erase “${record.title}”?`}
+        description="The original file, its record and its readings are removed and a tombstone records the delete. Pages keep their citations — they will show as withdrawn evidence."
+      >
+        {dependents.isLoading ? (
+          <SkeletonText lines={3} />
+        ) : dependents.isError ? (
+          <p className="text-[13px] text-rose-400">{(dependents.error as Error).message}</p>
+        ) : dependents.data?.pages.length ? (
+          <div className="space-y-2">
+            <Eyebrow>{dependents.data.pages.length} page{dependents.data.pages.length === 1 ? '' : 's'} still lean on it</Eyebrow>
+            <ul className="space-y-1.5">
+              {dependents.data.pages.map((page) => (
+                <li key={page.id} className="rounded-lg bg-white/[0.04] px-3 py-2 text-[12.5px] text-night-300">
+                  <span className="font-medium text-night-100">{page.title}</span> <span className="text-night-500">({page.id})</span>
+                  <span className="text-night-400"> — {page.references.join(', ')}</span>
+                </li>
+              ))}
+            </ul>
+          </div>
+        ) : (
+          <p className="text-[13px] text-night-400">Nothing in your vault cites this source.</p>
+        )}
+        <div className="mt-4 flex items-center gap-2">
+          <Button variant="danger" size="sm" loading={erase.isPending} disabled={dependents.isLoading || dependents.isError} onClick={() => erase.mutate(record.revision)}>
+            Erase permanently
+          </Button>
+          <Button variant="ghost" size="sm" onClick={() => setConfirmingErase(false)}>
+            Keep it
+          </Button>
+        </div>
+      </Dialog>
     </div>
   );
 }
@@ -244,7 +310,7 @@ export function SourceDetailDialog({ sourceId, onClose, onReviewProposal }: { so
   const detail = useSourceDetail(sourceId);
   return (
     <Dialog open={Boolean(sourceId)} onOpenChange={(open) => !open && onClose()} title={detail.data?.record.title ?? 'Kept source'} description="The original is kept byte-for-byte; you are looking at what the engine read from it.">
-      {sourceId && <SourceDetailView sourceId={sourceId} onReviewProposal={onReviewProposal} />}
+      {sourceId && <SourceDetailView sourceId={sourceId} onReviewProposal={onReviewProposal} onErased={onClose} />}
     </Dialog>
   );
 }

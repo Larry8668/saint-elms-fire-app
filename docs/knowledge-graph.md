@@ -61,6 +61,7 @@ questions/<key>.md   investigations and open questions
 .meta/jobs/…         wiki jobs, one file each
 .meta/journal/…      in-flight commits (a commit is cleared only once every file landed)
 .meta/recovery/…     records of commits that were finished after a crash
+.meta/tombstones/…   erasure markers: a deleted source leaves one record a sync can carry
 ```
 
 `WikiStore` (`engine/src/brain/wiki-store.ts`) is the single authoritative writer for this vault.
@@ -111,6 +112,41 @@ future job must be prepared against: a proposal whose `conventionRevision` no lo
 refused. The block can only *describe* invariants the code already enforces (the schema is strict
 and the required rules cannot be dropped), so a document — or text inside a source or a peer page —
 cannot grant itself a capability, and text in a source is data, never an instruction.
+
+### Taking the vault with you
+
+`VaultPortabilityService` (`engine/src/brain/portable/`, routes under `/api/vault/*`, Settings →
+"Your vault, yours to carry") makes the student's knowledge portable independent of enrolment,
+entitlement or network:
+
+- **Export** (`POST /api/vault/export`) packs the student's own state into one versioned
+  `sef-vault-export` document: every page file, the `.history/` snapshots, source records and
+  their extraction-ledger text, the `raw/` originals (optionally narrowed to `sourceIds`), the
+  growth ledger, erasure tombstones and `log.md`. Each file carries its sha-256; the manifest
+  records the export's schema version, vault layout, counts and the exporting profile as
+  provenance — never adopted on import. Credential, session, provider, entitlement and
+  in-flight material (journal, jobs, proposals, index, manifest, lock) never enters an export;
+  paths it leaves out are listed under `skipped`, not silently dropped.
+- **Preview** (`POST /api/vault/import/preview`) validates the envelope, every per-file hash and
+  every path against the vault-owned areas, then computes a plan: size, page/source counts,
+  and the conflicts — a page the destination already holds at a different revision is named
+  with both revisions. Nothing is written.
+- **Restore** (`POST /api/vault/import`) re-derives the plan and commits through the same
+  journal as every writer, with per-path sha preconditions re-checked inside the writer lock —
+  a vault that moved since the plan is refused, not overwritten. Conflicted pages are skipped
+  unless the student names them in `overwritePageIds`; an overwrite first preserves the live
+  revision to `.history/`. Derived state (manifest, `index.md`) is rebuilt from the imported
+  bytes; `log.md` merges entry-wise; immutable files that disagree (`raw/`, history, events,
+  records) are reported, never forced. A restore never touches the profile registry: it cannot
+  grant admission, and `exportedBy` stays provenance.
+
+Export and preview sit behind the local sign-in alone, so an expired entitlement or a
+suspended enrolment cannot hold the student's files hostage; restore and erase keep the
+approved-profile guard of every other vault writer. Source erasure lists its dependent pages
+first (`GET /api/sources/:id/dependents`), then `POST /api/sources/:id/erase` removes the
+record, the derived extraction text and the original under `raw/` — erasure is the only
+write allowed to touch `raw/`; maintenance and model actions never reach it. The tombstone
+under `.meta/tombstones/` records the delete for a future sync.
 
 ### Earlier vaults
 
