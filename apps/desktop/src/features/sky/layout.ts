@@ -1,4 +1,4 @@
-import type { GraphEdge, GraphNode, GraphResponse } from '@sef/shared';
+import { PERSONAL_SKY_ID, PERSONAL_SKY_TITLE, type GraphEdge, type GraphNode, type GraphResponse } from '@sef/shared';
 
 export type Vec2 = [number, number];
 
@@ -100,12 +100,36 @@ function layoutCourse(nodes: GraphNode[]) {
 }
 
 /**
+ * The student's own pages — concepts with no introducing lesson, syntheses, open questions —
+ * in a loose spiral ordered by page id, so the constellation never drifts as pages update.
+ */
+function layoutPersonal(nodes: GraphNode[]) {
+  const local = new Map<string, Vec2>();
+  const phase = hash01(PERSONAL_SKY_ID) * Math.PI * 2;
+  const ordered = [...nodes].sort((a, b) => a.id.localeCompare(b.id));
+  ordered.forEach((node, i) => {
+    const angle = i * GOLDEN_ANGLE + phase;
+    const r = 40 + Math.sqrt(i) * 34;
+    local.set(node.id, [Math.cos(angle) * r, Math.sin(angle) * r]);
+  });
+  const bounds = emptyBounds();
+  for (const p of local.values()) growBounds(bounds, p, COURSE_PAD);
+  return { local, bounds };
+}
+
+/**
  * Deterministic star-chart layout. Reading left to right is reading the programme:
  * one column per semester, one constellation per course, lessons in teaching order.
+ * Personal pages live in their own constellation in a column right of the syllabus —
+ * present and navigable, never silently assigned to a course they do not belong to.
  */
 export function layoutSky(graph: GraphResponse): SkyLayout {
   const byCourse = new Map<string, GraphNode[]>();
-  for (const node of graph.nodes) byCourse.set(node.courseId, [...(byCourse.get(node.courseId) ?? []), node]);
+  const personalNodes: GraphNode[] = [];
+  for (const node of graph.nodes) {
+    if (node.origin === 'course') byCourse.set(node.courseId, [...(byCourse.get(node.courseId) ?? []), node]);
+    else personalNodes.push(node);
+  }
 
   const bySemester = new Map<number, GraphNode[][]>();
   for (const nodes of byCourse.values()) {
@@ -142,6 +166,22 @@ export function layoutSky(graph: GraphResponse): SkyLayout {
       cursorY -= course.bounds.maxY - course.bounds.minY + COURSE_GAP_Y;
     });
     columnX += columnWidth + SEMESTER_GAP_X;
+  }
+
+  if (personalNodes.length) {
+    const personal = layoutPersonal(personalNodes);
+    const dx = columnX - personal.bounds.minX;
+    const dy = -personal.bounds.maxY;
+    for (const [id, p] of personal.local) positions.set(id, [p[0] + dx, p[1] + dy]);
+    constellations.push({
+      courseId: PERSONAL_SKY_ID,
+      title: PERSONAL_SKY_TITLE,
+      subjectId: PERSONAL_SKY_ID,
+      semesterNumber: 0,
+      bounds: { minX: personal.bounds.minX + dx, maxX: personal.bounds.maxX + dx, minY: personal.bounds.minY + dy, maxY: personal.bounds.maxY + dy },
+      path: [],
+      nodeIds: personalNodes.map((n) => n.id),
+    });
   }
 
   const bounds = emptyBounds();

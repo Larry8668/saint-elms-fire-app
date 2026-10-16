@@ -426,6 +426,28 @@ export const PageRevisionContentSchema = z.strictObject({
 });
 export type PageRevisionContent = z.infer<typeof PageRevisionContentSchema>;
 
+export const LEARNING_EVENT_KINDS = ['encounter', 'explanation', 'struggle', 'correction', 'connection', 'application', 'review'] as const;
+export type LearningEventKind = (typeof LEARNING_EVENT_KINDS)[number];
+
+export const LEARNING_EVENT_ACTORS = ['student', 'peer', 'model'] as const;
+export type LearningEventActor = (typeof LEARNING_EVENT_ACTORS)[number];
+
+/**
+ * Evidence a growth event points at when a verbatim citation is not the right shape:
+ * the vault source the material came from, a durable artifact (a stored quiz result,
+ * a proposal id), or the page revision the event committed. The revision ref is what
+ * makes an event reproducible — replaying the same content yields the same event.
+ */
+export const EventRefSchema = z.discriminatedUnion('kind', [
+  z.strictObject({ kind: z.literal('source'), ref: IdentifierSchema, revision: RevisionSchema }),
+  z.strictObject({ kind: z.literal('artifact'), ref: IdentifierSchema }),
+  z.strictObject({ kind: z.literal('revision'), ref: RevisionSchema }),
+]);
+export type EventRef = z.infer<typeof EventRefSchema>;
+
+export const EventEvidenceSchema = z.union([SourceCitationSchema, EventRefSchema]);
+export type EventEvidence = z.infer<typeof EventEvidenceSchema>;
+
 /**
  * One catalogue row of the compiled wiki, for GET /api/wiki/pages. Metadata only — the
  * page body comes from the view endpoint, so an index read stays cheap on a large vault.
@@ -542,9 +564,11 @@ export const LearningEventSchema = z
     profile: ProfileIdentitySchema,
     pageId: IdentifierSchema,
     at: TimestampSchema,
-    kind: z.enum(['encounter', 'explanation', 'struggle', 'correction', 'connection', 'application', 'review']),
-    actor: z.enum(['student', 'peer', 'model']),
-    evidence: z.array(SourceCitationSchema).min(1),
+    kind: z.enum(LEARNING_EVENT_KINDS),
+    actor: z.enum(LEARNING_EVENT_ACTORS),
+    evidence: z.array(EventEvidenceSchema).min(1),
+    /** Short human context for the timeline — a link target, a claim fragment, a result id. */
+    note: z.string().max(300).optional(),
     knowledgeOnly: z.boolean(),
   })
   .superRefine((value, ctx) => {

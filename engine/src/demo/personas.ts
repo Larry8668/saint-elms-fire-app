@@ -30,6 +30,26 @@ export interface SeedSession {
   turns: Array<[role: 'user' | 'assistant', text: string]>;
 }
 
+/**
+ * A typed vault page seeded through the real proposal pipeline — the personal sky's stars.
+ * `source.kind: 'peer'` files the note as an imported share; its events are knowledge-only
+ * by contract, so the demo shows collected material that is never the student's mastery.
+ */
+export interface PersonalSeed {
+  kind: 'synthesis' | 'question' | 'concept';
+  id: string;
+  title: string;
+  summary: string;
+  markdown: string;
+  source: { kind: 'note' | 'peer'; title: string; text: string };
+  /** Peer shares: who sent it, recorded verbatim as attribution. */
+  sender?: { id: string; name: string };
+  claims?: Array<{ text: string; kind: 'source_fact' | 'student_belief' | 'deduction' | 'question'; origin: 'course' | 'external' | 'student' | 'peer' | 'model'; quote?: string }>;
+  links?: Array<{ to: string; type: EdgeType; origin: EdgeOrigin; why: string; quote?: string }>;
+  learner?: { inMyWords: string; stuck?: string; connections?: string };
+  daysAgo: number;
+}
+
 export interface PersonaScript {
   /** Days before today that this student started Semester 1. */
   startedDaysAgo: number;
@@ -43,6 +63,8 @@ export interface PersonaScript {
   heroes: HeroPage[];
   links: SeedLink[];
   sessions: SeedSession[];
+  /** Personal-sky pages: syntheses, open questions, imported shares — seeded as real proposals. */
+  personal?: PersonalSeed[];
 }
 
 const SEMESTER_DAYS = 160;
@@ -284,6 +306,68 @@ const brinda: PersonaScript = {
       ],
     },
   ],
+  personal: [
+    {
+      kind: 'synthesis',
+      id: 'synthesis-work-is-accumulation',
+      title: 'Work is the definite integral of force',
+      summary: 'W = ∫F·dx and the fundamental theorem are the same machine: accumulate a local rate over small pieces.',
+      markdown:
+        '## The idea\n\nIn mechanics, work adds up force over distance: W = ∫F·dx. In integral calculus, the definite integral adds up a rate over an interval. These are the *same* operation — F is a rate of energy transfer, dx is the piece, the integral is the accumulation.\n\nOnce I saw that, the work–energy theorem stopped being a fact to memorise: it is just the FTC wearing a force.',
+      source: {
+        kind: 'note',
+        title: 'Reading note — work as accumulation',
+        text: 'Reading W = ∫F·dx next to the fundamental theorem of calculus. Work is the accumulation of force over displacement — the same chop-multiply-add-limit machine as the definite integral. The work–energy theorem is the FTC in disguise.',
+      },
+      claims: [
+        { text: 'Work is the definite integral of force over displacement.', kind: 'deduction', origin: 'student', quote: 'Work is the accumulation of force over displacement' },
+      ],
+      links: [
+        { to: 'work', type: 'related_to', origin: 'student', why: 'W = ∫F·dx is the mechanics face of it', quote: 'Work is the accumulation' },
+        { to: 'definite-integral', type: 'related_to', origin: 'student', why: 'The calculus face of the same machine', quote: 'the definite integral' },
+        { to: 'fundamental-theorem-of-calculus', type: 'builds_upon', origin: 'student', why: 'Work–energy is the FTC in disguise', quote: 'FTC in disguise' },
+      ],
+      daysAgo: 18,
+    },
+    {
+      kind: 'question',
+      id: 'q-energy-and-drag',
+      title: 'Does energy conservation survive drag?',
+      summary: 'Drag is non-conservative — so where does the lost mechanical energy go, and is dissipation still conservation?',
+      markdown:
+        '## The question\n\nConservation of mechanical energy needs every force to be conservative. Drag is not. So when a pendulum with air resistance slows down, the "lost" energy must be somewhere — heat in the air? Is "dissipated" just the honest name for "conserved, but no longer mechanical"?\n\nI want to work it out precisely enough that a calorimeter could check me.',
+      source: {
+        kind: 'note',
+        title: 'Margin question — drag and energy',
+        text: 'Drag is non-conservative, so where does the lost mechanical energy of a damped pendulum actually go? Is dissipation just conservation with the bookkeeping moved to heat?',
+      },
+      claims: [{ text: 'Where does dissipated mechanical energy go?', kind: 'question', origin: 'student' }],
+      links: [
+        { to: 'conservation-of-mechanical-energy', type: 'contrasts_with', origin: 'student', why: 'The claim this question stress-tests', quote: 'lost mechanical energy' },
+        { to: 'damped-harmonic-oscillator', type: 'related_to', origin: 'student', why: 'The damped pendulum is the test case', quote: 'damped pendulum' },
+      ],
+      daysAgo: 6,
+    },
+    {
+      kind: 'concept',
+      id: 'green-s-functions',
+      title: "Green's functions",
+      summary: "Arjun's one-pager on Green's functions — the impulse response as the building block of linear systems. Kept as his work, not mine.",
+      markdown:
+        "# Green's functions\n\nA linear system's response to a sum of inputs is the sum of responses to each input. A Green's function is the response to a single impulse — convolve it with the input and the whole answer falls out.\n\nArjun's note: the impulse response *is* the Green's function; solving Lx = f becomes x = G ⋆ f.",
+      source: {
+        kind: 'peer',
+        title: "Arjun's Green's functions one-pager",
+        text: "A Green's function is the impulse response of a linear operator. The response to a sum of impulses is the sum of impulse responses, so solving Lx = f is x = G ⋆ f.",
+      },
+      sender: { id: 'arjun-mehta', name: 'Arjun Mehta' },
+      claims: [
+        { text: 'The response to a sum of impulses is the sum of impulse responses.', kind: 'source_fact', origin: 'peer', quote: 'The response to a sum of impulses is the sum of impulse responses' },
+      ],
+      learner: { inMyWords: '', stuck: '', connections: '' },
+      daysAgo: 12,
+    },
+  ],
 };
 
 const chetna: PersonaScript = {
@@ -408,6 +492,24 @@ const chetna: PersonaScript = {
         ['user', 'How do I pick a thesis supervisor?'],
         ['assistant', 'Start with the department research page, then email two or three faculty with a short note on what you have read. Office hours are a good first conversation.'],
       ],
+    },
+  ],
+  personal: [
+    {
+      kind: 'question',
+      id: 'q-quasiparticles',
+      title: 'When is a quasiparticle a bookkeeping trick?',
+      summary: 'Phonons carry momentum and energy like particles — where does the analogy stop being honest?',
+      markdown:
+        '## The question\n\nA phonon behaves like a particle: it carries energy ℏω and crystal momentum ℏk. But the lattice does the real vibrating. So what does it mean to *be* a quasiparticle — a shorthand for the normal modes, or something with its own existence?\n\nI want to test it against the Debye model: does treating phonons as a gas actually reproduce the T³ heat capacity?',
+      source: {
+        kind: 'note',
+        title: 'Margin note — quasiparticles',
+        text: 'Phonons carry ℏω and crystal momentum, but the lattice does the vibrating. Is a quasiparticle just bookkeeping? Check it against the Debye T³ law.',
+      },
+      claims: [{ text: 'Where does the quasiparticle picture stop being a shorthand?', kind: 'question', origin: 'student' }],
+      links: [{ to: 'debye-model', type: 'related_to', origin: 'student', why: 'The test I want to run', quote: 'Debye' }],
+      daysAgo: 4,
     },
   ],
 };

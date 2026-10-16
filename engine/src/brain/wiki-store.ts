@@ -1,9 +1,11 @@
 import { mkdir, readdir, stat } from 'node:fs/promises';
 import path from 'node:path';
 import {
+  LearningEventSchema,
   SourceRecordSchema,
   WikiProposalSchema,
   type BrainLogEntry,
+  type LearningEvent,
   type PageRevisionContent,
   type PageRevisionList,
   type Revision,
@@ -14,6 +16,7 @@ import {
 import { errorFields, log } from '../config';
 import { readBytes, readJson, readText, writeFileAtomic, writeFileExclusive } from '../lib/fs';
 import { sha256Hex } from '../lib/hash';
+import { deriveGrowthEvents } from './growth';
 import { renderIndex, type IndexEntry } from './index-format';
 import { recentLogEntries, renderLogEntry } from './log-format';
 import { ensureConventionsFile, readConventions, type ConventionsRead } from './schema-conventions';
@@ -27,6 +30,7 @@ import {
   KIND_DIRECTORY,
   LOG_FILE,
   META_DIRECTORY,
+  META_EVENTS_DIRECTORY,
   META_MANIFEST_FILE,
   META_SOURCES_DIRECTORY,
   PAGE_KINDS,
@@ -52,7 +56,7 @@ import {
   type VaultManifestSource,
 } from './vault-manifest';
 import { indexEntryOf, indexEntryOfContent, planProposal, planUpgrade, stamped, type PageChange, type PagePlan, type PageSnapshot } from './wiki-plan';
-import { readPageFile, revisionMatches, serializePageFile } from './wiki-page-format';
+import { contentRevision, readPageFile, revisionMatches, serializePageFile } from './wiki-page-format';
 
 export type { PageChange, PageSnapshot } from './wiki-plan';
 
@@ -177,12 +181,26 @@ export class WikiStore {
       }
       const plan = planProposal(value, existing, at);
       if (plan.conflicts.length) throw new VaultConflictError(describeConflicts(plan.conflicts), plan.conflicts);
-      const result = await this.commitPlans(plan.plans, `wiki.proposal:${value.id}`, (changes) => ({
-        at,
-        kind: 'wiki',
-        title: `Wiki update from proposal ${value.id}`,
-        detail: describeChanges(changes),
-      }));
+      // Growth events ride the same journal as the page writes: keyed by the revision they
+      // commit, so a replayed proposal rewrites identical files and never duplicates them.
+      const sources = new Map<string, SourceRecord>();
+      for (const id of value.sourceIds) {
+        const record = await this.readSource(id);
+        if (record) sources.set(id, record);
+      }
+      const revisions = new Map([...plan.plans].map(([id, p]) => [id, contentRevision(p.content)]));
+      const events = deriveGrowthEvents({ proposal: value, plans: plan.plans, sources, revisions, at });
+      const result = await this.commitPlans(
+        plan.plans,
+        `wiki.proposal:${value.id}`,
+        (changes) => ({
+          at,
+          kind: 'wiki',
+          title: `Wiki update from proposal ${value.id}`,
+          detail: describeChanges(changes),
+        }),
+        events.map((event) => ({ kind: 'write' as const, path: `${META_DIRECTORY}/${META_EVENTS_DIRECTORY}/${event.id}.json`, content: `${JSON.stringify(event, null, 2)}\n` })),
+      );
       return {
         proposalId: value.id,
         committed: result.committed,
@@ -472,6 +490,25 @@ export class WikiStore {
     });
   }
 
+  /**
+   * The growth ledger: every derived learning event, oldest first, optionally narrowed to one
+   * page. Event files are keyed by the revision they committed, so unreadable or unknown files
+   * are skipped rather than trusted.
+   */
+  async listEvents(pageId?: string): Promise<LearningEvent[]> {
+    const directory = vaultPath(this.root, META_DIRECTORY, META_EVENTS_DIRECTORY);
+    const events: LearningEvent[] = [];
+    for (const entry of await readdir(directory, { withFileTypes: true }).catch(() => [])) {
+      if (!entry.isFile() || !entry.name.endsWith('.json')) continue;
+      const raw = await readJson<unknown>(path.join(directory, entry.name), null);
+      const parsed = raw === null ? null : LearningEventSchema.safeParse(raw);
+      if (parsed?.success) events.push(parsed.data);
+      else if (raw !== null) log.warn('vault_event_unreadable', { root: this.root, file: entry.name });
+    }
+    events.sort((a, b) => a.at.localeCompare(b.at) || a.id.localeCompare(b.id));
+    return pageId ? events.filter((event) => event.pageId === pageId) : events;
+  }
+
   async writeJob(job: WikiJob): Promise<void> {
     await writeJob(this.root, job);
   }
@@ -580,6 +617,7 @@ export class WikiStore {
     plans: Map<string, PagePlan>,
     intent: string,
     buildLogEntry: (changes: PageChange[]) => BrainLogEntry,
+    extraSteps: JournalStep[] = [],
   ): Promise<{ committed: boolean; journalId: string | null; changes: PageChange[]; logEntry: BrainLogEntry }> {
     const at = this.now().toISOString();
     const read = await readManifest(this.root);
@@ -614,7 +652,14 @@ export class WikiStore {
     }
 
     const logEntry = buildLogEntry(changes.filter((change) => change.change !== 'unchanged'));
-    if (!steps.length) return { committed: false, journalId: null, changes, logEntry };
+    if (!steps.length) {
+      if (!extraSteps.length) return { committed: false, journalId: null, changes, logEntry };
+      // Pages already hold these revisions — a replayed proposal. The growth events may still
+      // be missing from an interrupted commit, so they persist on their own journal; nothing
+      // else (index, manifest, log) moves, because nothing changed.
+      const journalId = await this.commit(`${intent}:growth`, extraSteps);
+      return { committed: true, journalId, changes, logEntry };
+    }
 
     const written = new Set(changes.filter((change) => change.change !== 'unchanged').map((change) => change.id));
     const indexEntries: IndexEntry[] = [];
@@ -627,7 +672,7 @@ export class WikiStore {
       if (written.has(id)) indexEntries.push(indexEntryOfContent(plan.content));
     }
 
-    const journalId = await this.commit(intent, [...steps, ...this.catalogueSteps(indexEntries, pages, manifest.sources, at, logEntry)]);
+    const journalId = await this.commit(intent, [...steps, ...extraSteps, ...this.catalogueSteps(indexEntries, pages, manifest.sources, at, logEntry)]);
     return { committed: true, journalId, changes, logEntry };
   }
 

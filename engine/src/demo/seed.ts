@@ -1,7 +1,8 @@
 import { createHash } from 'node:crypto';
-import type { BrainLogEntry, ConceptPage, DemoPersona, Evidence } from '@sef/shared';
+import { CONTRACT_VERSION, type BrainLogEntry, type ConceptPage, type DemoPersona, type Evidence, type ProfileIdentity, type SourceCitation, type WikiPageDraft, type WikiProposal } from '@sef/shared';
 import type { CoursewareIndex } from '@sef/shared/node';
 import { emptyPage } from '../brain/page-format';
+import { writeProposalRecord } from '../brain/proposals';
 import { log } from '../config';
 import type { Workspace } from '../profiles/workspace';
 import { PERSONA_SCRIPTS, semesterStartDaysAgo, type HeroPage, type PersonaScript } from './personas';
@@ -150,6 +151,7 @@ export async function seedPersona(ws: Workspace, persona: DemoPersona, coursewar
 
   for (const page of pages.values()) await ws.vault.writeSeeded(page);
   await ws.vault.writeIndex();
+  const personal = await seedPersonal(ws, persona, script);
 
   for (const s of script.sessions) {
     const at = iso(s.daysAgo, s.id);
@@ -186,7 +188,97 @@ export async function seedPersona(ws: Workspace, persona: DemoPersona, coursewar
   );
 
   if (missing.length) log.warn('demo_seed_unknown_concepts', { profileId: persona.id, missing });
-  const report = { courses, pages: pages.size, links, sessions: script.sessions.length };
-  log.info('demo_persona_seeded', { profileId: persona.id, ...report, ms: Date.now() - started });
+  const report = { courses, pages: pages.size + personal, links, sessions: script.sessions.length };
+  log.info('demo_persona_seeded', { profileId: persona.id, ...report, personal, ms: Date.now() - started });
   return report;
+}
+
+/**
+ * Personal-sky pages go through the real pipeline: the note or the peer share is filed as a
+ * kept source, then a proposal the validator would accept lands the page — so the growth
+ * ledger records honest encounter/connection/application events for them, and a peer-imported
+ * page arrives already marked collected, never the student's own mastery.
+ */
+async function seedPersonal(ws: Workspace, persona: DemoPersona, script: PersonaScript): Promise<number> {
+  const personal = script.personal ?? [];
+  if (!personal.length) return 0;
+  const { uniServerUrl } = await ws.settings.get();
+  const identity: ProfileIdentity = {
+    issuer: uniServerUrl,
+    studentId: ws.profile.id,
+    programmeId: ws.profile.programmeId ?? ws.profile.cohortId,
+  };
+  const conventionRevision = (await ws.wiki.readConventions()).conventions.revision;
+  let written = 0;
+  for (const seed of personal) {
+    const text = seed.source.text;
+    const ingested = await ws.sources.ingest({
+      kind: seed.source.kind,
+      title: seed.source.title,
+      mediaType: 'text/plain',
+      bytes: new TextEncoder().encode(text),
+      ...(seed.source.kind === 'peer' && seed.sender
+        ? {
+            share: { id: `share-seed-${persona.id}-${seed.id}`, revision: `rev-${seed.id}`, senderId: seed.sender.id, cohortId: ws.profile.cohortId },
+            attribution: { creator: seed.sender.name },
+          }
+        : {}),
+      extraction: { method: 'text', text },
+    });
+    const source = await ws.wiki.readSource(ingested.source.id);
+    if (!source) {
+      log.warn('demo_seed_source_missing', { profileId: persona.id, page: seed.id });
+      continue;
+    }
+    const cite = (quote?: string): SourceCitation[] => {
+      const start = quote ? text.indexOf(quote) : -1;
+      return start >= 0 && quote
+        ? [{ sourceId: source.id, sourceRevision: source.revision, sha256: source.sha256, locator: { kind: 'text' as const, start, end: start + quote.length } }]
+        : [];
+    };
+    const claims = (seed.claims ?? []).flatMap((claim, i) => {
+      const citations = cite(claim.quote);
+      if ((claim.kind === 'source_fact' || claim.kind === 'student_belief') && !citations.length) {
+        log.warn('demo_seed_claim_dropped', { profileId: persona.id, page: seed.id, claim: claim.text.slice(0, 60) });
+        return [];
+      }
+      return [{ id: `cl-${seed.id}-${i}`, text: claim.text, kind: claim.kind, origin: claim.origin, status: 'current' as const, citations, supersedes: [] }];
+    });
+    const links = (seed.links ?? []).flatMap((link) => {
+      const citations = cite(link.quote);
+      if (link.origin === 'student' && !citations.length) {
+        log.warn('demo_seed_link_dropped', { profileId: persona.id, page: seed.id, to: link.to });
+        return [];
+      }
+      return [{ toPageId: link.to, type: link.type, origin: link.origin, why: link.why, citations }];
+    });
+    const base = { id: seed.id, title: seed.title, summary: seed.summary, markdown: seed.markdown, courseRefs: [], claims, links };
+    const page: WikiPageDraft =
+      seed.kind === 'concept'
+        ? {
+            ...base,
+            kind: 'concept',
+            learner: { inMyWords: seed.learner?.inMyWords ?? '', stuck: seed.learner?.stuck ?? '', connections: seed.learner?.connections ?? '', evidenceIds: [] },
+          }
+        : { ...base, kind: seed.kind, sourceIds: [source.id] };
+    const proposal: WikiProposal = {
+      schemaVersion: CONTRACT_VERSION,
+      id: `prop-seed-${persona.id}-${seed.id}`,
+      profile: identity,
+      sourceIds: [source.id],
+      conventionRevision,
+      createdAt: iso(seed.daysAgo, seed.id),
+      baseRevisions: { [seed.id]: null },
+      operations: [{ op: 'upsert_page', page }],
+    };
+    try {
+      const report = await ws.wiki.applyProposal(proposal);
+      await writeProposalRecord(ws.wiki.root, { schemaVersion: CONTRACT_VERSION, proposal, jobId: null, state: 'accepted', decidedAt: iso(seed.daysAgo, seed.id), decidedBy: 'system' });
+      if (report.committed) written += 1;
+    } catch (error) {
+      // Seeding must never take a whole demo profile down with it.
+      log.warn('demo_seed_personal_failed', { profileId: persona.id, page: seed.id, error: String(error) });
+    }
+  }
+  return written;
 }
