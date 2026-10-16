@@ -1,6 +1,6 @@
-import { TEACHER_IDS, TEACHERS, type IngestResult, type TeacherId } from '@sef/shared';
+import { TEACHER_IDS, TEACHERS, type TeacherId } from '@sef/shared';
 import { useMutation } from '@tanstack/react-query';
-import { ArrowDown, Brain, RotateCcw } from 'lucide-react';
+import { ArrowDown, FileCheck, RotateCcw } from 'lucide-react';
 import { AnimatePresence, motion } from 'motion/react';
 import { useEffect, useRef, useState } from 'react';
 import { toast } from 'sonner';
@@ -12,6 +12,7 @@ import { cn } from '@/lib/cn';
 import { log } from '@/lib/log';
 import { useNav } from '@/lib/nav';
 import { useInvalidateBrain } from '@/lib/queries';
+import { ProposalReviewDialog } from '@/features/contribute/ProposalReviewDialog';
 import { useStickToBottom } from '@/lib/use-stick-to-bottom';
 import { useChat } from './chat-store';
 import { Composer, type Attachments, type ComposerHandle } from './Composer';
@@ -28,9 +29,9 @@ export function TeachersView() {
   const thread = threads[teacher];
   const [draft, setDraft] = useState(nav.draft ?? '');
   const [attachments, setAttachments] = useState<Attachments>([]);
-  const [reflection, setReflection] = useState<IngestResult | null>(null);
   const [reflectStartedAt, setReflectStartedAt] = useState<number>();
   const [reflectOpen, setReflectOpen] = useState(false);
+  const [proposalId, setProposalId] = useState<string | null>(null);
   const composer = useRef<ComposerHandle>(null);
   const invalidateBrain = useInvalidateBrain();
   const lastMessage = thread.messages.at(-1);
@@ -47,17 +48,25 @@ export function TeachersView() {
   }, [teacher, scroll.scrollToBottom]);
 
   const reflect = useMutation({
-    mutationFn: () => {
+    mutationFn: async () => {
       if (!thread.sessionId) throw new Error('Nothing has been said in this conversation yet.');
-      setReflection(null);
       setReflectStartedAt(Date.now());
       setReflectOpen(true);
-      return api.ingest(thread.sessionId);
+      // Freeze the fresh turns as a source, then let the keeper draft — the proposal
+      // comes back for review; nothing reaches the wiki until the student accepts.
+      const receipt = await api.reflectReview(thread.sessionId);
+      return api.compileJob(receipt.jobId);
     },
     onSuccess: (result) => {
-      setReflection(result);
-      setReflectOpen(true);
+      setReflectOpen(false);
       invalidateBrain();
+      if (result.job.stage === 'awaiting_review' && result.proposalId) {
+        setProposalId(result.proposalId);
+      } else if (result.job.stage === 'no_changes') {
+        toast.info('The keeper found nothing new in that session to write.');
+      } else if (result.job.stage === 'failed') {
+        toast.error(result.job.error ?? 'The reflection could not be drafted — it is kept under Add to my wiki for a retry.');
+      }
     },
     onError: (e) => {
       setReflectOpen(false);
@@ -120,10 +129,10 @@ export function TeachersView() {
               <RotateCcw /> New
             </Button>
           </Tooltip>
-          <Tooltip content={teacher === 'friend' ? 'Campus chats are not part of your study brain' : 'The brain keeper reads this session and proposes updates to your concept pages. A validator checks every edit.'}>
+          <Tooltip content={teacher === 'friend' ? 'Campus chats are not part of your study brain' : 'Freeze this conversation as a source and draft wiki updates — nothing is written until you review and accept the proposal.'}>
             <span>
               <Button variant="primary" size="sm" onClick={() => reflect.mutate()} disabled={!userTurns || thread.busy || teacher === 'friend' || reflect.isPending}>
-                {reflect.isPending ? <PixelLoader /> : <Brain />} {reflect.isPending ? 'Reflecting' : 'Reflect into brain'}
+                {reflect.isPending ? <PixelLoader /> : <FileCheck />} {reflect.isPending ? 'Reflecting' : 'Reflect into brain'}
               </Button>
             </span>
           </Tooltip>
@@ -195,16 +204,8 @@ export function TeachersView() {
         />
       </div>
 
-      <ReflectDialog
-        open={reflectOpen}
-        startedAt={reflectStartedAt}
-        result={reflection}
-        onClose={() => setReflectOpen(false)}
-        onSeeSky={() => {
-          setReflectOpen(false);
-          nav.go('sky');
-        }}
-      />
+      <ReflectDialog open={reflectOpen} startedAt={reflectStartedAt} onClose={() => setReflectOpen(false)} />
+      <ProposalReviewDialog proposalId={proposalId} onClose={() => setProposalId(null)} />
     </div>
   );
 }

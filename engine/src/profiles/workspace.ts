@@ -99,7 +99,7 @@ export class WorkspaceManager {
       wiki,
       sources,
       compiler,
-      brain: new BrainService(content, vault, settings, paths.quizzes, { wiki, sources, compiler, identity }),
+      brain: new BrainService(content, vault, settings, paths.quizzes, { wiki, sources, identity }),
       sessions: new SessionStore(paths.sessions),
       sync: new ContentSync(settings, content, async () => {
         const currentProfile = await this.registry.get(profileId);

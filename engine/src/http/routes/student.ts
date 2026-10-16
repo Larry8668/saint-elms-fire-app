@@ -1,20 +1,12 @@
 import { Hono, type Context } from 'hono';
 import { streamSSE } from 'hono/streaming';
-import { ConversationHandoffSchema, ConversationTurnSchema, TEACHER_IDS, type ChatRequest, type ChatStreamEvent, type TeacherId } from '@sef/shared';
+import { ConversationHandoffSchema, ConversationTurnSchema, CONTRACT_VERSION, IdentifierSchema, SourceReceiptSchema, TEACHER_IDS, type ChatRequest, type ChatStreamEvent, type TeacherId } from '@sef/shared';
 import { z } from 'zod';
 import { ConversationRefused, ConversationRegistry, refusalCopy, serverTranscript } from '../../agents/conversation';
 import { runChatTurn } from '../../agents/harness';
 import { errorFields, log } from '../../config';
 import { requireProfile, type EngineDeps, type EngineEnv } from '../context';
 import { friendlyError } from '../errors';
-
-const AttachmentSchema = z.object({
-  kind: z.literal('image'),
-  mimeType: z.string().regex(/^image\//),
-  data: z.string().max(12_000_000),
-  name: z.string().optional(),
-  altText: z.string().max(500).optional(),
-});
 
 /** Which refusal gets which status. Every one of them is a refusal, none of them is a crash. */
 const REFUSAL_STATUS = {
@@ -182,25 +174,39 @@ export function studentRoutes(deps: EngineDeps, conversations: ConversationRegis
     const page = await c.get('ws').brain.page(c.req.param('key'));
     return page ? c.json(page) : c.json({ error: 'No page for this concept yet' }, 404);
   });
+  /** Every committed revision of one page — the student's own history, readable back. */
+  app.get('/brain/pages/:key/revisions', guard, async (c) => {
+    const key = IdentifierSchema.safeParse(c.req.param('key'));
+    if (!key.success) return c.json({ error: 'No page for this concept yet' }, 404);
+    const list = await c.get('ws').wiki.pageRevisions(key.data);
+    return list ? c.json(list) : c.json({ error: 'No page for this concept yet' }, 404);
+  });
+  app.get('/brain/pages/:key/revisions/:rev', guard, async (c) => {
+    const key = IdentifierSchema.safeParse(c.req.param('key'));
+    if (!key.success) return c.json({ error: 'No page for this concept yet' }, 404);
+    const revision = await c.get('ws').wiki.readPageRevision(key.data, c.req.param('rev'));
+    return revision ? c.json(revision) : c.json({ error: 'Revision not found' }, 404);
+  });
   app.get('/brain/log', guard, async (c) => c.json(await c.get('ws').brain.log(Number(c.req.query('limit') ?? 50))));
   app.get('/brain/lint', guard, async (c) => c.json(await c.get('ws').brain.lint()));
 
+  /**
+   * Reflect freezes the session's fresh turns as a kept source and stops — the turns stay
+   * pending until the student accepts the proposal a later compile files. The checkpoint
+   * itself lives in the proposal accept route, which writes it only on a real commit.
+   */
   app.post('/brain/ingest/:sessionId', guard, async (c) => {
+    const body = z.strictObject({ review: z.boolean().optional() }).safeParse(await c.req.json().catch(() => ({})));
+    if (!body.success) return c.json({ error: 'Send an optional review flag' }, 400);
     const { sessions, brain } = c.get('ws');
     const session = await sessions.get(c.req.param('sessionId'));
     if (!session) return c.json({ error: 'Session not found' }, 404);
     if (session.turns.length <= session.ingestedTurns) return c.json({ error: 'Nothing new in this session to reflect on' }, 409);
-    const result = await brain.ingestSession(session);
-    // Checkpoint only the turn range the committed source covers — a failed compile or
-    // turns appended mid-flight stay pending.
-    if (result.consumedTurns !== undefined) await sessions.markIngested(session, result.consumedTurns);
-    return c.json(result);
-  });
-
-  app.post('/brain/capture', guard, async (c) => {
-    const body = z.object({ image: AttachmentSchema, note: z.string().max(500).optional() }).safeParse(await c.req.json().catch(() => null));
-    if (!body.success) return c.json({ error: 'Send an image (base64) and an optional note' }, 400);
-    return c.json(await c.get('ws').brain.capture(body.data.image, body.data.note));
+    const result = await brain.freezeSession(session);
+    const extraction = result.extraction
+      ? { method: result.extraction.method, text: result.extraction.text, partial: result.extraction.partial, ...(result.extraction.note ? { note: result.extraction.note } : {}) }
+      : null;
+    return c.json(SourceReceiptSchema.parse({ schemaVersion: CONTRACT_VERSION, source: result.source, extraction, jobId: result.jobId, reused: result.reused }), 201);
   });
 
   app.post('/quiz/:key', guard, async (c) => c.json(await c.get('ws').brain.createQuiz(c.req.param('key'))));

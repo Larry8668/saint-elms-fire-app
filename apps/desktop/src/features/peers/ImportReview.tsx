@@ -1,4 +1,3 @@
-import { useQuery } from '@tanstack/react-query';
 import type { ShareImportResult } from '@sef/shared';
 import { AlertTriangle, Check, X } from 'lucide-react';
 import { useState } from 'react';
@@ -6,8 +5,7 @@ import { Button } from '@/components/ui/button';
 import { Badge, Panel } from '@/components/ui/primitives';
 import { Dialog } from '@/components/ui/overlays';
 import { SkeletonText } from '@/components/ui/primitives';
-import { api } from '@/lib/api';
-import { useStudent } from '@/lib/session';
+import { useProposalPreview } from '@/lib/queries';
 import { useDecideProposal } from './peer-queries';
 
 const CHANGE_TONE = { created: 'aurora', updated: 'beacon', unchanged: 'neutral' } as const;
@@ -18,12 +16,7 @@ const CHANGE_TONE = { created: 'aurora', updated: 'beacon', unchanged: 'neutral'
  * student accepts — this is the same review affordance every source goes through.
  */
 export function ImportReview({ result, onClose }: { result: ShareImportResult; onClose: () => void }) {
-  const { profile } = useStudent();
-  const proposal = useQuery({
-    queryKey: ['profile', profile.id, 'proposal', result.proposalId],
-    queryFn: () => api.proposal(result.proposalId!),
-    enabled: Boolean(result.proposalId),
-  });
+  const proposal = useProposalPreview(result.proposalId);
   const decide = useDecideProposal();
   const [note, setNote] = useState('');
 

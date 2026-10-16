@@ -1,6 +1,16 @@
-import { mkdir, readdir } from 'node:fs/promises';
+import { mkdir, readdir, stat } from 'node:fs/promises';
 import path from 'node:path';
-import { SourceRecordSchema, WikiProposalSchema, type BrainLogEntry, type Revision, type SourceRecord, type WikiJob, type WikiProposal } from '@sef/shared';
+import {
+  SourceRecordSchema,
+  WikiProposalSchema,
+  type BrainLogEntry,
+  type PageRevisionContent,
+  type PageRevisionList,
+  type Revision,
+  type SourceRecord,
+  type WikiJob,
+  type WikiProposal,
+} from '@sef/shared';
 import { errorFields, log } from '../config';
 import { readBytes, readJson, readText, writeFileAtomic, writeFileExclusive } from '../lib/fs';
 import { sha256Hex } from '../lib/hash';
@@ -12,6 +22,7 @@ import { listJobs, readJob, writeJob } from './vault-jobs';
 import { applyJournalSteps, beginJournal, completeJournal, pendingJournals, recoverJournals, type JournalStep, type RecoveryReport } from './vault-journal';
 import { VaultLock, type VaultLockOptions } from './vault-lock';
 import {
+  HISTORY_DIRECTORY,
   INDEX_FILE,
   KIND_DIRECTORY,
   LOG_FILE,
@@ -337,7 +348,7 @@ export class WikiStore {
    */
   async recordExtraction(
     id: string,
-    entry: { method: SourceRecord['extractions'][number]['method']; sha256: string; chars: number; partial: boolean },
+    entry: { method: SourceRecord['extractions'][number]['method']; sha256: string; chars: number; partial: boolean; note?: string },
     text?: string,
   ): Promise<void> {
     const safeId = assertRecordId(id, 'Source id');
@@ -375,6 +386,60 @@ export class WikiStore {
     const extraction = [...record.extractions].reverse().find((e) => (revision ? e.revision === revision : true));
     if (!extraction) return null;
     return readText(vaultPath(this.root, extractionTextPath(record.id, extraction.revision, extraction.method)));
+  }
+
+  /**
+   * Every saved revision of one page, newest first: the current file plus the .history/
+   * snapshots. Format-1 vaults kept history under .history/<id>, the typed layout nests it
+   * by kind — both are read so adopted pages show their whole past.
+   */
+  async pageRevisions(id: string): Promise<PageRevisionList | null> {
+    const safeId = assertRecordId(id, 'Page id');
+    const snapshot = await this.readPage(safeId);
+    if (!snapshot) return null;
+    const revisions = new Map<string, { revision: string; at: string; current: boolean }>();
+    for (const directory of [
+      vaultPath(this.root, HISTORY_DIRECTORY, KIND_DIRECTORY[snapshot.kind], safeId),
+      vaultPath(this.root, HISTORY_DIRECTORY, safeId),
+    ]) {
+      for (const entry of await readdir(directory, { withFileTypes: true }).catch(() => [])) {
+        if (!entry.isFile() || !entry.name.endsWith('.md')) continue;
+        const revision = entry.name.slice(0, -3);
+        if (revisions.has(revision)) continue;
+        const info = await stat(path.join(directory, entry.name)).catch(() => null);
+        revisions.set(revision, { revision, at: info?.mtime.toISOString() ?? snapshot.revision, current: revision === snapshot.revision });
+      }
+    }
+    const list = [...revisions.values()].sort((a, b) => b.at.localeCompare(a.at));
+    if (!list.some((entry) => entry.current)) {
+      const at = snapshot.metadata?.updatedAt ?? snapshot.legacy?.updated ?? this.now().toISOString();
+      list.unshift({ revision: snapshot.revision, at, current: true });
+    }
+    return { pageId: safeId, current: snapshot.revision, revisions: list };
+  }
+
+  /** One revision's page file, verbatim — the current file or a .history/ snapshot. */
+  async readPageRevision(id: string, revision: string): Promise<PageRevisionContent | null> {
+    const safeId = assertRecordId(id, 'Page id');
+    let safeRevision: string;
+    try {
+      safeRevision = assertSafeRevision(revision, 'Revision');
+    } catch {
+      return null;
+    }
+    const snapshot = await this.readPage(safeId);
+    if (!snapshot) return null;
+    if (safeRevision === snapshot.revision) {
+      return { pageId: safeId, revision: snapshot.revision, raw: snapshot.raw, current: true };
+    }
+    for (const relativePath of [
+      historyRelativePath(snapshot.kind, safeId, safeRevision),
+      `${HISTORY_DIRECTORY}/${safeId}/${safeRevision}.md`,
+    ]) {
+      const raw = await readText(vaultPath(this.root, relativePath));
+      if (raw !== null) return { pageId: safeId, revision: safeRevision, raw, current: false };
+    }
+    return null;
   }
 
   /** Student-controlled erasure: the only path that may touch raw/. */

@@ -1,29 +1,36 @@
 import type { ConceptPage } from '@sef/shared';
-import { AlertTriangle, Brain, Camera, GraduationCap, History, Lightbulb, MessageCircleQuestion, Network } from 'lucide-react';
+import { AlertTriangle, Brain, FilePlus2, GraduationCap, History, Lightbulb, MessageCircleQuestion, Network } from 'lucide-react';
 import { motion } from 'motion/react';
 import { useMemo, useState } from 'react';
 import { Button } from '@/components/ui/button';
 import { Tabs } from '@/components/ui/overlays';
 import { Badge, EmptyState, PageHeader, Panel } from '@/components/ui/primitives';
 import { CardGridSkeleton, RowListSkeleton, TimelineSkeleton } from '@/components/ui/skeletons';
+import { ProposalReviewDialog } from '@/features/contribute/ProposalReviewDialog';
 import { STATUS_STYLE } from '@/lib/brain-style';
 import { useNav } from '@/lib/nav';
-import { useBrainLog, useGraph, useLint, usePages } from '@/lib/queries';
+import { useBrainLog, useGraph, useJobBoard, useLint, usePages } from '@/lib/queries';
 import { ConceptSheet } from './ConceptSheet';
+import { SourceDetailDialog } from './SourceDetail';
+import { SourcesPanel } from './SourcesPanel';
 
-const LOG_ICON: Record<string, typeof Brain> = { session: MessageCircleQuestion, capture: Camera, quiz: GraduationCap };
+const LOG_ICON: Record<string, typeof Brain> = { session: MessageCircleQuestion, capture: FilePlus2, quiz: GraduationCap, wiki: History, source: History, migrate: History, remove: History, erase: History };
 
 export function BrainView() {
   const { go } = useNav();
   const [tab, setTab] = useState('pages');
   const [selectedKey, setSelectedKey] = useState<string | null>(null);
+  const [sourceId, setSourceId] = useState<string | null>(null);
+  const [proposalId, setProposalId] = useState<string | null>(null);
   const pages = usePages();
   const log = useBrainLog();
   const lint = useLint();
   const graph = useGraph();
+  const board = useJobBoard();
 
   const selectedNode = useMemo(() => (selectedKey && graph.data ? graph.data.nodes.find((n) => n.key === selectedKey) ?? null : null), [selectedKey, graph.data]);
   const openFindings = lint.data?.length ?? 0;
+  const sourceCount = board.data?.sources.length ?? 0;
 
   return (
     <div className="h-full overflow-y-auto">
@@ -38,6 +45,7 @@ export function BrainView() {
               onValueChange={setTab}
               items={[
                 { value: 'pages', label: `Pages${pages.data ? ` · ${pages.data.length}` : ''}` },
+                { value: 'sources', label: `Sources${sourceCount ? ` · ${sourceCount}` : ''}` },
                 { value: 'questions', label: `Open questions${openFindings ? ` · ${openFindings}` : ''}` },
                 { value: 'timeline', label: 'Timeline' },
               ]}
@@ -52,14 +60,14 @@ export function BrainView() {
               <EmptyState
                 icon={<Brain />}
                 title="Nothing written yet"
-                body="Talk something through with the Guide and press “Reflect into brain”, or snap a photo of your notes. Pages appear here as you learn."
+                body="Talk something through with the Guide and press “Reflect into brain”, or file a note, a photo or a document — it lands here once you accept the proposal."
                 action={
                   <div className="flex gap-2">
                     <Button variant="primary" onClick={() => go('teachers', { teacher: 'guide' })}>
                       <MessageCircleQuestion /> Talk to the Guide
                     </Button>
-                    <Button onClick={() => go('capture')}>
-                      <Camera /> Capture notes
+                    <Button onClick={() => go('contribute')}>
+                      <FilePlus2 /> Add to my wiki
                     </Button>
                   </div>
                 }
@@ -69,6 +77,16 @@ export function BrainView() {
               {pages.data?.map((page, i) => <PageCard key={page.key} page={page} index={i} onOpen={() => setSelectedKey(page.key)} />)}
             </div>
           </>
+        )}
+
+        {tab === 'sources' && (
+          <div className="max-w-2xl">
+            <p className="mb-4 text-[13px] leading-6 text-night-400">
+              Everything you filed, kept byte-for-byte under <code className="text-night-300">raw/</code>. Open one to see what the
+              engine read from it, fix the reading, or watch its job move.
+            </p>
+            <SourcesPanel board={board.data} loading={board.isLoading} onOpen={setSourceId} />
+          </div>
         )}
 
         {tab === 'questions' && (
@@ -116,6 +134,8 @@ export function BrainView() {
         )}
       </div>
       {graph.data && <ConceptSheet node={selectedNode} graph={graph.data} onSelect={(id) => setSelectedKey(id ? graph.data!.nodes.find((n) => n.id === id)?.key ?? null : null)} />}
+      <SourceDetailDialog sourceId={sourceId} onClose={() => setSourceId(null)} onReviewProposal={setProposalId} />
+      <ProposalReviewDialog proposalId={proposalId} onClose={() => setProposalId(null)} />
     </div>
   );
 }

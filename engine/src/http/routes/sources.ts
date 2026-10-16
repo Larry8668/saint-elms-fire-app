@@ -1,6 +1,15 @@
 import { Hono } from 'hono';
 import type { ContentfulStatusCode } from 'hono/utils/http-status';
 import { z } from 'zod';
+import {
+  CompileResultSchema,
+  CONTRACT_VERSION,
+  HttpUrlSchema,
+  IdentifierSchema,
+  SourceDetailSchema,
+  SourceReadResultSchema,
+  SourceReceiptSchema,
+} from '@sef/shared';
 import { JobConflictError, JobStateError, SourceRejection } from '../../brain/sources/ingest';
 import { ProposalStateError } from '../../brain/compiler/compile';
 import { VaultConflictError } from '../../brain/vault-errors';
@@ -25,8 +34,12 @@ const ingestBody = z
     mediaType: z.string().min(1).max(120),
     // Ceiling on the envelope only; the real limit is enforced on the decoded bytes.
     data: z.string().min(1).max(MAX_ENVELOPE_CHARS),
+    origin: z.enum(['student', 'external']).optional(),
+    attribution: z.strictObject({ creator: z.string().trim().min(1).max(300).optional(), url: HttpUrlSchema.optional() }).optional(),
   })
   .strict();
+
+const correctionBody = z.object({ text: z.string().min(1).max(INGEST_LIMITS.maxExtractedChars + 1) }).strict();
 
 const rejectBody = z.object({ note: z.string().max(500).optional() }).strict();
 
@@ -79,15 +92,86 @@ export function sourceRoutes(deps: EngineDeps) {
     const parsed = ingestBody.safeParse(await c.req.json().catch(() => null));
     if (!parsed.success) return c.json({ error: 'Send a kind, title, mediaType and base64 data', code: 'invalid_request' }, 400);
 
-    const { kind, title, mediaType, data } = parsed.data;
+    const { kind, title, mediaType, data, origin, attribution } = parsed.data;
     const bytes = decodeSourceBytes(data);
     if (!bytes) return c.json({ error: 'That file could not be decoded', code: 'undecodable' }, 400);
 
     try {
-      const result = await c.get('ws').sources.ingest({ kind, title, mediaType, bytes });
-      return c.json(result, 201);
+      const result = await c.get('ws').sources.ingest({ kind, title, mediaType, bytes, origin, attribution });
+      const extraction = result.extraction
+        ? { method: result.extraction.method, text: result.extraction.text, partial: result.extraction.partial, ...(result.extraction.note ? { note: result.extraction.note } : {}) }
+        : null;
+      return c.json(SourceReceiptSchema.parse({ schemaVersion: CONTRACT_VERSION, source: result.source, extraction, jobId: result.jobId, reused: result.reused }), 201);
     } catch (error) {
       const { body, status } = handled(error, 'ingest_failed');
+      return c.json(body, status);
+    }
+  });
+
+  /** The retained record, latest extraction text and covering job — a foreign id answers 404. */
+  app.get('/sources/:id', guard, async (c) => {
+    const id = IdentifierSchema.safeParse(c.req.param('id'));
+    if (!id.success) return c.json({ error: 'Source not found', code: 'not_found' }, 404);
+    try {
+      const detail = await c.get('ws').sources.detail(id.data);
+      if (!detail) return c.json({ error: 'Source not found', code: 'not_found' }, 404);
+      return c.json(SourceDetailSchema.parse({ schemaVersion: CONTRACT_VERSION, ...detail }));
+    } catch (error) {
+      const { body, status } = handled(error, 'source_failed');
+      return c.json(body, status);
+    }
+  });
+
+  /** The original bytes — e.g. the photo shown beside its transcription while correcting it. */
+  app.get('/sources/:id/raw', guard, async (c) => {
+    const id = IdentifierSchema.safeParse(c.req.param('id'));
+    if (!id.success) return c.json({ error: 'Source not found', code: 'not_found' }, 404);
+    try {
+      const raw = await c.get('ws').sources.rawBytes(id.data);
+      if (!raw) return c.json({ error: 'Source not found', code: 'not_found' }, 404);
+      // A fresh copy: the pooled buffer is not transferable, and Hono's body types want
+      // a Uint8Array over a plain ArrayBuffer.
+      return c.body(new Uint8Array(raw.bytes), 200, { 'content-type': raw.mediaType });
+    } catch (error) {
+      const { body, status } = handled(error, 'source_failed');
+      return c.json(body, status);
+    }
+  });
+
+  /**
+   * The student's own pass over the extracted text — fixing OCR, a transcription, a paste.
+   * Recorded as a new ledger entry; the original bytes under raw/ never move.
+   */
+  app.put('/sources/:id/extraction', guard, async (c) => {
+    const id = IdentifierSchema.safeParse(c.req.param('id'));
+    if (!id.success) return c.json({ error: 'Source not found', code: 'not_found' }, 404);
+    const parsed = correctionBody.safeParse(await c.req.json().catch(() => null));
+    if (!parsed.success) return c.json({ error: 'Send the corrected text', code: 'invalid_request' }, 400);
+    try {
+      const detail = await c.get('ws').sources.correct(id.data, parsed.data.text);
+      return c.json(SourceDetailSchema.parse({ schemaVersion: CONTRACT_VERSION, ...detail }));
+    } catch (error) {
+      const { body, status } = handled(error, 'correction_failed');
+      return c.json(body, status);
+    }
+  });
+
+  /**
+   * Runs the vision reader over a kept image and records the transcription as its
+   * extraction — the honest reading the student then corrects before anything compiles it.
+   */
+  app.post('/sources/:id/read', guard, async (c) => {
+    const id = IdentifierSchema.safeParse(c.req.param('id'));
+    if (!id.success) return c.json({ error: 'Source not found', code: 'not_found' }, 404);
+    try {
+      const ws = c.get('ws');
+      const result = await ws.brain.readImageSource(id.data);
+      if (!result) return c.json({ error: 'Source not found', code: 'not_found' }, 404);
+      const detail = await ws.sources.detail(id.data);
+      if (!detail) return c.json({ error: 'Source not found', code: 'not_found' }, 404);
+      return c.json(SourceReadResultSchema.parse({ schemaVersion: CONTRACT_VERSION, detail: { schemaVersion: CONTRACT_VERSION, ...detail }, reading: result.reading }));
+    } catch (error) {
+      const { body, status } = handled(error, 'read_failed');
       return c.json(body, status);
     }
   });
@@ -99,7 +183,7 @@ export function sourceRoutes(deps: EngineDeps) {
   app.post('/sources/:jobId/compile', guard, async (c) => {
     try {
       const result = await c.get('ws').compiler.compileJob(c.req.param('jobId'));
-      return c.json(result, 200);
+      return c.json(CompileResultSchema.parse({ schemaVersion: CONTRACT_VERSION, ...result }), 200);
     } catch (error) {
       const { body, status } = handled(error, 'compile_failed');
       return c.json(body, status);
@@ -148,9 +232,21 @@ export function sourceRoutes(deps: EngineDeps) {
 
   /** Accept applies the proposal through the journal; a stale proposal answers 409. */
   app.post('/proposals/:id/accept', guard, async (c) => {
+    const body = z.strictObject({ pageIds: z.array(IdentifierSchema).min(1).optional() }).safeParse(await c.req.json().catch(() => ({})));
+    if (!body.success) return c.json({ error: 'Send an optional pageIds selection', code: 'invalid_request' }, 400);
     try {
-      const { record, report } = await c.get('ws').compiler.accept(c.req.param('id'));
-      return c.json({ record, report });
+      const ws = c.get('ws');
+      const { record, report } = await ws.compiler.accept(c.req.param('id'), 'student', { only: body.data.pageIds });
+      // A session source only checkpoints its turn range once its proposal is accepted —
+      // a frozen-but-rejected reflection leaves the turns pending for the next attempt.
+      for (const sourceId of record.proposal.sourceIds) {
+        const source = await ws.wiki.readSource(sourceId).catch(() => null);
+        if (source?.kind !== 'session') continue;
+        const session = await ws.sessions.get(source.session.sessionId).catch(() => null);
+        if (session) await ws.sessions.markIngested(session, source.session.lastTurn + 1);
+      }
+      const diff = await ws.brain.pageDiffs(report.pages);
+      return c.json({ record, report, diff });
     } catch (error) {
       const { body, status } = handled(error, 'accept_failed');
       return c.json(body, status);

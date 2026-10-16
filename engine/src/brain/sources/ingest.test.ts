@@ -146,3 +146,59 @@ test('a profile cannot start more jobs than the cap allows', async () => {
   for (let i = 0; i < 2; i++) await ingestor.ingest(note(`note ${i}`), { maxActiveJobs: 2 });
   await assert.rejects(() => ingestor.ingest(note('one too many'), { maxActiveJobs: 2 }), JobStateError);
 });
+
+test('a filed job pauses for source review before any compile is asked for', async () => {
+  const { ingestor } = await harness('ingest-pause');
+  const { jobId } = await ingestor.ingest(note('Read me first.'));
+  const list = await ingestor.list();
+  assert.equal(list.jobs.find((job) => job.id === jobId)?.stage, 'awaiting_source_review');
+});
+
+test('detail exposes the retained record, its reading and its job — and stays invisible to another profile', async () => {
+  const { store, ingestor } = await harness('ingest-detail');
+  const { source } = await ingestor.ingest(note('the words on the page'));
+
+  const detail = await ingestor.detail(source.id);
+  assert.equal(detail?.record.id, source.id);
+  assert.match(detail?.extraction?.text ?? '', /words on the page/);
+  assert.equal(detail?.job?.sourceIds[0], source.id);
+
+  const foreign = new SourceIngestor(store, async () => ({ ...PROFILE, studentId: 'student-b' }));
+  assert.equal(await foreign.detail(source.id), null, 'a foreign source answers null, not the record');
+  assert.equal(await foreign.rawBytes(source.id), null);
+});
+
+test('raw bytes come back byte-for-byte, no matter what later passes recorded', async () => {
+  const { ingestor } = await harness('ingest-raw');
+  const original = Buffer.from('the original words', 'utf8');
+  const { source } = await ingestor.ingest({ ...note('x'), bytes: original });
+  await ingestor.correct(source.id, 'the corrected words');
+  const raw = await ingestor.rawBytes(source.id);
+  assert.deepEqual(raw?.bytes, new Uint8Array(original), 'corrections never reach the frozen original');
+  assert.equal(raw?.mediaType, 'text/markdown');
+});
+
+test('a correction becomes the text a compile reads; the original bytes never move', async () => {
+  const { store, ingestor } = await harness('ingest-correct');
+  const { source } = await ingestor.ingest(note('momentum mas times velocity'));
+  const before = await store.readSourceBytes(source.id);
+
+  const detail = await ingestor.correct(source.id, 'momentum is mass times velocity');
+  assert.equal(detail?.extraction?.method, 'student_correction');
+  assert.match((await store.readExtractionText(source.id)) ?? '', /mass times velocity/);
+
+  assert.deepEqual(await store.readSourceBytes(source.id), before, 'the frozen original is untouched by a correction');
+  const record = await store.readSource(source.id);
+  assert.equal(record?.extractions.at(-1)?.method, 'student_correction');
+  assert.equal(record?.extractions.length, 2, 'the first pass stays in the ledger');
+});
+
+test('a missing source or an empty correction is refused, not written', async () => {
+  const { ingestor } = await harness('ingest-correct-refused');
+  const missing = await ingestor.correct('src_missing', 'text').catch((e: unknown) => e);
+  assert.ok(missing instanceof SourceRejection);
+  assert.equal(missing.status, 404);
+
+  const { source } = await ingestor.ingest(note('keep me'));
+  await assert.rejects(() => ingestor.correct(source.id, '   '), SourceRejection);
+});

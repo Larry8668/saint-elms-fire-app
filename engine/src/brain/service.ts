@@ -3,15 +3,10 @@ import path from 'node:path';
 import {
   CONTRACT_VERSION,
   type BrainDiffEntry,
-  type BrainEditOp,
-  type ChatAttachment,
   type ConceptPage,
-  type Evidence,
-  type IngestResult,
   type Lesson,
   type LintFinding,
   type ProfileIdentity,
-  type RejectedOp,
   type WikiProposal,
 } from '@sef/shared';
 import { z } from 'zod';
@@ -19,19 +14,19 @@ import { generateStructured } from '../agents/factory';
 import { QUIZ_INSTRUCTIONS } from '../agents/prompts';
 import { log } from '../config';
 import type { ContentStore } from '../content/store';
-import { readJson, readText, writeJson } from '../lib/fs';
+import { readJson, writeJson } from '../lib/fs';
 import { resolveModel } from '../models/registry';
 import type { Session } from '../sessions/store';
 import type { SettingsReader } from '../settings/store';
-import type { CompileResult, WikiCompiler } from './compiler/compile';
 import { buildCourseGraph, type CourseGraph } from './course-graph';
 import { buildGraphView } from './graph';
 import { lintBrain } from './lint';
 import { computeStatus } from './mastery';
 import { writeProposalRecord } from './proposals';
+import { countChars } from './sources/limits';
+import { recordVisionText } from './sources/extract';
 import type { SourceIngestor } from './sources/ingest';
 import type { BrainVault } from './vault';
-import { historyRelativePath, vaultPath } from './vault-layout';
 import { readPageFile } from './wiki-page-format';
 import type { PageChange, WikiStore } from './wiki-store';
 
@@ -108,7 +103,6 @@ export class BrainService {
     private readonly deps: {
       wiki: WikiStore;
       sources: SourceIngestor;
-      compiler: WikiCompiler;
       identity: () => Promise<ProfileIdentity>;
     },
   ) {}
@@ -163,7 +157,7 @@ export class BrainService {
    * `statusBefore` is read back from the page's history file — the version the commit just
    * archived — so the before/after the student sees is the truth on disk, not a guess.
    */
-  private async diffOf(changes: PageChange[]): Promise<BrainDiffEntry[]> {
+  async pageDiffs(changes: PageChange[]): Promise<BrainDiffEntry[]> {
     const diff: BrainDiffEntry[] = [];
     for (const change of changes) {
       if (change.change === 'unchanged') continue;
@@ -186,50 +180,24 @@ export class BrainService {
   }
 
   private async pageAtRevision(id: string, revision: string) {
-    const snapshot = await this.deps.wiki.readPage(id);
-    if (!snapshot) return null;
-    const raw = await readText(vaultPath(this.deps.wiki.root, historyRelativePath(snapshot.kind, id, revision)));
-    if (raw === null) return null;
-    const parsed = readPageFile(raw);
-    if (parsed.format === 2) return { metadata: parsed.metadata, body: parsed.body, raw, legacy: null };
-    if (parsed.format === 1) return { metadata: null, body: parsed.body, raw, legacy: parsed.legacy };
+    const saved = await this.deps.wiki.readPageRevision(id, revision);
+    if (!saved) return null;
+    const parsed = readPageFile(saved.raw);
+    if (parsed.format === 2) return { metadata: parsed.metadata, body: parsed.body, raw: saved.raw, legacy: null };
+    if (parsed.format === 1) return { metadata: null, body: parsed.body, raw: saved.raw, legacy: parsed.legacy };
     return null;
   }
 
-  /** A completed compile is reported in the same shape Reflect has always returned. */
-  private async toIngestResult(compiled: CompileResult, trigger: Evidence): Promise<IngestResult> {
-    const applied: BrainEditOp[] = [];
-    const proposal = compiled.proposalId ? await this.deps.compiler.getProposal(compiled.proposalId) : null;
-    for (const op of proposal?.proposal.operations ?? []) {
-      if (op.op === 'add_link') {
-        applied.push({ op: 'add_link', from: op.fromPageId, to: op.link.toPageId, type: op.link.type, origin: op.link.origin, why: op.link.why });
-      }
-    }
-    const rejected: RejectedOp[] = compiled.dropped.map((drop) => ({ op: { what: drop.what }, reason: drop.reason }));
-    const diff = await this.diffOf(compiled.report?.pages ?? []);
-    return {
-      trigger: { kind: trigger.kind, ref: trigger.ref },
-      applied,
-      rejected,
-      diff,
-      model: compiled.model,
-      durationMs: compiled.durationMs,
-      jobId: compiled.job.id,
-      proposalId: compiled.proposalId ?? undefined,
-      stage: compiled.job.stage,
-    };
-  }
-
   /**
-   * Reflect on a tutoring session: the fresh turns are frozen as a session source — the
-   * committed transcript range travels with it — then the compiler proposes wiki updates
-   * which are auto-committed because clicking Reflect *is* the student's review.
+   * Freezes the un-reflected turns of a session as a session source — the committed
+   * transcript range travels with it — without compiling anything. Reflect uses this so
+   * the turns stay pending until the student accepts the proposal they produce.
    */
-  async ingestSession(session: Session): Promise<IngestResult> {
+  async freezeSession(session: Session): Promise<Awaited<ReturnType<SourceIngestor['ingest']>>> {
     const fresh = session.turns.slice(session.ingestedTurns);
     const transcript = fresh.map((t) => `${t.role === 'user' ? 'Student' : 'Teacher'}: ${t.content}`).join('\n');
     const title = `${session.teacher[0]!.toUpperCase()}${session.teacher.slice(1)} session: ${fresh.find((t) => t.role === 'user')?.content.slice(0, 60) ?? 'conversation'}`;
-    const ingested = await this.deps.sources.ingest({
+    return this.deps.sources.ingest({
       kind: 'session',
       title,
       mediaType: 'text/plain',
@@ -237,56 +205,37 @@ export class BrainService {
       session: { sessionId: session.id, teacher: session.teacher, firstTurn: session.ingestedTurns, lastTurn: session.turns.length - 1 },
       extraction: { method: 'text', text: transcript },
     });
-    const compiled = await this.deps.compiler.compileJob(ingested.jobId, { autoAccept: true });
-    const result = await this.toIngestResult(compiled, { kind: 'session', ref: session.id, at: new Date().toISOString() });
-    // Only a committed or honestly-empty outcome consumes the turns — a failed compile
-    // leaves them pending so a retry re-reads the same range.
-    if (compiled.job.stage === 'committed' || compiled.job.stage === 'no_changes') {
-      result.consumedTurns = session.ingestedTurns + fresh.length;
-    }
-    return result;
   }
 
   /**
-   * Photo of notes → vision reader transcribes (the student sees that reading) → the photo
-   * and its transcription are frozen as an image source → compiled like any other source.
+   * A fresh vision pass over a kept image source. The transcription is recorded as the
+   * source's extraction — the student sees it, can correct it, and only then a compile
+   * reads it. Returns null for anything that is not this student's image source.
    */
-  async capture(image: ChatAttachment, note?: string): Promise<IngestResult & { reading: z.infer<typeof NotesReadingSchema> }> {
+  async readImageSource(sourceId: string): Promise<{ reading: z.infer<typeof NotesReadingSchema> } | null> {
+    const [record, identity] = await Promise.all([this.deps.wiki.readSource(sourceId), this.deps.identity()]);
+    if (!record || record.profile.studentId !== identity.studentId || record.kind !== 'image') return null;
+    const bytes = await this.deps.wiki.readSourceBytes(record.id);
+    if (!bytes) return null;
     const settings = await this.settings.get();
     const vision = resolveModel(settings, 'vision');
     const { object: reading } = await generateStructured({
       agentId: 'notes-reader',
       instructions: 'You read photos of a student\'s handwritten or printed study notes and transcribe them faithfully. Do not add content that is not on the page.',
       resolved: vision,
-      prompt: `Transcribe these notes.${note ? ` The student says: ${note}` : ''}`,
-      images: [image],
+      prompt: 'Transcribe these notes.',
+      images: [{ kind: 'image', mimeType: record.mediaType, data: bytes.toString('base64') }],
       schema: NotesReadingSchema,
     });
-    const bytes = new Uint8Array(Buffer.from(image.data, 'base64'));
-    const ingested = await this.deps.sources.ingest({
-      kind: 'image',
-      title: `Notes photo — ${reading.topic}`,
-      mediaType: image.mimeType,
-      bytes,
-      extraction: { method: 'vision', text: reading.transcription },
-    });
-    const compiled = await this.deps.compiler.compileJob(ingested.jobId, { autoAccept: true });
-    const result = await this.toIngestResult(compiled, { kind: 'capture', ref: ingested.source.id, at: new Date().toISOString(), note: reading.topic });
-
-    if (note?.trim()) {
-      const noteSource = await this.deps.sources.ingest({
-        kind: 'note',
-        title: `Note on the photo — ${reading.topic}`,
-        mediaType: 'text/markdown',
-        bytes: new TextEncoder().encode(note.trim()),
-      });
-      const noteCompiled = await this.deps.compiler.compileJob(noteSource.jobId, { autoAccept: true });
-      const extra = await this.toIngestResult(noteCompiled, { kind: 'capture', ref: noteSource.source.id, at: new Date().toISOString() });
-      result.applied.push(...extra.applied);
-      result.rejected.push(...extra.rejected);
-      result.diff.push(...extra.diff);
+    const outcome = recordVisionText(new Uint8Array(bytes), reading.transcription);
+    if (outcome.ok) {
+      await this.deps.wiki.recordExtraction(
+        record.id,
+        { method: 'vision', sha256: outcome.result.sha256, chars: countChars(outcome.result.text), partial: outcome.result.partial, ...(outcome.result.note ? { note: outcome.result.note } : {}) },
+        outcome.result.text || undefined,
+      );
     }
-    return { ...result, reading };
+    return { reading };
   }
 
   async createQuiz(key: string) {
@@ -377,7 +326,7 @@ export class BrainService {
       decidedAt: at,
       decidedBy: 'system',
     });
-    const diff = await this.diffOf(report.pages);
+    const diff = await this.pageDiffs(report.pages);
     await this.vault.appendLog({ kind: 'quiz', title: `Quiz on ${quiz.concept}`, detail: `Scored ${score}/${quiz.questions.length}.` });
     return {
       score,

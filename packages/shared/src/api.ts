@@ -1,5 +1,6 @@
-import type { ConceptStatus, EdgeOrigin, EdgeType, IngestResult } from './brain';
+import type { BrainDiffEntry, ConceptStatus, EdgeOrigin, EdgeType, IngestResult } from './brain';
 import type { TeacherId } from './teachers';
+import type { ProposalReport, WikiProposalRecord } from './wiki';
 
 /** Engine HTTP contract shared by the desktop app and the engine. */
 
@@ -219,3 +220,22 @@ export interface HealthResponse {
 }
 
 export type { IngestResult };
+
+/** POST /api/sources body: raw bytes base64-encoded, with the student's own provenance claim. */
+export interface ContributeBody {
+  kind: 'note' | 'document' | 'image';
+  title: string;
+  mediaType: string;
+  /** Base64 without the data: prefix. */
+  data: string;
+  /** 'student' = own understanding; 'external' = filed under its real attribution. Kinds restrict the choice. */
+  origin?: 'student' | 'external';
+  attribution?: { creator?: string; url?: string };
+}
+
+/** POST /api/proposals/:id/accept — the decided record, the journaled report, and a fresh page diff. */
+export interface ProposalAcceptance {
+  record: WikiProposalRecord;
+  report: ProposalReport;
+  diff: BrainDiffEntry[];
+}

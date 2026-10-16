@@ -14,7 +14,7 @@ export const useSharePages = () => {
 
 export const useSourceList = () => {
   const pid = useProfileId();
-  return useQuery({ queryKey: ['profile', pid, 'sources'], queryFn: api.sources });
+  return useQuery({ queryKey: ['profile', pid, 'sources'], queryFn: api.jobBoard });
 };
 
 /** Cursor-paginated cohort feed; `fetchNextPage` walks the server's opaque cursor. */

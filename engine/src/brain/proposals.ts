@@ -1,5 +1,5 @@
 import { readdir } from 'node:fs/promises';
-import { CONTRACT_VERSION, WikiProposalRecordSchema, type WikiProposal, type WikiProposalRecord } from '@sef/shared';
+import { CONTRACT_VERSION, WikiProposalRecordSchema, type DroppedItem, type WikiProposal, type WikiProposalRecord } from '@sef/shared';
 import { readJson, writeJson } from '../lib/fs';
 import { META_DIRECTORY, META_PROPOSALS_DIRECTORY, assertRecordId, vaultPath } from './vault-layout';
 
@@ -16,7 +16,7 @@ export async function writeProposalRecord(root: string, record: WikiProposalReco
   await writeJson(proposalPath(root, record.proposal.id), WikiProposalRecordSchema.parse(record));
 }
 
-export function pendingProposalRecord(proposal: WikiProposal, jobId: string): WikiProposalRecord {
+export function pendingProposalRecord(proposal: WikiProposal, jobId: string | null, dropped: DroppedItem[] = []): WikiProposalRecord {
   return WikiProposalRecordSchema.parse({
     schemaVersion: CONTRACT_VERSION,
     proposal,
@@ -24,6 +24,7 @@ export function pendingProposalRecord(proposal: WikiProposal, jobId: string): Wi
     state: 'pending',
     decidedAt: null,
     decidedBy: null,
+    ...(dropped.length ? { dropped } : {}),
   });
 }
 

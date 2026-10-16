@@ -150,13 +150,18 @@ The `status` in frontmatter is only a cache, recomputed on every save and every 
 ## 3. How the brain changes
 
 Every keeper-authored write goes through one pipeline — the **compiler** in
-`engine/src/brain/compiler/` — used by **Reflect** (after a chat), **Capture** (photo of
-notes) and the `POST /api/sources/:jobId/compile` route:
+`engine/src/brain/compiler/` — reached from **Contribute** (typed notes, pasted text,
+uploads), **Reflect** (freezing a chat's fresh turns) and the
+`POST /api/sources/:jobId/compile` route:
 
 1. **Freeze.** The material becomes a source: the original bytes are stored immutably, the
    extraction (transcript, transcription, parsed text) is frozen beside the record under
-   `.meta/sources/<id>/extracted/`, and a durable job tracks it. Reflect freezes exactly the
-   turns that had not been reflected on before; the transcript range travels with the source.
+   `.meta/sources/<id>/extracted/`, and a durable job tracks it. Each source declares its
+   **origin** (`student` or `external`) and optional attribution (creator, URL), and waits at
+   `awaiting_source_review` until the student compiles it — before that they can fix a bad
+   read with a *correction*, which appends a new `student_correction` extraction revision
+   instead of overwriting the original. Reflect freezes exactly the turns that had not been
+   reflected on before; the transcript range travels with the source.
 2. **Context** (`context.ts`). The keeper sees the conventions revision, `index.md`, the
    pages this material plausibly touches (source citations, title and concept matches, one
    hop of links — capped at 10), and the source text itself. Nothing else enters the prompt.
@@ -180,9 +185,9 @@ notes) and the `POST /api/sources/:jobId/compile` route:
    ends the job as `no_changes`, honestly.
 5. **Review.** `POST /api/proposals/:id/accept` applies the proposal through the journaled
    write path — every page is re-read and revisions re-checked, so a stale proposal is
-   refused. `POST /api/proposals/:id/reject` changes no pages and cancels the job. Reflect and
-   Capture auto-accept: clicking the button *is* the student's review, and the record marks
-   it `decidedBy: 'system'` for audit.
+   refused; the student may accept a subset of pages. `POST /api/proposals/:id/reject`
+   changes no pages and cancels the job. There is no auto-accept left: every model-drafted
+   proposal waits for the student's explicit choice, marked `decidedBy: 'student'`.
 6. **Checkpoint.** Only `committed` or `no_changes` consumes transcript turns — a failed
    compile leaves them pending so a retry reads the same range.
 
