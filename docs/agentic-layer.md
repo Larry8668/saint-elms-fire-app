@@ -23,7 +23,7 @@ There are three **teachers** (conversational agents with tools) and three **work
 
 | Agent | Kind | Model role | Tools | Contract |
 | --- | --- | --- | --- | --- |
-| **Friend** (Socrates my Friend) | teacher | `tutor` | `search_lessons` (support corpus only), `handoff` | Campus life only, from university support notes. Never shares another student's details. Academic questions go to the Guide. |
+| **Friend** (Socrates my Friend) | teacher | `tutor` (`vision` when an image is attached) | `search_lessons` (support corpus only), `handoff`, `tool:logistics` (notice-photo extraction) | Campus life only, from university support notes and the student's *confirmed* logistics. Never shares another student's details. Academic questions go to the Guide. |
 | **Guide** (Socrates my Guide) | teacher | `tutor` (`vision` when an image is attached) | `search_lessons`, `read_lesson`, `brain_lookup`, `weakest_concepts`, `search_wiki`, `read_wiki_page`, `handoff` | Teaches only from released lessons, Socratically: explain, then ask one checking question. Probes the student's open misconceptions instead of just correcting them. |
 | **Philosopher** (Socratest my Philosopher) | teacher | `tutor` | `search_lessons`, `web_search`, `brain_lookup`, `search_wiki`, `read_wiki_page`, `handoff` | Every substantive line is tagged `[course]` or `[web]`; `[web]` only for things in the web results. Ends with exactly one `Trailhead:` question. |
 | **Brain keeper** | worker | `brain` (thinking on) | none (structured output) | Reads a session or capture and proposes page updates, misconceptions, resolutions and links, using only allowed concept names. |
@@ -57,7 +57,7 @@ Tools are built **per turn** around a `TurnContext` (`context.ts`), so every cal
    - anything else goes to the model.
 
    This holds even if the model is weak or jailbroken, because the model never sees the request.
-2. **Retrieval up front.** Lessons are searched from the right pool (`content/search.ts`). The search is weighted keyword scoring over title, concepts, headings and body, keeping hits within 40% of the best score, top 3. Only installed lessons exist on the device, and only released lessons can be installed, so "released lessons only" holds by construction. Retrieval happens before the model runs, so even a model that is weak at tool use stays grounded; the teacher can still call `search_lessons` or `read_lesson` for more.
+2. **Retrieval up front.** Lessons are searched from the right pool (`content/search.ts`). The search is weighted keyword scoring over title, concepts, headings and body, keeping hits within 40% of the best score, top 3. Only installed lessons exist on the device, and only released lessons can be installed, so "released lessons only" holds by construction. Retrieval happens before the model runs, so even a model that is weak at tool use stays grounded; the teacher can still call `search_lessons` or `read_lesson` for more. For the Friend, the student's **confirmed logistics** join the prompt here too (`logistics/context.ts`, under the `context:logistics` capability) as a `YOUR LOGISTICS` block plus citable `logistics` sources; proposals waiting on the student arrive in a shielded `UNCONFIRMED LOGISTICS` block that may be named as `[withheld: <id>]` but can never support a statement. Guide and Philosopher get neither — the store is only read inside the Friend branch.
 3. **Brain context (Guide and Philosopher).** Concept keys from the hits are looked up in the student's vault. Their status, "in my words", and up to five open misconceptions go into a `STUDENT BRAIN` block. This is why the Guide says things like "given that you're shaky on the second law…".
 4. **Wiki-first (Guide and Philosopher).** The compiled wiki is searched for the same question before the model runs (`brain/query.ts → WikiQuery.search`). Matching page ids, kinds and summaries go into a `WIKI PAGES` block, so a repeated question finds the saved synthesis rather than being re-derived from raw sources — a teacher that wants the page itself calls `read_wiki_page`, which judges every claim live and marks generated pages withheld.
 5. **Web search (Philosopher).** SearXNG is queried and results are passed in a `WEB RESULTS` block. If search is down, the block says so, and the model is told to use `[course]` lines only.
@@ -66,6 +66,8 @@ Tools are built **per turn** around a `TurnContext` (`context.ts`), so every cal
 8. **Serve.** Only the segments that passed are reassembled into the answer; the single `delta` event the UI receives already carries the verified text. Statements nothing could back are withheld; if nothing claim-bearing survives at all, the answer is replaced by an honest decline ("your released lessons don't back that, and I won't invent a source"). A citation is never re-labelled into a more plausible one.
 9. **Persist.** The turn is appended to the student's session file, with the full `Verification` (section 5).
 10. **Done event.** The UI gets the served text and the `Verification` object (model, provider, sources, checks, segments, withheld count, tool calls, handoff, lane) and renders source chips plus the verification panel.
+
+A Friend turn carrying an image also runs `logistics/extract.ts` alongside the answer (the `tool:logistics` capability, checked deterministically — never the model's decision): the vision model transcribes notices and timetables into flat `LogisticsDraft`s, the same privacy lane re-judges the extracted text, and whatever survives is written to the store **only as `proposed` records**. The `logistics` check on the verification panel records how many proposals were filed (or why none was). The student's own click on *Confirm* in the Logistics view is the only path to `confirmed`.
 
 ## 4. Sources: what they are and how the answer is checked against them
 
@@ -76,6 +78,7 @@ There are five kinds of source (`SourceRef` in `packages/shared/src/api.ts`):
 | `lesson` / `support` | Retrieval and the `search_lessons` / `read_lesson` tools | Always a real installed lesson. Whether the answer **used** it is checked by the evidence assessment (below). |
 | `brain` | `brain_lookup`, `read_wiki_page` | The student's own page, exactly as read — and for a generated page, flagged as withheld evidence. |
 | `web` | SearXNG results | The real URL and title returned by search. A `[web]` tag or `[web: n]` citation only resolves if it names one of the results the teacher actually saw. |
+| `logistics` | The student's confirmed logistics records (Friend only) | A real record the student confirmed with their own click — a proposal is never in this set. |
 
 ### The permitted evidence set
 
@@ -83,7 +86,7 @@ There are five kinds of source (`SourceRef` in `packages/shared/src/api.ts`):
 
 ### Citations are resolved, not believed
 
-The prompt teaches the permitted forms — `[lesson: <id>]`, `[support: <id>]`, `[web: <n or url>]`, `[brain: <key>]`, `[claim: <id>]`, plus the Philosopher's bare `[course]`/`[web]` class tags — and `parseCitations` finds them in the answer. `EvidenceSet.resolve` then decides each one in code:
+The prompt teaches the permitted forms — `[lesson: <id>]`, `[support: <id>]`, `[web: <n or url>]`, `[brain: <key>]`, `[claim: <id>]`, `[logistics: <record id>]` (Friend only), plus the Philosopher's bare `[course]`/`[web]` class tags — and `parseCitations` finds them in the answer. `EvidenceSet.resolve` then decides each one in code:
 
 | Verdict | Meaning |
 | --- | --- |
@@ -134,9 +137,10 @@ Attribution and citation resolution are lexical, not semantic: they verify that 
 
 ## 7. Data boundaries
 
-- Each signed-in student gets a **workspace** (`profiles/workspace.ts`) with their own content store, vault, sessions and quizzes. Agents receive only that workspace, so one student's brain can't leak into another's prompt on a shared device.
+- Each signed-in student gets a **workspace** (`profiles/workspace.ts`) with their own content store, vault, sessions, quizzes and **logistics store**. Agents receive only that workspace, so one student's brain can't leak into another's prompt on a shared device.
 - The student's name in a teacher prompt comes from the verified profile, not from editable settings.
 - Course content arrives only as ed25519-signed packages, hash-checked file by file, from a key pinned on first sync.
+- **Logistics are private by construction**: one JSON ledger per profile (`logistics/store.ts`, atomic writes), routes scoped by `c.get('ws')`, never in share payloads — the share allowlist has no path that could carry them. The Guide and Philosopher never read the store; only the Friend's `context:logistics` capability opens it, and only the `confirmed` slice is assertable. A missing date or time zone is stored and shown as missing, never guessed.
 
 ## 8. Changing or adding an agent
 

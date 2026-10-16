@@ -244,3 +244,31 @@ test('a philosopher line tagged [web] over course-only evidence is withheld as w
   assert.doesNotMatch(assessed.text, /damped oscillator/, 'the [web] tag was not quietly re-labelled [course]');
   assert.match(assessed.checks.find((c) => c.id === 'citations')?.detail ?? '', /wrong class/);
 });
+
+const logisticsEvidence = () =>
+  buildEvidenceSet({
+    sources: [{ kind: 'logistics', id: 'log-fees', title: 'Semester fees — instalment 2' }],
+    evidenceText: new Map([['logistics:log-fees', '- Semester fees — instalment 2 (deadline, id: log-fees): due 2026-03-14 (Asia/Kolkata)']]),
+    proposedLogistics: [{ id: 'log-draft', title: 'Exam timetable draft', text: '- Exam timetable draft (timetable, id: log-draft): no date recorded' }],
+  });
+
+test('a confirmed logistics record resolves under its own citation class', () => {
+  const c = logisticsEvidence().resolve({ raw: '[logistics: log-fees]', declared: 'logistics', id: 'log-fees' }, terms('fees instalment due march kolkata'), 3);
+  assert.equal(c.verdict, 'cited');
+  assert.equal(c.item?.kind, 'logistics');
+});
+
+test('an unconfirmed extraction may be named as withheld but never asserted', () => {
+  const ev = logisticsEvidence();
+  assert.equal(ev.resolve({ raw: '[withheld: log-draft]', declared: 'withheld', id: 'log-draft' }, terms('exam timetable'), 3).verdict, 'withheld', 'naming a proposal as withheld is permitted');
+  assert.equal(ev.resolve({ raw: '[logistics: log-draft]', declared: 'logistics', id: 'log-draft' }, terms('exam timetable'), 3).verdict, 'withheld', 'asserting it plainly is withheld too');
+
+  const asserted = assessAnswer('Your physics paper is on March 14 per the exam draft. [logistics: log-draft]', 'exam date?', ev, { teacher: 'friend' });
+  assert.doesNotMatch(asserted.text, /March 14/, 'proposed contents cannot stand as a fact');
+  const named = assessAnswer('A draft exam timetable extraction sits in your records awaiting confirmation [withheld: log-draft].', 'anything new?', ev, { teacher: 'friend' });
+  assert.match(named.text, /awaiting confirmation/, 'the proposal may be named for what it is');
+});
+
+test('a logistics citation on a teacher without the ledger is forged, not honoured', () => {
+  assert.equal(resolve(evidence(), 'logistics', 'log-fees').verdict, 'forged');
+});

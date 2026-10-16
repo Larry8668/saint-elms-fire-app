@@ -24,7 +24,7 @@ const ABBREV = /\b(e\.g|i\.e|etc|vs|cf|fig|dr|mr|mrs|ms|st|no|vol|approx|resp|al
 const UNCERTAIN =
   /\b(i'?m not (?:sure|certain)|i don'?t know|i can'?t (?:say|tell|verify|check|find|confirm)|i'?m unable|i can only|not (?:in|covered|part of) (?:your|the) (?:released )?(?:lessons|courseware|syllabus|notes)|isn'?t covered|outside (?:your|the) (?:released )?(?:lessons|syllabus|notes|courseware)|don'?t (?:have|see|find) (?:anything|that|it) in|beyond (?:what|the) (?:lessons|material|notes|syllabus)|no (?:released )?lessons? (?:covers?|mentions?|says?|tackles?)|(?:lessons?|notes|syllabus) (?:don'?t|doesn'?t|do not|does not) (?:say|cover|mention)|can'?t (?:ground|back|support|verify) (?:that|this)|honestly,? i (?:don'?t|can'?t|do not|cannot)|nothing (?:in|of) (?:your|the) (?:lessons|notes|syllabus))\b/i;
 const BELIEF =
-  /\b(you (?:wrote|said|tell|told|believe|believed|asked|ask|got|get|noted|mentioned|showed|see|thought|think|felt|mean|meant|described|gave)|your (?:notes?|page|wiki|own words|words|understanding|question|answer|idea|misconception|guess|work|working|brain|point|example|attempt|reasoning|intuition)|in your (?:own )?words|you'?ve (?:said|written|been|got|seen|told|asked|described)|you'?re (?:shaky|stuck|unsure|unclear|right|wrong|correct|mixing|confusing)|you'?d (?:said|written)|what you (?:wrote|said|told|believe|asked|mean)|your (?:own|earlier) (?:page|note|idea|answer))\b/i;
+  /\b(you (?:wrote|said|tell|told|believe|believed|asked|ask|got|get|noted|mentioned|showed|see|thought|think|felt|mean|meant|described|gave)|your (?:notes?|page|wiki|own words|words|understanding|question|answer|idea|misconception|guess|work|working|brain|point|example|attempt|reasoning|intuition|records?|logistics)|in your (?:own )?words|you'?ve (?:said|written|been|got|seen|told|asked|described)|you'?re (?:shaky|stuck|unsure|unclear|right|wrong|correct|mixing|confusing)|you'?d (?:said|written)|what you (?:wrote|said|told|believe|asked|mean)|your (?:own|earlier) (?:page|note|idea|answer|record))\b/i;
 const DEDUCTION =
   /^(?:so\b|therefore|thus|hence|that means|which means|it follows|in other words|because of that|as a result|putting (?:that|this|them|it) together|all told|overall|then)\b|\b(?:therefore|it follows that|which means|that means|as a result,? (?:so|then)|so it must|so the)\b/i;
 
@@ -193,7 +193,7 @@ export interface AssessOptions {
 }
 
 export const UNSUPPORTED_ANSWER: Record<TeacherId, string> = {
-  friend: 'The university notes I can read don’t back that, and I won’t invent a source. Try rephrasing, or ask me to search the notes.',
+  friend: 'The university notes and your confirmed logistics don’t back that, and I won’t invent a source. Try rephrasing, or check your Logistics.',
   guide: 'Your released lessons don’t back that, and I won’t invent a source. Rephrase, or ask me to search your lessons.',
   philosopher: 'Neither your released lessons nor the web results I actually have back that, and I won’t invent a source. Sharpen the question, or consent to a web search.',
 };
@@ -261,7 +261,7 @@ export function assessAnswer(raw: string, question: string, evidence: EvidenceSe
       }
       case 'belief': {
         if (!decideByCitations(w)) {
-          const hit = evidence.bestSupport(segmentTerms(w.raw), ['brain', 'claim']);
+          const hit = evidence.bestSupport(segmentTerms(w.raw), ['brain', 'claim', 'logistics']);
           if (hit && hit.n >= BELIEF_SUPPORT_MIN) {
             w.support = 'supported';
             w.sources = [hit.item.id];

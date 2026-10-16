@@ -13,3 +13,4 @@ export * from './programme';
 export * from './wiki';
 export * from './sharing';
 export * from './teacher-policy';
+export * from './logistics';

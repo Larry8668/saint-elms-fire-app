@@ -34,6 +34,7 @@ const PRIVATE_HEADING = /^(where i got stuck|my struggles?|misconceptions?|open 
 export const NEVER_SHARED = [
   'Quiz results and other mastery evidence',
   'Conversations with your teachers',
+  'Personal logistics (your deadlines, notices and timetable records)',
   'Contact details (names, emails, phone numbers) found outside the page body',
   'Pages you did not choose to share',
 ] as const;

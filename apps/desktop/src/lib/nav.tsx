@@ -2,7 +2,7 @@ import { createContext, useCallback, useContext, useEffect, useMemo, useState, t
 import { TEACHER_IDS, type TeacherId } from '@sef/shared';
 import { log } from './log';
 
-export const VIEWS = ['sky', 'teachers', 'library', 'brain', 'contribute', 'peers', 'settings'] as const;
+export const VIEWS = ['sky', 'teachers', 'library', 'brain', 'contribute', 'peers', 'logistics', 'settings'] as const;
 export type View = (typeof VIEWS)[number];
 
 export interface NavState {

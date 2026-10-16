@@ -114,6 +114,15 @@ test('the Friend never reaches courseware, wiki claims or learner evidence', () 
   assert.equal(can('friend', 'lesson:academic_pool'), false);
 });
 
+test('logistics are the Friend’s alone — declared, not inherited by the other teachers', () => {
+  assert.equal(can('friend', 'context:logistics'), true);
+  assert.equal(can('friend', 'tool:logistics'), true);
+  for (const teacher of ['guide', 'philosopher'] as const) {
+    assert.equal(can(teacher, 'context:logistics'), false, `${teacher} must not read the student’s logistics`);
+    assert.equal(can(teacher, 'tool:logistics'), false, `${teacher} must not file logistics`);
+  }
+});
+
 test('a conversation session names its student and its teacher', () => {
   const session = { sessionId: 's-1', teacher: 'guide', profileId: 'p-1', createdAt: '2026-01-01T00:00:00.000Z', turnCount: 0 };
   assert.equal(ConversationSessionSchema.safeParse(session).success, true);

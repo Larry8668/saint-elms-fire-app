@@ -1,5 +1,5 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
-import type { TeacherId, WikiJob } from '@sef/shared';
+import type { LogisticsWriteInput, TeacherId, WikiJob } from '@sef/shared';
 import { toast } from 'sonner';
 import { api, type StoredSettings } from './api';
 
@@ -31,6 +31,7 @@ export const keys = {
     sourceBytes: (p: string, id: string) => ['profile', p, 'source-bytes', id] as const,
     proposals: (p: string) => ['profile', p, 'proposals'] as const,
     proposal: (p: string, id: string) => ['profile', p, 'proposal', id] as const,
+    logistics: (p: string) => ['profile', p, 'logistics'] as const,
   },
 };
 
@@ -138,6 +139,81 @@ export function useSaveSettings() {
       client.setQueryData(settingsKey, settings);
       void client.invalidateQueries({ queryKey: keys.health });
       toast.success('Settings saved');
+    },
+    onError: (error) => toast.error((error as Error).message),
+  });
+}
+
+/** The student's private logistics ledger — scoped to the profile like everything else it owns. */
+export const useLogistics = () => useQuery({ queryKey: keys.scoped.logistics(profile()), queryFn: api.logistics });
+
+export function useCreateLogistics() {
+  const client = useQueryClient();
+  const key = keys.scoped.logistics(profile());
+  return useMutation({
+    mutationFn: (body: LogisticsWriteInput) => api.createLogistics(body),
+    onSuccess: () => {
+      void client.invalidateQueries({ queryKey: key });
+      toast.success('Logistics record saved');
+    },
+    onError: (error) => toast.error((error as Error).message),
+  });
+}
+
+export function useUpdateLogistics() {
+  const client = useQueryClient();
+  const key = keys.scoped.logistics(profile());
+  return useMutation({
+    mutationFn: ({ id, patch }: { id: string; patch: Partial<LogisticsWriteInput> }) => api.updateLogistics(id, patch),
+    onSuccess: () => void client.invalidateQueries({ queryKey: key }),
+    onError: (error) => toast.error((error as Error).message),
+  });
+}
+
+export function useConfirmLogistics() {
+  const client = useQueryClient();
+  const key = keys.scoped.logistics(profile());
+  return useMutation({
+    mutationFn: ({ id, patch }: { id: string; patch?: Partial<LogisticsWriteInput> }) => api.confirmLogistics(id, patch),
+    onSuccess: () => {
+      void client.invalidateQueries({ queryKey: key });
+      toast.success('Confirmed — the Friend can now draw on it');
+    },
+    onError: (error) => toast.error((error as Error).message),
+  });
+}
+
+export function useDismissLogistics() {
+  const client = useQueryClient();
+  const key = keys.scoped.logistics(profile());
+  return useMutation({
+    mutationFn: (id: string) => api.dismissLogistics(id),
+    onSuccess: () => void client.invalidateQueries({ queryKey: key }),
+    onError: (error) => toast.error((error as Error).message),
+  });
+}
+
+export function useDeleteLogistics() {
+  const client = useQueryClient();
+  const key = keys.scoped.logistics(profile());
+  return useMutation({
+    mutationFn: (id: string) => api.deleteLogistics(id),
+    onSuccess: () => {
+      void client.invalidateQueries({ queryKey: key });
+      toast.success('Record deleted');
+    },
+    onError: (error) => toast.error((error as Error).message),
+  });
+}
+
+export function useExtractLogistics() {
+  const client = useQueryClient();
+  const key = keys.scoped.logistics(profile());
+  return useMutation({
+    mutationFn: ({ image, note }: { image: { mimeType: 'image/png' | 'image/jpeg'; data: string }; note?: string }) => api.extractLogistics(image, note),
+    onSuccess: (result) => {
+      void client.invalidateQueries({ queryKey: key });
+      toast.success(result.items.length ? `${result.items.length} proposal${result.items.length === 1 ? '' : 's'} read — confirm below` : 'Read the photo — nothing schedule-like found');
     },
     onError: (error) => toast.error((error as Error).message),
   });

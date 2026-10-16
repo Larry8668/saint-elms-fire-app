@@ -9,6 +9,7 @@ import { webReachable } from '../web/searxng';
 import type { EngineDeps, EngineEnv } from './context';
 import { errorStatus, friendlyError } from './errors';
 import { authRoutes } from './routes/auth';
+import { logisticsRoutes } from './routes/logistics';
 import { settingsRoutes } from './routes/settings';
 import { shareRoutes } from './routes/shares';
 import { studentRoutes } from './routes/student';
@@ -113,6 +114,7 @@ export function createApp(deps: EngineDeps) {
   app.route('/api', sourceRoutes(deps));
   app.route('/api', wikiRoutes(deps));
   app.route('/api', shareRoutes(deps));
+  app.route('/api', logisticsRoutes(deps));
 
   return app;
 }

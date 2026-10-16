@@ -1,11 +1,11 @@
 import type { Verification } from '@sef/shared';
-import { BookOpen, Brain, CheckCircle2, ChevronDown, Cpu, Globe, LifeBuoy, Wrench, XCircle } from 'lucide-react';
+import { BookOpen, Brain, CalendarClock, CheckCircle2, ChevronDown, Cpu, Globe, LifeBuoy, Wrench, XCircle } from 'lucide-react';
 import { useState } from 'react';
 import { cn } from '@/lib/cn';
 import { safeHref } from '@/lib/url';
 import { providerDisclosure, segmentSummary } from './verification-summary';
 
-const SOURCE_ICON = { lesson: BookOpen, brain: Brain, web: Globe, support: LifeBuoy } as const;
+const SOURCE_ICON = { lesson: BookOpen, brain: Brain, web: Globe, support: LifeBuoy, logistics: CalendarClock } as const;
 
 /** "Why should I trust this answer?" — sources, checks, tool calls and the model that served it. */
 export function VerificationPanel({ verification }: { verification: Verification }) {
