@@ -1,6 +1,6 @@
 import { readdir, rm } from 'node:fs/promises';
 import path from 'node:path';
-import type { ChatTurn, SessionSummary, SourceRef, StoredTurn, TeacherId, Verification } from '@sef/shared';
+import type { AnchorCandidate, ChatTurn, SessionSummary, SourceRef, StoredTurn, TeacherId, Verification } from '@sef/shared';
 import { readJson, writeJson } from '../lib/fs';
 
 export interface Session {
@@ -12,6 +12,8 @@ export interface Session {
   lessonIds: string[];
   sources: SourceRef[];
   ingestedTurns: number;
+  /** The wiki page an exploring conversation was last served under; later turns inherit it. */
+  anchor?: AnchorCandidate;
 }
 
 const PREVIEW_CHARS = 90;
@@ -42,6 +44,9 @@ export class SessionStore {
     session.lessonIds = [...new Set([...session.lessonIds, ...lessonIds])];
     const known = new Set(session.sources.map((s) => `${s.kind}:${s.id}`));
     for (const s of verification.sources) if (!known.has(`${s.kind}:${s.id}`)) session.sources.push(s);
+    // The anchor the turn was actually served under wins — it was re-read from disk this
+    // turn, so it always carries the revision the next continuation must re-verify.
+    if (verification.anchor) session.anchor = verification.anchor;
     session.updatedAt = now;
     await writeJson(this.fileFor(id), session);
     return session;

@@ -11,9 +11,10 @@ import { api } from '@/lib/api';
 import { cn } from '@/lib/cn';
 import { log } from '@/lib/log';
 import { useNav } from '@/lib/nav';
-import { useInvalidateBrain } from '@/lib/queries';
+import { useAnchors, useInvalidateBrain } from '@/lib/queries';
 import { ProposalReviewDialog } from '@/features/contribute/ProposalReviewDialog';
 import { useStickToBottom } from '@/lib/use-stick-to-bottom';
+import { AnchorBar } from './AnchorBar';
 import { useChat, type ChatMessage } from './chat-store';
 import { Composer, type Attachments, type ComposerHandle } from './Composer';
 import { HistoryButton } from './ConversationHistory';
@@ -25,8 +26,9 @@ import { TEACHER_LOOK } from './teacher-meta';
 export function TeachersView() {
   const nav = useNav();
   const [teacher, setTeacher] = useState<TeacherId>(nav.teacher ?? 'guide');
-  const { threads, send, retry, stop, reset, handoff } = useChat();
+  const { threads, send, retry, stop, reset, handoff, setAnchor, setWebConsent, clearAnchorChoices } = useChat();
   const thread = threads[teacher];
+  const anchors = useAnchors(teacher === 'philosopher');
   const [draft, setDraft] = useState(nav.draft ?? '');
   const [attachments, setAttachments] = useState<Attachments>([]);
   const [reflectStartedAt, setReflectStartedAt] = useState<number>();
@@ -41,6 +43,20 @@ export function TeachersView() {
     if (nav.teacher) setTeacher(nav.teacher);
     if (nav.draft) setDraft(nav.draft);
   }, [nav.teacher, nav.draft]);
+
+  /**
+   * A launch from the sky or a page deep link names the anchor by page id; the catalogue
+   * row it must match is the engine's, re-fetched — a page that no longer qualifies is
+   * said so, not silently anchored.
+   */
+  useEffect(() => {
+    if (nav.teacher !== 'philosopher' || !nav.anchorPage || !anchors.data) return;
+    const candidate = anchors.data.anchors.find((a) => a.pageId === nav.anchorPage);
+    if (candidate) setAnchor('philosopher', candidate);
+    else toast.info('That page is not an anchor any more — pick a current page to explore from.');
+    // The claim is consumed once: the thread's anchor is the truth from here.
+    nav.go('teachers', { teacher: 'philosopher' });
+  }, [nav, anchors.data, setAnchor]);
 
   useEffect(() => {
     scroll.scrollToBottom('auto');
@@ -174,7 +190,7 @@ export function TeachersView() {
             {thread.loading ? (
               <ThreadSkeleton />
             ) : thread.messages.length === 0 ? (
-              <TeacherIntro teacher={teacher} onPick={(p) => submit(p)} />
+              <TeacherIntro teacher={teacher} onPick={(p) => submit(p)} anchor={thread.anchor} onAnchor={(a) => setAnchor(teacher, a)} />
             ) : (
               <div className="space-y-7">
                 {thread.messages.map((m, i) =>
@@ -222,6 +238,19 @@ export function TeachersView() {
       </div>
 
       <div className="border-t border-white/[0.06] px-6 py-4">
+        {teacher === 'philosopher' && (
+          <AnchorBar
+            thread={thread}
+            onAnchor={(a) => setAnchor('philosopher', a)}
+            onConsent={(on) => setWebConsent('philosopher', on)}
+            onExploreChoice={(a) => {
+              setAnchor('philosopher', a);
+              // The choice resolves the refused turn — retry resends it under the new anchor.
+              void retry('philosopher');
+            }}
+            onDismissChoices={() => clearAnchorChoices('philosopher')}
+          />
+        )}
         <Composer
           ref={composer}
           teacher={teacher}

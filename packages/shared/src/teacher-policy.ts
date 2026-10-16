@@ -1,4 +1,5 @@
 import { z } from 'zod';
+import { CONCEPT_STATUSES } from './brain';
 import { ContractVersionSchema, IdentifierSchema, NonemptyIdentifiersSchema, RevisionSchema, TimestampSchema } from './contracts';
 import { TeacherIdSchema, type TeacherId } from './teachers';
 
@@ -9,6 +10,58 @@ export const ExplorationAnchorSchema = z.strictObject({
   courseRefs: NonemptyIdentifiersSchema,
 });
 export type ExplorationAnchor = z.infer<typeof ExplorationAnchorSchema>;
+
+/**
+ * One page the Philosopher may anchor to, as the catalogue serves it: the anchor contract
+ * plus the display facts the picker needs. `pageRevision` is the revision a claim on this
+ * anchor must name — it goes stale the moment the page changes.
+ */
+export const AnchorCandidateSchema = z.strictObject({
+  pageId: IdentifierSchema,
+  pageRevision: RevisionSchema,
+  courseConceptKey: IdentifierSchema,
+  courseRefs: NonemptyIdentifiersSchema,
+  title: z.string().min(1).max(300),
+  summary: z.string().max(2000),
+  /** Mastery at catalogue time — a shaky page anchors just as well as a solid one. */
+  status: z.enum(CONCEPT_STATUSES),
+  courseName: z.string().max(300),
+  /** The released course's name for the concept — the topic-only web query derives from it. */
+  conceptLabel: z.string().min(1).max(300),
+  updatedAt: TimestampSchema.nullable(),
+});
+export type AnchorCandidate = z.infer<typeof AnchorCandidateSchema>;
+
+/** GET /api/anchors — every committed, course-linked concept page of the signed-in student's wiki. */
+export const AnchorCatalogSchema = z.strictObject({
+  schemaVersion: ContractVersionSchema,
+  anchors: z.array(AnchorCandidateSchema),
+});
+export type AnchorCatalog = z.infer<typeof AnchorCatalogSchema>;
+
+/**
+ * GET /api/anchors/match — free text judged against the catalogue. `ambiguous` never picks:
+ * the client must show the candidates and let the student choose.
+ */
+export const AnchorMatchResultSchema = z.strictObject({
+  schemaVersion: ContractVersionSchema,
+  outcome: z.enum(['resolved', 'ambiguous', 'none']),
+  anchors: z.array(AnchorCandidateSchema),
+});
+export type AnchorMatchResult = z.infer<typeof AnchorMatchResultSchema>;
+
+/**
+ * GET /api/anchors/:pageId/web-preview — what would leave the device if web search were
+ * consented to this turn: a topic-only query derived in code, plus where it would go.
+ */
+export const WebPreviewSchema = z.strictObject({
+  schemaVersion: ContractVersionSchema,
+  query: z.string().min(1).max(300),
+  engine: z.literal('searxng'),
+  host: z.string(),
+  reachable: z.boolean(),
+});
+export type WebPreview = z.infer<typeof WebPreviewSchema>;
 
 /**
  * What a teacher may reach, across the five surfaces a turn can touch. Declared, not inferred:
@@ -147,17 +200,22 @@ export const ChatMessageRequestSchema = z
       .max(2)
       .optional(),
     anchorPageId: IdentifierSchema.optional(),
+    /** The catalogue revision the client believes it anchored to — verified fresh, never trusted. */
+    anchorRevision: RevisionSchema.optional(),
   })
   .superRefine((value, ctx) => {
     if (!value.message.trim() && !value.attachments?.length) {
       ctx.addIssue({ code: 'custom', path: ['message'], message: 'A message or image is required' });
     }
-    if (value.anchorPageId && value.teacher !== 'philosopher') {
+    if ((value.anchorPageId || value.anchorRevision) && value.teacher !== 'philosopher') {
       ctx.addIssue({
         code: 'custom',
         path: ['anchorPageId'],
         message: 'Only Philosopher requests select an exploration anchor',
       });
+    }
+    if (value.anchorRevision && !value.anchorPageId) {
+      ctx.addIssue({ code: 'custom', path: ['anchorRevision'], message: 'An anchor revision needs the page it claims' });
     }
   });
 export type ChatMessageRequest = z.infer<typeof ChatMessageRequestSchema>;
@@ -210,10 +268,28 @@ export const ConversationTurnSchema = z
       .max(2)
       .optional(),
     consent: z.strictObject({ web: z.boolean() }).optional(),
+    /** The committed wiki page to explore from. Unverified until the anchor seam resolves it. */
+    anchorPageId: IdentifierSchema.optional(),
+    /** The catalogue revision the client anchored to — a mismatch is a stale anchor. */
+    anchorRevision: RevisionSchema.optional(),
+    /** Free text naming a page, resolved in code; an ambiguous match is refused, never guessed. */
+    anchorQuery: z.string().min(1).max(300).optional(),
+    /** A released syllabus concept: resolves to the student's own committed page for it, if one exists. */
+    syllabusConceptKey: IdentifierSchema.optional(),
   })
   .superRefine((value, ctx) => {
     if (!value.message.trim() && !value.attachments?.length) {
       ctx.addIssue({ code: 'custom', path: ['message'], message: 'A message or image is required' });
+    }
+    const selectors = [value.anchorPageId, value.anchorQuery, value.syllabusConceptKey].filter((v) => v !== undefined).length;
+    if (selectors > 1) {
+      ctx.addIssue({ code: 'custom', path: ['anchorPageId'], message: 'Pick one way to name the exploration anchor' });
+    }
+    if ((selectors > 0 || value.anchorRevision) && value.teacher !== 'philosopher') {
+      ctx.addIssue({ code: 'custom', path: ['anchorPageId'], message: 'Only Philosopher turns select an exploration anchor' });
+    }
+    if (value.anchorRevision && !value.anchorPageId) {
+      ctx.addIssue({ code: 'custom', path: ['anchorRevision'], message: 'An anchor revision needs the page it claims' });
     }
   });
 export type ConversationTurn = z.infer<typeof ConversationTurnSchema>;

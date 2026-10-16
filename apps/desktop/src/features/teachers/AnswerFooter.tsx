@@ -1,4 +1,4 @@
-import type { SourceRef } from '@sef/shared';
+import type { AnchorCandidate, SourceRef } from '@sef/shared';
 import { ArrowRight, BookmarkPlus, BookOpen, Brain, CalendarClock, Check, ChevronDown, Copy, ExternalLink, Globe, LifeBuoy, RotateCcw, Telescope } from 'lucide-react';
 import { AnimatePresence, motion } from 'motion/react';
 import { useState, type ReactNode } from 'react';
@@ -153,6 +153,21 @@ export function SourceChips({ sources }: { sources: SourceRef[] }) {
       </div>
       <AnimatePresence initial={false}>{open && isLessonLike(open) && <LessonSourcePreview key={sourceKey(open)} source={open} />}</AnimatePresence>
     </div>
+  );
+}
+
+/** The page an answer was explored from — a link back to its star, at the revision it was served under. */
+export function AnchorChip({ anchor }: { anchor: AnchorCandidate }) {
+  const { go } = useNav();
+  return (
+    <Tooltip content={`Anchored to your committed page at ${anchor.pageRevision} — opens its star in the sky.`}>
+      <button
+        onClick={() => go('sky', { page: anchor.pageId })}
+        className="inline-flex cursor-pointer items-center gap-1.5 rounded-full border border-aurora-400/25 bg-aurora-500/[0.07] px-2.5 py-1 text-[11.5px] text-aurora-200 transition hover:border-aurora-400/45"
+      >
+        <Telescope className="size-3" /> {anchor.title}
+      </button>
+    </Tooltip>
   );
 }
 

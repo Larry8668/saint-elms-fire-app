@@ -1,5 +1,5 @@
 import { PAGE_SECTIONS, SECTION_TITLES, type GraphNode, type GraphResponse } from '@sef/shared';
-import { AlertTriangle, BookOpen, GraduationCap, MessageCircleQuestion, Share2, X } from 'lucide-react';
+import { AlertTriangle, BookOpen, GraduationCap, MessageCircleQuestion, Share2, Telescope, X } from 'lucide-react';
 import { useMemo, useState } from 'react';
 import { Markdown } from '@/components/Markdown';
 import { Button } from '@/components/ui/button';
@@ -199,6 +199,15 @@ export function ConceptSheet({ node, graph, onSelect }: { node: GraphNode | null
               <GraduationCap /> Quiz me
             </Button>
           ) : null}
+          {isConcept && node.pageId && (
+            <Button
+              variant="secondary"
+              className="col-span-2"
+              onClick={() => go('teachers', { teacher: 'philosopher', anchorPage: node.pageId!, draft: `Explore "${node.label}" with me — start from what I wrote.` })}
+            >
+              <Telescope /> Explore with the Philosopher
+            </Button>
+          )}
           {!isLesson && node.lessonId && (
             <Button variant="ghost" className="col-span-2" onClick={() => go('library', { lessonId: node.lessonId })}>
               <BookOpen /> Open the lesson that introduces it

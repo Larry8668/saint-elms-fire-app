@@ -12,7 +12,8 @@ import { resolveModel, type ResolvedModel } from '../models/registry';
 import type { SessionStore } from '../sessions/store';
 import type { SettingsReader } from '../settings/store';
 import { webSearch, type WebResult } from '../web/searxng';
-import { ANCHOR_FAILURE_COPY, unresolvableAnchors, type AnchorResolver, type AnchorTarget } from './anchor';
+import { ANCHOR_FAILURE_COPY, unresolvableAnchors, type AnchorResolution, type AnchorResolver, type AnchorTarget } from './anchor';
+import { anchorTopic } from './anchors';
 import { attributeLessons } from './attribution';
 import { TurnContext } from './context';
 import { buildEvidenceSet } from './evidence';
@@ -98,7 +99,7 @@ export async function runChatTurn(req: ChatRequest, deps: HarnessDeps, emit: (ev
     checks: VerificationCheck[],
     lane?: Verification['lane'],
     sources: SourceRef[] = [...ctx.sources.values()],
-    extra?: Pick<Verification, 'segments' | 'withheld'>,
+    extra?: Pick<Verification, 'segments' | 'withheld' | 'anchor'>,
   ) => {
     const verification: Verification = {
       model: resolved?.modelId ?? 'rules',
@@ -134,11 +135,15 @@ export async function runChatTurn(req: ChatRequest, deps: HarnessDeps, emit: (ev
   }
 
   // 3. Anchor seam. A teacher that cannot prove where it starts says so; it does not improvise.
+  //    The resolver re-reads the page from disk: a page id, a claimed revision or a concept
+  //    key from the client is only an input to the check, never proof.
   const policy = teacherPolicy(req.teacher);
+  let anchored: Extract<AnchorResolution, { ok: true }> | null = null;
   if (policy.anchor !== 'none') {
     const resolution = await (deps.anchors ?? unresolvableAnchors).resolve({
       teacher: req.teacher,
       anchorPageId: req.anchorPageId,
+      claimedRevision: req.anchorRevision,
       syllabusConceptKey: req.syllabusConceptKey,
       committed: deps.committedAnchors ?? new Map(),
     });
@@ -146,6 +151,7 @@ export async function runChatTurn(req: ChatRequest, deps: HarnessDeps, emit: (ev
       log.warn('exploration_anchor_required', { teacher: req.teacher, reason: resolution.reason });
       return finish(anchorRefusal(resolution.reason), null, [{ id: 'anchor', label: 'Refused without a committed wiki anchor', passed: true, detail: resolution.reason }], 'refused');
     }
+    anchored = resolution;
   }
 
   // Context assembly: retrieval happens up front so even models weak at tool use stay grounded.
@@ -164,6 +170,15 @@ export async function runChatTurn(req: ChatRequest, deps: HarnessDeps, emit: (ev
   } else {
     blocks.push(lessonBlock('RELEASED LESSONS', hits));
     const keys = hits.flatMap((h) => h.lesson.concepts.map(conceptKey));
+    // The anchor is the exploration's origin: its concept joins the brain context, and the
+    // block names the page so the teacher opens from what the student committed.
+    if (anchored) {
+      keys.push(anchored.anchor.courseConceptKey);
+      const c = anchored.candidate;
+      blocks.push(
+        `EXPLORATION ANCHOR: this conversation starts from the student's own committed wiki page "${c?.title ?? anchored.anchor.pageId}" — the concept ${c?.conceptLabel ?? anchored.anchor.courseConceptKey}${c ? ` (status ${c.status}, ${c.courseName})` : ''}. The page is the student's own work; explore outward from what they wrote, not back over the syllabus.`,
+      );
+    }
     if (can(req.teacher, 'context:student_brain')) ctx.contextBlocks.push(await deps.brain.contextFor(keys));
     if (can(req.teacher, 'claim:wiki_claims')) await claimBlock(req.teacher, { claims: deps.claims }, ctx);
     // Wiki-first: the compiled pages are searched before the model improvises an answer —
@@ -186,10 +201,14 @@ export async function runChatTurn(req: ChatRequest, deps: HarnessDeps, emit: (ev
   let webResults: WebResult[] | null = null;
   const webConsented = req.consent?.web === true;
   if (can(req.teacher, 'tool:web_search') && policy.web === 'explicit_consent' && webConsented) {
+    // Nothing the student typed leaves this device: the query is the anchored concept's
+    // released-course label, derived in code — the same text the consent preview showed.
+    // A resolved anchor without a catalogue row still yields only its concept key.
+    const webQuery = anchored ? anchorTopic(anchored.candidate ?? null, anchored.anchor.courseConceptKey) : question;
     ctx.status('Searching the web…');
     try {
-      webResults = await (deps.searchWeb ?? webSearch)((await deps.settings.get()).searxngUrl, question, 4);
-      ctx.recordTool('web_search', `"${question.slice(0, 60)}" → ${webResults.length} results`);
+      webResults = await (deps.searchWeb ?? webSearch)((await deps.settings.get()).searxngUrl, webQuery, 4);
+      ctx.recordTool('web_search', `"${webQuery}" → ${webResults.length} results`);
       for (const r of webResults) ctx.addSource({ kind: 'web', id: r.url, title: r.title, url: r.url }, `${r.title}\n${r.snippet}`);
     } catch (error) {
       log.warn('web_search_unavailable', errorFields(error));
@@ -261,6 +280,14 @@ export async function runChatTurn(req: ChatRequest, deps: HarnessDeps, emit: (ev
   for (const s of sources) if (verified.has(s.id)) s.cited = true;
 
   const checks: VerificationCheck[] = [...assessed.checks];
+  if (anchored) {
+    checks.unshift({
+      id: 'anchor',
+      label: 'Exploration anchored to a committed wiki page',
+      passed: true,
+      detail: `${anchored.candidate?.title ?? anchored.anchor.pageId} @ ${anchored.anchor.pageRevision}`,
+    });
+  }
   if (extraction) {
     const outcome = await extraction;
     const detail = !outcome
@@ -294,7 +321,7 @@ export async function runChatTurn(req: ChatRequest, deps: HarnessDeps, emit: (ev
 
   // Only now does the verified text stream: the delta and the done event carry the same answer.
   emit({ type: 'delta', text: assessed.text });
-  await finish(assessed.text, resolved, checks, 'answered', sources, { segments: assessed.segments, withheld: assessed.withheld });
+  await finish(assessed.text, resolved, checks, 'answered', sources, { segments: assessed.segments, withheld: assessed.withheld, anchor: anchored?.candidate });
 }
 
 /**

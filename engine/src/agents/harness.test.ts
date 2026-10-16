@@ -206,6 +206,68 @@ test('a syllabus concept offered as an anchor is refused by name', async () => {
   assert.equal(h.agentCalls(), 0);
 });
 
+const candidate = (over: Record<string, unknown> = {}) =>
+  ({
+    pageId: 'damping',
+    pageRevision: 'rev-1',
+    courseConceptKey: 'damping',
+    courseRefs: ['mech'],
+    title: 'Damping, in my words',
+    summary: 'What damping says in one line.',
+    status: 'met',
+    courseName: 'Mechanics',
+    conceptLabel: 'damping',
+    updatedAt: '2026-01-01T00:00:00.000Z',
+    ...over,
+  }) as import('@sef/shared').AnchorCandidate;
+
+/** A resolver that proves whatever the seam decided, so the harness side is what is tested. */
+const resolving = (captured: { claimedRevision?: string } = {}) => ({
+  resolve: async (request: { claimedRevision?: string }) => {
+    captured.claimedRevision = request.claimedRevision;
+    return { ok: true as const, anchor: { pageId: 'damping', pageRevision: 'rev-1', courseConceptKey: 'damping', courseRefs: ['mech'] }, courseRefs: ['mech'], candidate: candidate() };
+  },
+});
+
+test('an anchored Philosopher turn searches the concept, never the student’s words', async () => {
+  const h = harness('Damping drains amplitude. [lesson: damped]');
+  h.deps.anchors = resolving() as never;
+  const queries: string[] = [];
+  h.deps.searchWeb = (async (_url: string, q: string) => {
+    queries.push(q);
+    return [{ title: 'T', url: 'https://x.test', snippet: 'S' }];
+  }) as never;
+  await runChatTurn(
+    turn({ teacher: 'philosopher', messages: [{ role: 'user', content: 'tell my roommate Priya that damping is like her loud neighbour' }], anchorPageId: 'damping', consent: { web: true } }),
+    h.deps,
+    (e) => h.events.push(e),
+  );
+  assert.deepEqual(queries, ['damping'], 'the topic-only query — chat text never leaves the device');
+  assert.match(h.instructions(), /WEB RESULTS/);
+  const finished = done(h.events);
+  assert.equal(finished.verification.toolCalls.find((t) => t.tool === 'web_search')?.summary?.includes('Priya'), false, 'the tool record names the query, not the message');
+});
+
+test('the anchor reaches the prompt as context and the answer as provenance', async () => {
+  const h = harness('Damping drains amplitude. [lesson: damped]');
+  const captured: { claimedRevision?: string } = {};
+  h.deps.anchors = resolving(captured) as never;
+  await runChatTurn(
+    turn({ teacher: 'philosopher', messages: [{ role: 'user', content: 'where else does damping show up?' }], anchorPageId: 'damping', anchorRevision: 'rev-1' }),
+    h.deps,
+    (e) => h.events.push(e),
+  );
+  assert.equal(captured.claimedRevision, 'rev-1', 'the client’s claimed revision is the seam’s input');
+  const block = h.instructions();
+  assert.match(block, /EXPLORATION ANCHOR/, 'the model opens from the student’s own page');
+  assert.match(block, /Damping, in my words/);
+  const finished = done(h.events);
+  assert.equal(finished.verification.anchor?.pageId, 'damping', 'the served answer records what it was explored under');
+  const anchorCheck = finished.verification.checks.find((c) => c.id === 'anchor');
+  assert.equal(anchorCheck?.passed, true);
+  assert.match(anchorCheck?.detail ?? '', /Damping, in my words @ rev-1/);
+});
+
 const claim = (over: Partial<WikiClaim> & Pick<WikiClaim, 'id' | 'text'>): WikiClaim =>
   ({
     kind: 'source_fact',

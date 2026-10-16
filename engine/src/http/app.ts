@@ -8,6 +8,7 @@ import { uniFetch } from '../uni/client';
 import { webReachable } from '../web/searxng';
 import type { EngineDeps, EngineEnv } from './context';
 import { errorStatus, friendlyError } from './errors';
+import { anchorRoutes } from './routes/anchors';
 import { authRoutes } from './routes/auth';
 import { logisticsRoutes } from './routes/logistics';
 import { settingsRoutes } from './routes/settings';
@@ -117,6 +118,7 @@ export function createApp(deps: EngineDeps) {
   app.route('/api/auth', authRoutes(deps));
   app.route('/api', settingsRoutes(deps));
   app.route('/api', studentRoutes(deps));
+  app.route('/api', anchorRoutes(deps));
   app.route('/api', sourceRoutes(deps));
   app.route('/api', vaultRoutes(deps));
   app.route('/api', wikiRoutes(deps));

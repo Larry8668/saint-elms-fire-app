@@ -23,6 +23,8 @@ export interface NavState {
   teacher?: TeacherId;
   /** Text to pre-fill in the chat composer. Kept in history state only, never in the URL. */
   draft?: string;
+  /** Wiki page to open a Philosopher exploration on. History state only — the engine re-verifies it. */
+  anchorPage?: string;
   /** Page preselected in the publish dialog on the peers view. History state only. */
   sharePage?: string;
 }

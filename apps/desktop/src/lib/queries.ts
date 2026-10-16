@@ -27,6 +27,8 @@ export const keys = {
     lint: (p: string) => ['profile', p, 'lint'] as const,
     records: (p: string) => ['profile', p, 'records'] as const,
     pageRecord: (p: string, id: string) => ['profile', p, 'page-record', id] as const,
+    anchors: (p: string) => ['profile', p, 'anchors'] as const,
+    anchorWebPreview: (p: string, pageId: string) => ['profile', p, 'anchor-web-preview', pageId] as const,
     events: (p: string, pageId?: string) => ['profile', p, 'events', pageId ?? 'all'] as const,
     maintenance: (p: string) => ['profile', p, 'maintenance'] as const,
     sessions: (p: string, teacher: string) => ['profile', p, 'sessions', teacher] as const,
@@ -67,6 +69,8 @@ const brainKeys = () => {
     keys.scoped.jobBoard(p),
     keys.scoped.proposals(p),
     keys.scoped.wikiIndex(p),
+    // A committed page edit changes both its catalogue row and the revision an anchor pins.
+    keys.scoped.anchors(p),
   ];
 };
 
@@ -144,6 +148,12 @@ export const usePageRevision = (key: string | null, revision: string | null) =>
 export const useWikiIndex = () => useQuery({ queryKey: keys.scoped.wikiIndex(profile()), queryFn: api.wikiIndex });
 export const useWikiPage = (id: string | null) =>
   useQuery({ queryKey: keys.scoped.wikiPage(profile(), id ?? ''), queryFn: () => api.wikiPage(id!), enabled: Boolean(id), retry: false });
+
+/** The pages the Philosopher may explore from — re-judged by the engine on every fetch. */
+export const useAnchors = (enabled = true) => useQuery({ queryKey: keys.scoped.anchors(profile()), queryFn: api.anchors, enabled });
+/** What one consent would send off-device; fetched only while the consent row is shown. */
+export const useAnchorWebPreview = (pageId: string | null) =>
+  useQuery({ queryKey: keys.scoped.anchorWebPreview(profile(), pageId ?? ''), queryFn: () => api.anchorWebPreview(pageId!), enabled: Boolean(pageId), retry: false });
 
 /** The bounded semantic pass — slow, so the button tells the truth about waiting. */
 export function useMaintenanceReview() {
