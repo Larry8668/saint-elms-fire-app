@@ -9,10 +9,12 @@ import { CardGridSkeleton, RowListSkeleton, TimelineSkeleton } from '@/component
 import { ProposalReviewDialog } from '@/features/contribute/ProposalReviewDialog';
 import { STATUS_STYLE } from '@/lib/brain-style';
 import { useNav } from '@/lib/nav';
-import { useBrainLog, useGraph, useJobBoard, useLint, usePages } from '@/lib/queries';
+import { useBrainLog, useGraph, useJobBoard, useLint, usePages, useWikiIndex } from '@/lib/queries';
 import { ConceptSheet } from './ConceptSheet';
 import { SourceDetailDialog } from './SourceDetail';
 import { SourcesPanel } from './SourcesPanel';
+import { WikiIndexPanel } from './WikiIndex';
+import { WikiPageDialog } from './WikiPageDialog';
 
 const LOG_ICON: Record<string, typeof Brain> = { session: MessageCircleQuestion, capture: FilePlus2, quiz: GraduationCap, wiki: History, source: History, migrate: History, remove: History, erase: History };
 
@@ -22,11 +24,13 @@ export function BrainView() {
   const [selectedKey, setSelectedKey] = useState<string | null>(null);
   const [sourceId, setSourceId] = useState<string | null>(null);
   const [proposalId, setProposalId] = useState<string | null>(null);
+  const [wikiPageId, setWikiPageId] = useState<string | null>(null);
   const pages = usePages();
   const log = useBrainLog();
   const lint = useLint();
   const graph = useGraph();
   const board = useJobBoard();
+  const wiki = useWikiIndex();
 
   const selectedNode = useMemo(() => (selectedKey && graph.data ? graph.data.nodes.find((n) => n.key === selectedKey) ?? null : null), [selectedKey, graph.data]);
   const openFindings = lint.data?.length ?? 0;
@@ -45,6 +49,7 @@ export function BrainView() {
               onValueChange={setTab}
               items={[
                 { value: 'pages', label: `Pages${pages.data ? ` · ${pages.data.length}` : ''}` },
+                { value: 'wiki', label: `Wiki${wiki.data ? ` · ${wiki.data.counts.pages}` : ''}` },
                 { value: 'sources', label: `Sources${sourceCount ? ` · ${sourceCount}` : ''}` },
                 { value: 'questions', label: `Open questions${openFindings ? ` · ${openFindings}` : ''}` },
                 { value: 'timeline', label: 'Timeline' },
@@ -78,6 +83,8 @@ export function BrainView() {
             </div>
           </>
         )}
+
+        {tab === 'wiki' && <WikiIndexPanel index={wiki.data} loading={wiki.isLoading} onOpen={setWikiPageId} />}
 
         {tab === 'sources' && (
           <div className="max-w-2xl">
@@ -135,6 +142,7 @@ export function BrainView() {
       </div>
       {graph.data && <ConceptSheet node={selectedNode} graph={graph.data} onSelect={(id) => setSelectedKey(id ? graph.data!.nodes.find((n) => n.id === id)?.key ?? null : null)} />}
       <SourceDetailDialog sourceId={sourceId} onClose={() => setSourceId(null)} onReviewProposal={setProposalId} />
+      <WikiPageDialog pageId={wikiPageId} onClose={() => setWikiPageId(null)} onOpenSource={setSourceId} onOpenPage={setWikiPageId} />
       <ProposalReviewDialog proposalId={proposalId} onClose={() => setProposalId(null)} />
     </div>
   );

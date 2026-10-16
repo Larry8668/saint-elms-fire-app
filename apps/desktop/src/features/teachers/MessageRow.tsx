@@ -64,9 +64,12 @@ interface AssistantMessageProps {
   onHandoff: (to: TeacherId) => void;
   onRetry: () => void;
   onFollowUp: (text: string) => void;
+  /** Freeze this answer as a source and draft it into a proposal — the student decides the rest. */
+  onSave?: () => void;
+  saving?: boolean;
 }
 
-export function AssistantMessage({ message, teacher, isLatest, onHandoff, onRetry, onFollowUp }: AssistantMessageProps) {
+export function AssistantMessage({ message, teacher, isLatest, onHandoff, onRetry, onFollowUp, onSave, saving }: AssistantMessageProps) {
   const look = TEACHER_LOOK[teacher];
   const settled = !message.pending;
   const { body, trailhead } = settled ? splitTrailhead(message.content) : { body: message.content, trailhead: undefined };
@@ -129,6 +132,8 @@ export function AssistantMessage({ message, teacher, isLatest, onHandoff, onRetr
           <AnswerActions
             content={message.content}
             onRetry={isLatest ? onRetry : undefined}
+            onSave={onSave}
+            saving={saving}
             followUps={isLatest && !handoff ? QUICK_REPLIES[teacher] : undefined}
             onFollowUp={onFollowUp}
           />

@@ -2,12 +2,16 @@ import { randomUUID } from 'node:crypto';
 import path from 'node:path';
 import {
   CONTRACT_VERSION,
+  TEACHERS,
   type BrainDiffEntry,
   type ConceptPage,
   type Lesson,
   type LintFinding,
   type ProfileIdentity,
+  type ProposalAcceptance,
+  type WikiPageDraft,
   type WikiProposal,
+  type WikiProposalRecord,
 } from '@sef/shared';
 import { z } from 'zod';
 import { generateStructured } from '../agents/factory';
@@ -25,9 +29,10 @@ import { computeStatus } from './mastery';
 import { writeProposalRecord } from './proposals';
 import { countChars } from './sources/limits';
 import { recordVisionText } from './sources/extract';
-import type { SourceIngestor } from './sources/ingest';
+import { SourceRejection, type SourceIngestor } from './sources/ingest';
 import type { BrainVault } from './vault';
-import { readPageFile } from './wiki-page-format';
+import { VaultConflictError } from './vault-errors';
+import { readPageFile, wikiContentFromConceptPage, type PageMetadata } from './wiki-page-format';
 import type { PageChange, WikiStore } from './wiki-store';
 
 const NotesReadingSchema = z.object({
@@ -208,6 +213,134 @@ export class BrainService {
   }
 
   /**
+   * Freezes one assistant answer as an 'answer' source — provenance 'model', pinned to the
+   * session and turn it came from — and queues its job. Nothing reaches the wiki here:
+   * the job's compile files a proposal, and the student's accept is still the only writer.
+   * The kept document carries the answer plus the sources and tool trace that produced it,
+   * so attribution, source links and anchor metadata survive the save verbatim.
+   */
+  async saveAnswer(
+    session: Session,
+    input: { turnIndex?: number; content?: string; title?: string; saveKind?: 'synthesis' | 'question' } = {},
+  ): Promise<Awaited<ReturnType<SourceIngestor['ingest']>>> {
+    const isAnswer = (t: (typeof session.turns)[number] | undefined): t is (typeof session.turns)[number] => Boolean(t && t.role === 'assistant' && t.content.trim());
+    let index = input.turnIndex ?? session.turns.findLastIndex((t) => t.role === 'assistant');
+    // A failed turn stays in the student's message list without a stored turn, so a position
+    // alone can point at the wrong answer. With the content the student saw, the stored turn
+    // it actually names wins; without it, the position is all there is.
+    if (input.content !== undefined && (!isAnswer(session.turns[index]) || session.turns[index]!.content !== input.content)) {
+      index = session.turns.findLastIndex((t) => t.role === 'assistant' && t.content === input.content);
+    }
+    const turn = index >= 0 ? session.turns[index] : undefined;
+    if (!isAnswer(turn)) {
+      throw new SourceRejection('That turn is not a teacher answer to save.', 'not_an_answer', 400);
+    }
+    const teacher = TEACHERS[session.teacher];
+    const question = [...session.turns.slice(0, index)].reverse().find((t) => t.role === 'user')?.content;
+    const verification = turn.verification;
+    const title = input.title ?? `${teacher.name}: ${(question ?? 'a saved answer').replace(/\s+/g, ' ').slice(0, 80)}`;
+    const lines = [
+      `# ${title}`,
+      '',
+      `Teacher: ${teacher.name} (${session.teacher})`,
+      `Model: ${verification?.model ?? 'local rules'} via ${verification?.provider ?? 'unknown provider'}`,
+      `Session: ${session.id} · turn ${index + 1}`,
+      input.saveKind ? `Requested shape: ${input.saveKind}` : null,
+      '',
+      turn.content.trim(),
+      '',
+      '## What the answer drew on',
+      ...(verification?.sources.length
+        ? verification.sources.map(
+            (source) =>
+              `- [${source.kind}] ${source.id} — ${source.title}` +
+              (source.courseName ? ` · ${source.courseName}` : '') +
+              (source.section ? ` · section "${source.section.heading}"` : '') +
+              (source.url ? ` · ${source.url}` : '') +
+              (source.cited === false ? ' (retrieved, not used)' : ''),
+          )
+        : ['- nothing cited']),
+      '',
+      '## What it looked at',
+      ...(verification?.toolCalls.length ? verification.toolCalls.map((call) => `- ${call.tool}: ${call.summary}`) : ['- no tools ran']),
+    ]
+      .filter((line): line is string => line !== null)
+      .join('\n');
+    const result = await this.deps.sources.ingest({
+      kind: 'answer',
+      title,
+      mediaType: 'text/markdown',
+      bytes: new TextEncoder().encode(lines),
+      session: { sessionId: session.id, teacher: session.teacher, firstTurn: index, lastTurn: index },
+      attribution: { creator: `${teacher.name} · ${verification?.model ?? 'local rules'}` },
+      extraction: { method: 'text', text: lines },
+    });
+    log.info('wiki_answer_saved', { sessionId: session.id, turnIndex: index, sourceId: result.source.id, teacher: session.teacher });
+    return result;
+  }
+
+  /**
+   * Restore-as-new-revision, through the proposal machinery like every other write: the old
+   * revision's content is rebuilt as a code draft, and `applyProposal` refuses unless the
+   * page still sits at the revision the caller read (`baseRevision`). The current file is
+   * archived to .history/ first, so restoring can never lose the version it replaced.
+   */
+  async restorePageRevision(pageId: string, revision: string, baseRevision: string): Promise<ProposalAcceptance> {
+    const snapshot = await this.deps.wiki.readPage(pageId);
+    if (!snapshot) throw new SourceRejection('No page by that id in this wiki.', 'not_found', 404);
+    if (snapshot.revision !== baseRevision) {
+      throw new VaultConflictError(`Page ${pageId} is not at the revision you read — refresh before restoring.`, [
+        { id: pageId, expected: baseRevision, found: snapshot.revision, reason: snapshot.state === 'out_of_band' ? 'out_of_band' : 'revision_changed' },
+      ]);
+    }
+    const saved = await this.deps.wiki.readPageRevision(pageId, revision);
+    if (!saved) throw new SourceRejection('That revision is not in this page’s history.', 'not_found', 404);
+    const parsed = readPageFile(saved.raw);
+    const at = new Date().toISOString();
+    const draft =
+      parsed.format === 2
+        ? draftFromMetadata(parsed.metadata, parsed.body)
+        : parsed.format === 1
+          ? draftFromMetadata(wikiContentFromConceptPage(parsed.legacy, at).metadata, parsed.body)
+          : null;
+    if (!draft) {
+      throw new SourceRejection('That revision cannot be restored — it is unreadable to this engine.', 'unreadable_revision', 409);
+    }
+    const proposal: WikiProposal = {
+      schemaVersion: CONTRACT_VERSION,
+      id: `prop_${randomUUID().replace(/-/g, '').slice(0, 20)}`,
+      profile: await this.deps.identity(),
+      // The restore's "source" is the page's own history — there is no outside material.
+      sourceIds: [pageId],
+      conventionRevision: (await this.deps.wiki.readConventions()).conventions.revision,
+      createdAt: at,
+      baseRevisions: { [pageId]: baseRevision },
+      operations: [{ op: 'upsert_page', page: draft }],
+    };
+    const report = await this.deps.wiki.applyProposal(proposal);
+    // A code-built proposal still leaves the same audit trail a keeper proposal does, plus
+    // a plain-language entry so the timeline says what this write was for.
+    await this.deps.wiki.appendLog({
+      kind: 'wiki',
+      title: `Restored ${pageId} from revision ${revision}`,
+      detail: report.committed ? `Written on top of ${baseRevision} — that version is kept in history.` : 'The page already said exactly that, so nothing changed.',
+    });
+    const record: WikiProposalRecord = {
+      schemaVersion: CONTRACT_VERSION,
+      proposal,
+      jobId: null,
+      state: 'accepted',
+      decidedAt: at,
+      decidedBy: 'student',
+      note: `Restored from revision ${revision}`,
+    };
+    await writeProposalRecord(this.deps.wiki.root, record);
+    log.info('wiki_page_restored', { pageId, revision, baseRevision });
+    const diff = await this.pageDiffs(report.pages);
+    return { record, report, diff };
+  }
+
+  /**
    * A fresh vision pass over a kept image source. The transcription is recorded as the
    * source's extraction — the student sees it, can correct it, and only then a compile
    * reads it. Returns null for anything that is not this student's image source.
@@ -334,5 +467,32 @@ export class BrainService {
       review: quiz.questions.map((q, i) => ({ correct: q.answerIndex, chosen: answers[i], explanation: q.explanation })),
       diff,
     };
+  }
+}
+
+/**
+ * Rebuilds a page draft verbatim from stored metadata + body — what a restore proposes.
+ * Kind fields that cannot be satisfied (a generated page with no surviving source ids)
+ * refuse rather than fabricate.
+ */
+function draftFromMetadata(metadata: PageMetadata, body: string): WikiPageDraft | null {
+  const base = {
+    id: metadata.id,
+    title: metadata.title,
+    summary: metadata.summary,
+    markdown: body,
+    courseRefs: metadata.courseRefs,
+    claims: metadata.claims,
+    links: metadata.links,
+  };
+  switch (metadata.kind) {
+    case 'concept':
+      return { ...base, kind: 'concept', learner: metadata.learner ?? { inMyWords: '', stuck: '', connections: '', evidenceIds: [] } };
+    case 'source_summary':
+      return metadata.sourceIds.length ? { ...base, kind: 'source_summary', sourceIds: metadata.sourceIds } : null;
+    case 'synthesis':
+      return metadata.sourceIds.length ? { ...base, kind: 'synthesis', sourceIds: metadata.sourceIds } : null;
+    case 'question':
+      return { ...base, kind: 'question', sourceIds: metadata.sourceIds };
   }
 }
