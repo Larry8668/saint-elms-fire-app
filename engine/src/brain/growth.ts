@@ -25,8 +25,11 @@ export interface GrowthContext {
 /** The quiz-result artifacts submitQuiz files next to the quiz are student-produced evidence. */
 function originOf(id: string, sources: Map<string, SourceRecord>): 'student' | 'peer' | 'model' {
   const origin = sources.get(id)?.origin;
-  if (origin === 'student' || id.startsWith('res_')) return 'student';
+  // The recorded origin always wins; res_* is only a fallback for quiz artifacts, which are
+  // not source records but are by construction this student's own work.
+  if (origin === 'student') return 'student';
   if (origin === 'peer') return 'peer';
+  if (id.startsWith('res_')) return 'student';
   return 'model';
 }
 

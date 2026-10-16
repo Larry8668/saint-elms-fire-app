@@ -193,6 +193,9 @@ export const PERSONAL_SKY_ID = 'personal-sky';
 export const PERSONAL_SKY_TITLE = 'Your own sky';
 
 export function pageNodeId(kind: SkyPageKind, pageId: string): string {
+  // 'c' is shared on purpose: a course concept star and the concept page behind it are the
+  // same sky object — the graph's dedup guard (page.id ∈ course.concepts) merges them, and
+  // vault page ids are unique, so 'c:x' names at most one page and one concept.
   return `${SKY_NODE_PREFIX[kind]}:${pageId}`;
 }
 
