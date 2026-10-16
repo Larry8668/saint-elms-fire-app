@@ -36,6 +36,7 @@ import type {
   PageRevisionContent,
   PageRevisionList,
   PeerFeedResponse,
+  ProgrammeManifestResponse,
   ProposalAcceptance,
   ProposalList,
   ProposalPreview,
@@ -74,6 +75,8 @@ export class EngineError extends Error {
   constructor(
     message: string,
     readonly status: number,
+    /** The engine's typed code, when it sent one — never rendered raw; map it to copy. */
+    readonly code?: string,
   ) {
     super(message);
   }
@@ -106,7 +109,7 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
   if (!res.ok) {
     log.warn('engine_request_failed', { path, status: res.status, error: body.error });
     if (res.status === 401 && body.code === 'unauthenticated' && sessionToken) onUnauthenticated?.();
-    throw new EngineError(body.error ?? `Request failed (${res.status})`, res.status);
+    throw new EngineError(body.error ?? `Request failed (${res.status})`, res.status, body.code);
   }
   return body;
 }
@@ -173,6 +176,8 @@ export const api = {
   providerModels: (id: string) => request<{ models: string[]; error?: string }>(`/api/providers/${encodeURIComponent(id)}/models`),
 
   syncStatus: () => request<SyncStatus>('/api/sync/status'),
+  /** The full published curriculum for an approved student; refusals arrive as typed errors. */
+  programme: () => request<ProgrammeManifestResponse>('/api/programme'),
   install: (courseId: string) => post<{ courseId: string; version: string }>(`/api/sync/install/${encodeURIComponent(courseId)}`),
   installAll: () => post<{ installed: unknown[] }>('/api/sync/install-all'),
 

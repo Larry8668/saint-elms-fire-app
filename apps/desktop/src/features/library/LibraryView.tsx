@@ -5,11 +5,12 @@ import { useMemo, useRef, useState } from 'react';
 import { Markdown } from '@/components/Markdown';
 import { Button } from '@/components/ui/button';
 import { Badge, EmptyState, Eyebrow, PageHeader, Panel } from '@/components/ui/primitives';
-import { ArticleSkeleton, CardGridSkeleton } from '@/components/ui/skeletons';
+import { ArticleSkeleton, CardGridSkeleton, RowListSkeleton } from '@/components/ui/skeletons';
 import { cn } from '@/lib/cn';
 import { useNav } from '@/lib/nav';
-import { useInstallCourses, useLesson, useLibrary, useSyncStatus } from '@/lib/queries';
+import { useInstallCourses, useLesson, useLibrary, useProgramme, useSyncStatus } from '@/lib/queries';
 import { useStudent } from '@/lib/session';
+import { CurriculumUnavailable } from '@/features/programme/CurriculumUnavailable';
 import { ProgrammeStructure } from '@/features/programme/ProgrammeStructure';
 import { LibraryTabs, type LibraryTab } from './LibraryTabs';
 import { useScrollToSection } from './use-scroll-to-section';
@@ -23,6 +24,8 @@ export function LibraryView() {
   const install = useInstallCourses();
   const { profile } = useStudent();
   const [tab, setTab] = useState<LibraryTab>('released');
+  // The published curriculum is fetched only when its tab is shown; a refusal stays put.
+  const programme = useProgramme(tab === 'programme');
   const openLesson = nav.lessonId && library.data ? library.data.lessons.find((l) => l.id === nav.lessonId) : undefined;
   const openCourse = openLesson?.courseId ?? null;
   const openCourseAt = (courseId: string) => {
@@ -132,11 +135,17 @@ export function LibraryView() {
         </div>
 
         <div role="tabpanel" id="library-panel-programme" aria-labelledby="library-tab-programme" hidden={tab !== 'programme'}>
-          {sync.data ? (
-            <ProgrammeStructure status={sync.data} profile={profile} onOpenCourse={openCourseAt} />
-          ) : (
-            !sync.isLoading && !sync.isError && <CardGridSkeleton />
+          {programme.isLoading && <RowListSkeleton rows={5} />}
+          {programme.isError && (
+            <CurriculumUnavailable
+              error={programme.error}
+              status={sync.data}
+              profile={profile}
+              onRetry={() => void programme.refetch()}
+              retrying={programme.isRefetching}
+            />
           )}
+          {programme.data && <ProgrammeStructure manifest={programme.data} status={sync.data} onOpenCourse={openCourseAt} />}
         </div>
       </div>
     </div>
