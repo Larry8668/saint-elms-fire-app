@@ -10,6 +10,7 @@ import type { EngineDeps, EngineEnv } from './context';
 import { errorStatus, friendlyError } from './errors';
 import { authRoutes } from './routes/auth';
 import { settingsRoutes } from './routes/settings';
+import { shareRoutes } from './routes/shares';
 import { studentRoutes } from './routes/student';
 import { sourceRoutes } from './routes/sources';
 
@@ -109,6 +110,7 @@ export function createApp(deps: EngineDeps) {
   app.route('/api', settingsRoutes(deps));
   app.route('/api', studentRoutes(deps));
   app.route('/api', sourceRoutes(deps));
+  app.route('/api', shareRoutes(deps));
 
   return app;
 }

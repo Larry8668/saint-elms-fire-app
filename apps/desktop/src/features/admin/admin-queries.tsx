@@ -1,4 +1,4 @@
-import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
+import { useInfiniteQuery, useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import type { AccountPatch, CohortSummary, NewAccount } from '@sef/shared';
 import { createContext, useContext, type ReactNode } from 'react';
 import { toast } from 'sonner';
@@ -26,6 +26,9 @@ export const adminKeys = {
   dispersal: ['admin', 'dispersal'] as const,
   audit: ['admin', 'audit'] as const,
   shares: ['admin', 'shares'] as const,
+  publishedShares: (filters: { cohort?: string; state?: string }) => ['admin', 'published-shares', filters] as const,
+  publishedShare: (id: string) => ['admin', 'published-share', id] as const,
+  legacyShares: ['admin', 'legacy-shares'] as const,
 };
 
 export const useOverview = () => useQuery({ queryKey: adminKeys.overview, queryFn: useAdminApi().overview });
@@ -38,6 +41,24 @@ export function useAudit() {
   return useQuery({ queryKey: adminKeys.audit, queryFn: () => api.audit() });
 }
 export const useShares = () => useQuery({ queryKey: adminKeys.shares, queryFn: useAdminApi().shares });
+
+/** Cursor-paginated published-share moderation list; `cursor` is the server's opaque keyset token. */
+export function usePublishedShares(filters: { cohort?: string; state?: 'published' | 'withdrawn' }) {
+  const api = useAdminApi();
+  return useInfiniteQuery({
+    queryKey: adminKeys.publishedShares(filters),
+    queryFn: ({ pageParam }) => api.publishedShares({ ...filters, cursor: pageParam }),
+    initialPageParam: undefined as string | undefined,
+    getNextPageParam: (last) => last.nextCursor ?? undefined,
+  });
+}
+
+export function usePublishedShare(id: string | null) {
+  const api = useAdminApi();
+  return useQuery({ queryKey: adminKeys.publishedShare(id ?? ''), queryFn: () => api.publishedShare(id!), enabled: Boolean(id) });
+}
+
+export const useLegacyShares = () => useQuery({ queryKey: adminKeys.legacyShares, queryFn: useAdminApi().legacyShares });
 
 export function useLessons(courseId: string | null) {
   const api = useAdminApi();
@@ -94,4 +115,6 @@ export const useCreateAccount = () => useAdminMutation((api, input: NewAccount) 
 export const useUpdateAccount = () =>
   useAdminMutation((api, { id, patch }: { id: string; patch: AccountPatch }) => api.updateAccount(id, patch), (a, { patch }) => (patch.password ? `Password reset for ${a.name}` : `${a.name} updated`));
 export const useRemoveShare = () => useAdminMutation((api, id: string) => api.removeShare(id), () => 'Share removed from the relay');
+export const useRemovePublishedShare = () =>
+  useAdminMutation((api, { id, note }: { id: string; note?: string }) => api.removePublishedShare(id, note), () => 'Share removed from the cohort feed');
 

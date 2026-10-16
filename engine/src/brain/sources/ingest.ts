@@ -35,7 +35,7 @@ export class SourceRejection extends Error {
   }
 }
 
-export type IngestKind = 'note' | 'document' | 'image' | 'session';
+export type IngestKind = 'note' | 'document' | 'image' | 'session' | 'peer';
 
 /** The committed transcript range a session source covers — the checkpoint written with it. */
 export interface SessionRef {
@@ -45,6 +45,14 @@ export interface SessionRef {
   lastTurn: number;
 }
 
+/** The published share a peer source came from — the provenance the vault keeps forever. */
+export interface PeerShareRef {
+  id: string;
+  revision: string;
+  senderId: string;
+  cohortId: string;
+}
+
 export interface IngestInput {
   kind: IngestKind;
   title: string;
@@ -52,6 +60,8 @@ export interface IngestInput {
   bytes: Uint8Array;
   /** Required for kind 'session'; ignored otherwise. */
   session?: SessionRef;
+  /** Required for kind 'peer'; carries the share attribution verbatim. */
+  share?: PeerShareRef;
   /**
    * Who the student says wrote this. Kinds restrict the choice: a note is always the
    * student's own words, a document always external; only an image can be either.
@@ -75,19 +85,21 @@ export interface IngestResult {
 
 const newSourceId = (): string => `src_${randomUUID().replace(/-/g, '').slice(0, 20)}`;
 
-const ORIGIN: Record<IngestKind, 'student' | 'external'> = {
+const ORIGIN: Record<IngestKind, 'student' | 'external' | 'peer'> = {
   note: 'student',
   document: 'external',
   image: 'student',
   session: 'student',
+  peer: 'peer',
 };
 
 /** Which provenance claims each kind will carry — the record schema refuses the rest. */
-const ALLOWED_ORIGIN: Record<IngestKind, ReadonlyArray<'student' | 'external'>> = {
+const ALLOWED_ORIGIN: Record<IngestKind, ReadonlyArray<'student' | 'external' | 'peer'>> = {
   note: ['student'],
   document: ['external'],
   image: ['student', 'external'],
   session: ['student'],
+  peer: ['peer'],
 };
 
 export class SourceIngestor {
@@ -117,6 +129,9 @@ export class SourceIngestor {
     if (input.kind === 'session' && !input.session) {
       throw new SourceRejection('A session source must name the session and turns it covers.', 'missing_session_ref', 400);
     }
+    if (input.kind === 'peer' && !input.share) {
+      throw new SourceRejection('A peer source must name the share it came from.', 'missing_share_ref', 400);
+    }
     const origin = input.origin ?? ORIGIN[input.kind];
     if (!ALLOWED_ORIGIN[input.kind].includes(origin)) {
       throw new SourceRejection(`A ${input.kind} cannot be filed as '${origin}' material.`, 'origin_mismatch', 400);
@@ -136,6 +151,7 @@ export class SourceIngestor {
       attribution: input.attribution ?? {},
       extractions: [],
       ...(input.kind === 'session' ? { session: input.session } : {}),
+      ...(input.kind === 'peer' ? { share: input.share } : {}),
     });
 
     // The original is durable before anything is read out of it.

@@ -19,13 +19,22 @@ import type {
   Lesson,
   LessonMeta,
   LintFinding,
+  OwnSharesResponse,
   PageRevisionContent,
   PageRevisionList,
+  PeerFeedResponse,
   ProposalAcceptance,
   ProposalList,
   ProposalPreview,
+  PublishedShare,
+  PublishShareRequest,
+  PublishShareResult,
   SessionDetail,
   SessionSummary,
+  ShareablePageList,
+  ShareDraftRequest,
+  ShareDraftResponse,
+  ShareImportResult,
   SourceDetail,
   SourceReadResult,
   SourceReceipt,
@@ -174,6 +183,18 @@ export const api = {
 
   createQuiz: (key: string) => post<QuizPayload>(`/api/quiz/${encodeURIComponent(key)}`),
   submitQuiz: (id: string, answers: number[]) => post<QuizResult>(`/api/quiz/${encodeURIComponent(id)}/submit`, { answers }),
+
+
+  // Cohort sharing — the engine relays to the university share API on this profile's uni session.
+  sharePages: () => request<ShareablePageList>('/api/shares/pages'),
+  prepareShare: (input: ShareDraftRequest) => post<ShareDraftResponse>('/api/shares/prepare', input),
+  publishShare: (request: PublishShareRequest) => post<PublishShareResult>('/api/shares/publish', request),
+  peerFeed: (cursor?: string) => request<PeerFeedResponse>(`/api/shares/feed${cursor ? `?cursor=${encodeURIComponent(cursor)}` : ''}`),
+  ownShares: () => request<OwnSharesResponse>('/api/shares/mine'),
+  withdrawShare: (id: string) => post<PublishedShare>(`/api/shares/${encodeURIComponent(id)}/withdraw`),
+  ignoreShare: (id: string, ignored: boolean) => post<void>(`/api/shares/${encodeURIComponent(id)}/ignore`, { ignored }),
+  importShare: (id: string) => post<ShareImportResult>(`/api/shares/${encodeURIComponent(id)}/import`),
+
 };
 
 export interface ConversationHandle {
