@@ -71,7 +71,10 @@ test('unauthenticated health is liveness only; the detail needs a session', asyn
   const { call, registry, sessions } = await harness();
   const live = await call('/api/health');
   assert.equal(live.status, 200);
-  assert.deepEqual(Object.keys((await live.json()) as object).sort(), ['engine', 'ok']);
+  const liveBody = (await live.json()) as { ok: boolean; engine: string; uni: object };
+  // Exactly these keys, and the uni object is a bare boolean: no url, version, model, host or error text.
+  assert.deepEqual(Object.keys(liveBody).sort(), ['engine', 'ok', 'uni']);
+  assert.deepEqual(liveBody.uni, { reachable: false });
 
   assert.equal((await call('/api/health/detail')).status, 401);
   assert.equal((await call('/api/health/detail', { headers: { authorization: 'Bearer guessed' } })).status, 401);
