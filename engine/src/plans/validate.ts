@@ -25,6 +25,33 @@ export function resolveRef(ref: string, world: PlanWorld): { prefix: string; id:
   return signal ? { prefix, id, title: signal.title } : null;
 }
 
+const REF_PREFIXES = ['page', 'lesson', 'signal'] as const;
+const KIND_PREFIX: Record<PlanStepKind, (typeof REF_PREFIXES)[number]> = {
+  review_page: 'page',
+  read_lesson: 'lesson',
+  answer_question: 'page',
+  quiz: 'page',
+  resolve_signal: 'signal',
+};
+
+/**
+ * Small models routinely drop or swap the `lesson:`-style prefix while copying the id
+ * exactly. The id is re-anchored only when it names exactly one real thing (or the one the
+ * step kind is about); otherwise the ref is returned untouched and dropped as usual.
+ */
+export function repairRef(ref: string, kind: PlanStepKind, world: PlanWorld): string {
+  const trimmed = ref.trim().replace(/^[`"'“”‘’]+|[`"'“”‘’]+$/g, '');
+  if (resolveRef(trimmed, world)) return trimmed;
+  const prefixed = REF_PREFIXES.find((p) => trimmed.startsWith(`${p}:`));
+  const id = prefixed ? trimmed.slice(prefixed.length + 1) : trimmed;
+  const hits = REF_PREFIXES.map((p) => `${p}:${id}`).filter((candidate) => resolveRef(candidate, world));
+  const preferred = `${KIND_PREFIX[kind]}:${id}`;
+  const repaired = hits.length === 1 ? hits[0]! : hits.includes(preferred) ? preferred : null;
+  if (!repaired) return ref;
+  log.info('plan_ref_repaired', { kind, from: prefixed ? 'wrong_prefix' : 'bare_id', to: repaired.slice(0, repaired.indexOf(':')) });
+  return repaired;
+}
+
 /** The reference each step kind is *about*; the step is meaningless without one. */
 const PRIMARY: Record<PlanStepKind, (r: NonNullable<ReturnType<typeof resolveRef>>) => boolean> = {
   review_page: (r) => r.prefix === 'page',
@@ -63,7 +90,7 @@ export function validateDraft(draft: PlannerDraft, world: PlanWorld): { steps: P
       drop(raw.title, `“${clip(raw.kind, 40)}” is not a kind of step this app can track`, raw.kind);
       continue;
     }
-    const refs = [...new Set(raw.entityRefs)].slice(0, 5);
+    const refs = [...new Set(raw.entityRefs.map((ref) => repairRef(ref, raw.kind as PlanStepKind, world)))].slice(0, 5);
     const resolved = refs.map((ref) => ({ ref, hit: resolveRef(ref, world) }));
     const missing = resolved.filter((r) => !r.hit).map((r) => clip(r.ref, 60));
     if (!refs.length || missing.length) {

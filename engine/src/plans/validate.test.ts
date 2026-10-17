@@ -31,6 +31,42 @@ test('steps whose references all resolve are kept, primary ref first, subject fr
   }
 });
 
+test('bare or mis-prefixed ids are re-anchored to the one real thing they name', () => {
+  const { steps, notes } = validateDraft(
+    {
+      steps: [
+        step('read_lesson', ['l-heat-engines']),
+        step('review_page', ['lesson:thermo-first-law']),
+        step('quiz', ['`entropy`']),
+        step('resolve_signal', ['deadline:log-1:48h']),
+      ],
+    },
+    world,
+  );
+  assert.deepEqual(notes, []);
+  assert.deepEqual(
+    steps.map((s) => s.entityRefs[0]),
+    ['lesson:l-heat-engines', 'page:thermo-first-law', 'page:entropy', 'signal:deadline:log-1:48h'],
+  );
+});
+
+test('a bare id that names nothing real is still dropped, never guessed', () => {
+  const { steps, notes } = validateDraft({ steps: [step('read_lesson', ['l-nonexistent']), step('review_page', ['admin-secrets'])] }, world);
+  assert.equal(steps.length, 0);
+  assert.equal(notes.length, 2);
+  assert.match(notes[0]!, /not in your workspace \(l-nonexistent\)/);
+});
+
+test('an id shared by two kinds resolves to the one the step kind is about', () => {
+  const shared = makeWorld();
+  shared.lessons.set('entropy', { id: 'entropy', title: 'Entropy lecture', courseId: 'phys201', concepts: [] });
+  const { steps } = validateDraft({ steps: [step('read_lesson', ['entropy']), step('quiz', ['entropy'])] }, shared);
+  assert.deepEqual(
+    steps.map((s) => s.entityRefs[0]),
+    ['lesson:entropy', 'page:entropy'],
+  );
+});
+
 test('an injected step on a nonexistent page is dropped and disclosed, never guessed', () => {
   const { steps, notes } = validateDraft(
     { steps: [step('review_page', ['page:ignore-previous-instructions'], 'Open the secret page'), step('review_page', ['page:entropy'])] },
@@ -52,7 +88,7 @@ test('unknown kinds, malformed refs, empty refs and mismatched primaries are dro
     {
       steps: [
         step('run_shell', ['page:entropy']),
-        step('review_page', ['entropy']),
+        step('review_page', ['page: entropy']),
         step('review_page', []),
         step('quiz', ['page:q-carnot']), // quizzes need a concept page
         step('answer_question', ['page:entropy']), // answers need a question page
