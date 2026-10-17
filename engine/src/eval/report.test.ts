@@ -44,6 +44,11 @@ test('a nudge dismissed within 5 s of first showing is a false alert; later, or 
   assert.deepEqual(report.signalVolumes, { deadline: 1, notice: 2 });
 });
 
+test('a dismissal stamped before its first showing is not a false alert', () => {
+  const events = [e('nudge_dismissed', 'n-early', 0), e('nudge_shown', 'n-early', 2_000, 'deadline')];
+  assert.deepEqual(aggregate(events, NONE, new Date(T0)).falseAlerts, { numerator: 0, denominator: 1, rate: 0 });
+});
+
 test('plan completion, steps, refusals and proposal acceptance', () => {
   const events = [
     e('plan_approved', 'p1', 0),

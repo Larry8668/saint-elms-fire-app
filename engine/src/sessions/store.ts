@@ -98,9 +98,17 @@ export class SessionStore {
     return { total: answers.length, refused: answers.filter((t) => t.verification?.lane === 'refused').length };
   }
 
-  /** When a conversation last drew on each lesson — the evidence a plan's read-lesson step waits for. */
+  /**
+   * When conversations drew on each lesson — the evidence a plan's read-lesson step waits for.
+   * Each answer that cited a lesson counts at its own time; a lesson no stored answer cites
+   * falls back to the session's start, so late unrelated turns never credit it.
+   */
   async lessonActivity(): Promise<Array<{ lessonId: string; at: string }>> {
-    return (await this.all()).flatMap((s) => s.lessonIds.map((lessonId) => ({ lessonId, at: s.updatedAt })));
+    return (await this.all()).flatMap((s) => {
+      const cited = s.turns.flatMap((t) => (t.role === 'assistant' ? (t.verification?.sources ?? []).filter((src) => src.kind === 'lesson').map((src) => ({ lessonId: src.id, at: t.at })) : []));
+      const seen = new Set(cited.map((c) => c.lessonId));
+      return [...cited, ...s.lessonIds.filter((id) => !seen.has(id)).map((lessonId) => ({ lessonId, at: s.startedAt }))];
+    });
   }
 
   /** Newest first. `limit` is clamped to 1–MAX_LIST; non-numeric input falls back to 30. */

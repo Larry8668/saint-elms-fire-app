@@ -64,5 +64,7 @@ export function deadlineFromDate(value: string): string | undefined {
   if (!/^\d{4}-\d{2}-\d{2}$/.test(value)) return undefined;
   const [y, m, d] = value.split('-').map(Number) as [number, number, number];
   const end = new Date(y, m - 1, d, 23, 59, 0, 0);
-  return Number.isNaN(end.getTime()) ? undefined : end.toISOString();
+  // Date rolls 2026-02-31 over to March 3; reject anything that did not round-trip.
+  if (Number.isNaN(end.getTime()) || end.getFullYear() !== y || end.getMonth() !== m - 1 || end.getDate() !== d) return undefined;
+  return end.toISOString();
 }

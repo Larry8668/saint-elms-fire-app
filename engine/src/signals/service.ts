@@ -120,10 +120,13 @@ export class SignalService {
 
   /** Signals still in play — raised and not dismissed — regardless of the nudges switch or quiet hours. */
   async live(): Promise<Array<{ key: string; kind: string; title: string }>> {
+    return (await this.entries()).filter((item) => !item.dismissed).map(({ key, kind, title }) => ({ key, kind, title }));
+  }
+
+  /** Every signal in the ledger with dismissals flagged, so plans can tell "handled" from "lapsed". */
+  async entries(): Promise<Array<{ key: string; kind: string; title: string; dismissed: boolean }>> {
     const ledger = await this.deps.store.read();
-    return Object.values(ledger.items)
-      .filter((item) => item.state !== 'dismissed')
-      .map(({ key, kind, title }) => ({ key, kind, title }));
+    return Object.values(ledger.items).map(({ key, kind, title, state }) => ({ key, kind, title, dismissed: state === 'dismissed' }));
   }
 
   async view(): Promise<AttentionResponse> {

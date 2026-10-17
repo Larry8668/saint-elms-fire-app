@@ -26,7 +26,8 @@ function firstSeen(events: MetricEvent[], kind: MetricEventKind): Map<string, Me
  * also shown, so a rate never exceeds what the student actually saw.
  */
 export function aggregate(events: MetricEvent[], extras: ReportExtras, now: Date): MetricsReport {
-  const sorted = [...events].sort((a, b) => a.at.localeCompare(b.at));
+  // Engine-stamped ISO-8601 UTC strings: code-unit order is chronological order.
+  const sorted = [...events].sort((a, b) => (a.at < b.at ? -1 : a.at > b.at ? 1 : 0));
   const shownSuggestions = firstSeen(sorted, 'suggestion_shown');
   const sentSuggestions = [...firstSeen(sorted, 'suggestion_sent').keys()].filter((ref) => shownSuggestions.has(ref));
 
@@ -34,7 +35,9 @@ export function aggregate(events: MetricEvent[], extras: ReportExtras, now: Date
   const dismissed = firstSeen(sorted, 'nudge_dismissed');
   const falseAlerts = [...dismissed.values()].filter((d) => {
     const shown = shownNudges.get(d.ref);
-    return shown !== undefined && Date.parse(d.at) - Date.parse(shown.at) <= FALSE_ALERT_WINDOW_MS;
+    if (shown === undefined) return false;
+    const delta = Date.parse(d.at) - Date.parse(shown.at);
+    return delta >= 0 && delta <= FALSE_ALERT_WINDOW_MS;
   }).length;
   const clicked = [...firstSeen(sorted, 'nudge_clicked').keys()].filter((ref) => shownNudges.has(ref)).length;
 

@@ -190,7 +190,7 @@ export class WorkspaceManager {
           events: () => wiki.listEvents(),
           lessons: () => content.academicLessons(),
           installed: () => content.installed(),
-          signals: () => signals.live(),
+          signals: () => signals.entries(),
           quizzes: () => brain.quizResults(),
           lessonActivity: () => sessions.lessonActivity(),
         }),

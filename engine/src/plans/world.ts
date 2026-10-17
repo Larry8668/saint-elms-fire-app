@@ -13,6 +13,10 @@ export interface PlanWorld {
   lessons: Map<string, { id: string; title: string; courseId: string; concepts: string[] }>;
   /** Live (not dismissed) signals by key. */
   signals: Map<string, { key: string; kind: string; title: string }>;
+  /** Signals the student dismissed from the Attention panel — handled, as far as a plan is concerned. */
+  dismissedSignals: Set<string>;
+  /** False when the ledger could not be read; signal steps then neither complete nor go stale. */
+  signalsKnown: boolean;
   events: Array<{ pageId: string; at: string }>;
   /** Completed quiz results, by the concept page they were taken on. */
   quizzes: Array<{ pageId: string; at: string }>;
@@ -26,7 +30,7 @@ export interface PlanWorldSources {
   events: () => Promise<LearningEvent[]>;
   lessons: () => Promise<Lesson[]>;
   installed: () => Promise<Record<string, InstalledCourse>>;
-  signals: () => Promise<Array<{ key: string; kind: string; title: string }>>;
+  signals: () => Promise<Array<{ key: string; kind: string; title: string; dismissed?: boolean }>>;
   quizzes: () => Promise<Array<{ pageId: string; at: string }>>;
   lessonActivity: () => Promise<Array<{ lessonId: string; at: string }>>;
 }
@@ -42,7 +46,7 @@ export async function gatherPlanWorld(sources: PlanWorldSources, now = new Date(
     read('events', sources.events, []),
     read('lessons', sources.lessons, []),
     read('installed', sources.installed, {}),
-    read('signals', sources.signals, []),
+    attempt('plan_input_failed', 'signals', sources.signals),
     read('quizzes', sources.quizzes, []),
     read('lessonActivity', sources.lessonActivity, []),
   ]);
@@ -52,7 +56,9 @@ export async function gatherPlanWorld(sources: PlanWorldSources, now = new Date(
       pages.flatMap((p) => (p.state === 'ok' && p.metadata ? [[p.id, { id: p.id, kind: p.metadata.kind, title: p.metadata.title, updatedAt: p.metadata.updatedAt }] as const] : [])),
     ),
     lessons: new Map(lessons.map((l) => [l.id, { id: l.id, title: l.title, courseId: l.courseId, concepts: l.concepts }])),
-    signals: new Map(signals.map((s) => [s.key, s])),
+    signals: new Map((signals ?? []).filter((s) => !s.dismissed).map((s) => [s.key, { key: s.key, kind: s.kind, title: s.title }])),
+    dismissedSignals: new Set((signals ?? []).filter((s) => s.dismissed).map((s) => s.key)),
+    signalsKnown: signals !== undefined,
     events: events.map((e) => ({ pageId: e.pageId, at: e.at })),
     quizzes,
     lessonActivity,

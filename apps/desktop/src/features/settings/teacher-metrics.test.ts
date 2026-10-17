@@ -55,6 +55,15 @@ test('metricRows marks false alerts and refusals as lower-is-better', () => {
   );
 });
 
+test('a report missing a rate field (older engine) renders "No data yet" instead of crashing', () => {
+  const partial = { ...report() } as Partial<MetricsReport>;
+  delete partial.refusals;
+  delete partial.signalVolumes;
+  const rows = metricRows(partial as MetricsReport);
+  assert.equal(rows.find((row) => row.id === 'refusals')?.value, 'No data yet');
+  assert.deepEqual(topSignals(partial as MetricsReport), []);
+});
+
 test('topSignals sorts by volume, breaks ties by name, drops zeros and caps the list', () => {
   const top = topSignals(report({ signalVolumes: { notice: 2, deadline: 5, share: 2, wiki_review: 0, release_update: 1 } }), 3);
   assert.deepEqual(top, [

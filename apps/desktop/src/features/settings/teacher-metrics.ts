@@ -13,8 +13,8 @@ export interface MetricRow {
   rate: number | null;
 }
 
-export function formatRate(rate: Rate): string {
-  if (rate.denominator === 0 || rate.rate === null) return 'No data yet';
+export function formatRate(rate: Rate | undefined): string {
+  if (!rate || rate.denominator === 0 || rate.rate === null) return 'No data yet';
   const counts = `${rate.numerator} of ${rate.denominator}`;
   if (rate.denominator < MIN_SAMPLE) return `${counts} · too early to tell`;
   return `${counts} (${Math.round(rate.rate * 100)}%)`;
@@ -31,14 +31,15 @@ const ROWS: Array<{ id: keyof MetricsReport & string; label: string; hint: strin
 
 export function metricRows(report: MetricsReport): MetricRow[] {
   return ROWS.map(({ id, label, hint, better }) => {
-    const rate = report[id] as Rate;
-    return { id, label, hint, better, value: formatRate(rate), rate: rate.denominator >= MIN_SAMPLE ? rate.rate : null };
+    // An older engine may predate a rate; that row reads "No data yet" instead of crashing the card.
+    const rate = report[id] as Rate | undefined;
+    return { id, label, hint, better, value: formatRate(rate), rate: rate && rate.denominator >= MIN_SAMPLE ? rate.rate : null };
   });
 }
 
 /** Signal kinds by distinct nudges shown, busiest first. */
 export function topSignals(report: MetricsReport, limit = 4): Array<{ kind: string; count: number }> {
-  return Object.entries(report.signalVolumes)
+  return Object.entries(report.signalVolumes ?? {})
     .filter(([, count]) => count > 0)
     .sort(([a, x], [b, y]) => y - x || a.localeCompare(b))
     .slice(0, limit)

@@ -17,6 +17,8 @@ export function makeWorld(overrides: Partial<PlanWorld> = {}): PlanWorld {
       ['l-enthalpy', { id: 'l-enthalpy', title: 'Enthalpy', courseId: 'phys201', concepts: [] }],
     ]),
     signals: new Map([['deadline:log-1:48h', { key: 'deadline:log-1:48h', kind: 'deadline', title: 'Thermo problem set due Thursday' }]]),
+    dismissedSignals: new Set(),
+    signalsKnown: true,
     events: [],
     quizzes: [],
     lessonActivity: [],

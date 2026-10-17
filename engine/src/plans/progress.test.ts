@@ -47,11 +47,30 @@ test('quiz, lesson, question and signal steps each read their own evidence', () 
     lessonActivity: [{ lessonId: 'l-heat-engines', at: AFTER }],
     events: [{ pageId: 'q-carnot', at: AFTER }],
     signals: new Map(),
+    dismissedSignals: new Set(['deadline:log-1:48h']),
   });
   const next = recompute(p, world);
   assert.deepEqual(next.steps.map((x) => x.state), ['done', 'done', 'done', 'done']);
   assert.equal(next.status, 'completed');
   assert.equal(next.steps[3]!.doneAt, NOW.toISOString());
+});
+
+test('a vanished signal is credited only when the student handled it; a lapse goes stale', () => {
+  const steps = () => [s('st_1', 'resolve_signal', 'signal:deadline:log-1:48h', 'Problem set'), s('st_2', 'resolve_signal', 'signal:vault_question:q-carnot:3')];
+  const lapsed = recompute(plan(steps()), makeWorld({ signals: new Map() }));
+  assert.deepEqual(
+    lapsed.steps.map((x) => x.state),
+    ['stale', 'done'],
+    'a deadline that passed is not work done; an answered question is',
+  );
+  assert.match(lapsed.notes.join(' '), /cleared without being handled/);
+
+  const unreadable = recompute(plan(steps()), makeWorld({ signals: new Map(), signalsKnown: false }));
+  assert.deepEqual(
+    unreadable.steps.map((x) => x.state),
+    ['pending', 'pending'],
+    'an unreadable ledger neither credits nor stales',
+  );
 });
 
 test('nothing changes without new evidence; proposed plans are never tracked', () => {
@@ -96,6 +115,8 @@ test('approval drops steps whose signal already cleared or whose entity vanished
   assert.deepEqual(pruned.steps.map((x) => x.id), ['st_2']);
   assert.equal(pruned.notes.length, 2);
   assert.ok(pruned.steps.every((x) => x.state === 'pending'));
+  const unknown = pruneAtApproval(p, makeWorld({ signals: new Map(), signalsKnown: false }));
+  assert.ok(unknown.steps.some((x) => x.id === 'st_1'), 'an unreadable ledger never prunes a signal step');
 });
 
 test('a step with no usable ref is inert rather than a crash', () => {

@@ -54,4 +54,7 @@ test('a picked date means the end of that local day; junk is ignored', () => {
   assert.deepEqual([local.getFullYear(), local.getMonth(), local.getDate(), local.getHours(), local.getMinutes()], [2026, 9, 16, 23, 59]);
   assert.equal(deadlineFromDate(''), undefined);
   assert.equal(deadlineFromDate('16/10/2026'), undefined);
+  assert.equal(deadlineFromDate('2026-02-31'), undefined, 'no silent rollover to March');
+  assert.equal(deadlineFromDate('2026-13-01'), undefined);
+  assert.ok(deadlineFromDate('2028-02-29'), 'a real leap day is fine');
 });

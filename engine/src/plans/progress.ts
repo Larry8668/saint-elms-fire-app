@@ -9,6 +9,20 @@ const primaryId = (step: PlanStep) => {
   return ref.slice(ref.indexOf(':') + 1);
 };
 
+/** Kinds that only leave the ledger when the student acts; the rest also lapse as time passes. */
+const CLEARED_BY_STUDENT = new Set(['share_incoming', 'proposal_pending', 'vault_question', 'maintenance_finding']);
+
+/**
+ * A vanished signal is not proof of work: a deadline passes, a bucket changes, a cap trims.
+ * Only a dismissal or a student-cleared kind counts as handled; anything else has lapsed.
+ */
+function signalOutcome(key: string, world: PlanWorld): 'live' | 'handled' | 'lapsed' | 'unknown' {
+  if (!world.signalsKnown) return 'unknown';
+  if (world.signals.has(key)) return 'live';
+  if (world.dismissedSignals.has(key) || CLEARED_BY_STUDENT.has(key.slice(0, key.indexOf(':')))) return 'handled';
+  return 'lapsed';
+}
+
 /** When the evidence says this step happened, or null. Pure reads — the student did the work. */
 export function evidenceOfDone(step: PlanStep, since: string, world: PlanWorld): string | null {
   const id = primaryId(step);
@@ -25,9 +39,8 @@ export function evidenceOfDone(step: PlanStep, since: string, world: PlanWorld):
     case 'read_lesson':
       return firstAfter(world.lessonActivity.filter((a) => a.lessonId === id).map((a) => a.at), since);
     case 'resolve_signal':
-      // Ledgers keep no clearance time, so this is when the change was first observed. A
-      // signal already gone at approval never reaches here: approval marks that step stale.
-      return world.signals.has(id) ? null : world.now.toISOString();
+      // Ledgers keep no clearance time, so this is when the change was first observed.
+      return signalOutcome(id, world) === 'handled' ? world.now.toISOString() : null;
   }
 }
 
@@ -40,7 +53,8 @@ export function pruneAtApproval(plan: StudyPlan, world: PlanWorld): StudyPlan {
   const notes = [...plan.notes];
   const steps = plan.steps.filter((step) => {
     if (step.state !== 'pending') return true;
-    const gone = step.kind === 'resolve_signal' ? !world.signals.has(primaryId(step)) : Boolean(staleReason(step, { ...plan, basis: undefined }, world));
+    const outcome = step.kind === 'resolve_signal' ? signalOutcome(primaryId(step), world) : null;
+    const gone = outcome ? outcome === 'handled' || outcome === 'lapsed' : Boolean(staleReason(step, { ...plan, basis: undefined }, world));
     if (gone) notes.push(`Dropped “${step.title}”: what it referred to changed before the plan started.`.slice(0, 300));
     return !gone;
   });
@@ -49,6 +63,7 @@ export function pruneAtApproval(plan: StudyPlan, world: PlanWorld): StudyPlan {
 
 /** Why a pending step can no longer be done as written, or null. */
 export function staleReason(step: PlanStep, plan: StudyPlan, world: PlanWorld): string | null {
+  if (step.kind === 'resolve_signal' && signalOutcome(primaryId(step), world) === 'lapsed') return `“${step.subject}” cleared without being handled`;
   if (step.kind !== 'resolve_signal') {
     const gone = step.entityRefs.filter((ref) => !resolveRef(ref, world));
     if (gone.length) return `“${step.subject}” changed or was removed`;
