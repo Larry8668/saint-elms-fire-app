@@ -35,7 +35,7 @@ What the Instabox edge sends to the box, measured on a real machine:
 | `ENGINE_ALLOWED_ORIGINS` | none | usually nothing | Extra browser origins, comma-separated. The Vite dev origins and Tauri schemes are always allowed, and the public origin is derived from `ENGINE_PUBLIC_HOST`, so you don't need to repeat it here. `*` and `null` are ignored. A non-loopback `https://` origin here without `ENGINE_PUBLIC_HOST` refuses to start. |
 | `ENGINE_DEVICE_PEERS` | unset (loopback only) | leave unset | Not for seats. CIDRs whose *direct* connections count as "this device" (picker, offline unlock, keyless polls), for a local container whose port is published on host loopback only; `docker-compose.yml` sets it to the bridge ranges. A forwarded request is never the device, and on a seat (`ENGINE_PUBLIC_HOST` set) nothing is. |
 | `ENGINE_SEAT_OWNER` | unset | the owner's uni user id, set by whatever provisions the box | The uni account id allowed to sign in to this seat (several may be comma-separated). Unset, the first uni-verified sign-in pins itself (see [Seat owner](#seat-owner)). Ignored without `ENGINE_PUBLIC_HOST`. |
-| `ENGINE_STATIC_DIR` | unset | the built `apps/desktop/dist` | Serves the student UI from the engine's own origin (see below). The engine's loopback origin is then allowed as well. |
+| `ENGINE_STATIC_DIR` | unset | the absolute path of the built `apps/desktop/dist` | Serves the student UI from the engine's own origin (see below). The engine's loopback origin is then allowed as well. |
 | `UNI_SERVER_URL` | `http://localhost:4200` | the university's HTTPS URL | First-run default for the uni server. Settings can change it later. |
 | `OLLAMA_URL` | `http://localhost:11434` | `http://ollama:11434` (compose) or loopback | Model runtime on the box. |
 
@@ -112,8 +112,10 @@ Build the UI so that it calls the origin it was loaded from, without demo helper
 
 ```bash
 VITE_ENGINE_URL=same-origin VITE_DEMO_MODE=false pnpm --filter @sef/desktop build
-ENGINE_STATIC_DIR=apps/desktop/dist pnpm --filter @sef/engine start
+ENGINE_STATIC_DIR=$PWD/apps/desktop/dist pnpm --filter @sef/engine start
 ```
+
+Use an absolute path: pnpm runs the engine from `engine/`, so a relative `apps/desktop/dist` would resolve to `engine/apps/desktop/dist` and the engine logs `static_ui_missing` with the resolved `root`.
 
 The static handler follows the same rules as the uni's `/admin` portal and uses the same resolver (`@sef/shared/node` `resolveAsset`):
 - Paths resolve inside the root only. `..` and encoded traversal are rejected, and symlinks that lead outside the root are refused.

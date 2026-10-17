@@ -38,7 +38,10 @@ const isAppRoute = (requested: string) => !path.posix.basename(requested).includ
 
 export function staticUiRoutes(root: string, edge: Pick<EdgePolicy, 'scheme'>) {
   const app = new Hono<EngineEnv>();
-  if (!existsSync(path.join(root, 'index.html'))) log.warn('static_ui_missing', { root });
+  // A relative ENGINE_STATIC_DIR resolves against the engine's cwd (engine/ under pnpm), so say both.
+  if (!existsSync(path.join(root, 'index.html'))) {
+    log.warn('static_ui_missing', { root, configured: process.env.ENGINE_STATIC_DIR, cwd: process.cwd(), hint: 'use an absolute ENGINE_STATIC_DIR' });
+  }
   else log.info('static_ui_enabled', { root });
 
   const headers = (c: Context<EngineEnv>, asset: ResolvedAsset, etag: string): Record<string, string> => ({
