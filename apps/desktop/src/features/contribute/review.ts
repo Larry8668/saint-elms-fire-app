@@ -74,11 +74,29 @@ export function normalizeMediaType(file: { type: string; name: string }): string
   if (name.endsWith('.txt')) return 'text/plain';
   if (name.endsWith('.png')) return 'image/png';
   if (/\.(jpe?g|webp|gif|heic|heif|avif|bmp|tiff?)$/.test(name)) return 'image/jpeg';
+  if (name.endsWith('.mp3')) return 'audio/mpeg';
+  if (name.endsWith('.wav')) return 'audio/wav';
+  if (name.endsWith('.m4a')) return 'audio/mp4';
+  if (name.endsWith('.aac')) return 'audio/aac';
+  if (/\.(ogg|oga|opus)$/.test(name)) return 'audio/ogg';
+  if (name.endsWith('.flac')) return 'audio/flac';
+  if (name.endsWith('.weba')) return 'audio/webm';
+  if (/\.3gp?$/.test(name) || name.endsWith('.3g2')) return 'audio/3gpp';
   return 'application/octet-stream';
 }
 
+/** m:ss / h:mm:ss for preview cards — recordings and video lengths. */
+export function formatSeconds(seconds: number): string {
+  const s = Math.max(0, Math.round(seconds));
+  const h = Math.floor(s / 3600);
+  const m = Math.floor((s % 3600) / 60);
+  const rest = s % 60;
+  if (h === 0) return `${m}:${String(rest).padStart(2, '0')}`;
+  return `${h}:${String(m).padStart(2, '0')}:${String(rest).padStart(2, '0')}`;
+}
+
 export const sourceKindLabel = (kind: SourceRecord['kind']): string =>
-  ({ note: 'Note', document: 'Document', image: 'Photo', audio: 'Recording', session: 'Conversation', answer: 'Answer', peer: 'From a peer' })[kind] ?? kind;
+  ({ note: 'Note', document: 'Document', image: 'Photo', audio: 'Recording', video: 'Video', session: 'Conversation', answer: 'Answer', peer: 'From a peer' })[kind] ?? kind;
 
 export const originLabel = (origin: SourceRecord['origin']): string =>
   ({ student: 'your own', external: 'external', course: 'course', peer: 'a peer', model: 'a model' })[origin] ?? origin;

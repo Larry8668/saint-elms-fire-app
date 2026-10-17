@@ -62,6 +62,7 @@ import type {
   VaultExport,
   VaultImportPreview,
   VaultImportResult,
+  VideoPreview,
   WebPreview,
   WikiIndex,
   WikiPageView,
@@ -228,6 +229,9 @@ export const api = {
   // Contribute → job → proposal → review. No write happens without an accept.
   jobBoard: () => request<JobList>('/api/sources'),
   contribute: (body: ContributeBody) => post<SourceReceipt>('/api/sources', body),
+  // Video links are two calls: metadata for the consent card, then the consented fetch.
+  videoPreview: (url: string) => post<VideoPreview>('/api/sources/video-preview', { url }),
+  videoIngest: (url: string) => post<SourceReceipt>('/api/sources/video', { url }),
   source: (id: string) => request<SourceDetail>(`/api/sources/${encodeURIComponent(id)}`),
   sourceBytes: (id: string) => requestBlob(`/api/sources/${encodeURIComponent(id)}/raw`),
   correctExtraction: (id: string, text: string) => request<SourceDetail>(`/api/sources/${encodeURIComponent(id)}/extraction`, { method: 'PUT', body: JSON.stringify({ text }) }),

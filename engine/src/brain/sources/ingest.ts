@@ -6,6 +6,7 @@ import {
   SourceSummarySchema,
   type JobList,
   type ProfileIdentity,
+  type SourceLink,
   type SourceRecord,
   type SourceSummary,
   type TeacherId,
@@ -36,7 +37,7 @@ export class SourceRejection extends Error {
   }
 }
 
-export type IngestKind = 'note' | 'document' | 'image' | 'audio' | 'session' | 'answer' | 'peer';
+export type IngestKind = 'note' | 'document' | 'image' | 'audio' | 'video' | 'session' | 'answer' | 'peer';
 
 /** What the audio lane must answer — the recording's length up front, its transcript on read. */
 export interface AudioReader {
@@ -69,6 +70,8 @@ export interface IngestInput {
   session?: SessionRef;
   /** Required for kind 'peer'; carries the share attribution verbatim. */
   share?: PeerShareRef;
+  /** Required for kind 'video'; keeps where the recording was fetched from forever. */
+  link?: SourceLink;
   /**
    * Who the student says wrote this. Kinds restrict the choice: a note is always the
    * student's own words, a document always external, an answer always a model's;
@@ -98,6 +101,7 @@ const ORIGIN: Record<IngestKind, 'student' | 'external' | 'peer' | 'model'> = {
   document: 'external',
   image: 'student',
   audio: 'student',
+  video: 'external',
   session: 'student',
   answer: 'model',
   peer: 'peer',
@@ -109,6 +113,7 @@ const ALLOWED_ORIGIN: Record<IngestKind, ReadonlyArray<'student' | 'external' | 
   document: ['external'],
   image: ['student', 'external'],
   audio: ['student', 'external'],
+  video: ['external'],
   session: ['student'],
   answer: ['model'],
   peer: ['peer'],
@@ -138,11 +143,13 @@ export class SourceIngestor {
     if (rejection) throw new SourceRejection(rejection.message, rejection.code, rejection.code === 'empty' ? 400 : 413);
 
     // The audio family pins the kind both ways: an audio mime filed as a document would
-    // transcribe without the duration probe, and an 'audio' kind over text would probe
-    // bytes that were never a recording.
+    // transcribe without the duration probe, and an 'audio'/'video' kind over text would
+    // probe bytes that were never a recording. A video's stored bytes *are* its audio
+    // track, so both kinds accept the family.
     const isAudioMedia = input.mediaType.split(';')[0]!.trim().toLowerCase().startsWith('audio/');
-    if ((input.kind === 'audio') !== isAudioMedia) {
-      throw new SourceRejection(`Audio recordings are filed as kind 'audio' — a '${input.kind}' cannot declare ${input.mediaType}.`, 'kind_mismatch', 400);
+    const isAudioKind = input.kind === 'audio' || input.kind === 'video';
+    if (isAudioKind !== isAudioMedia) {
+      throw new SourceRejection(`Audio bytes are filed as kind 'audio' or 'video' — a '${input.kind}' cannot declare ${input.mediaType}.`, 'kind_mismatch', 400);
     }
 
     const identity = await this.profile();
@@ -155,16 +162,20 @@ export class SourceIngestor {
     if (input.kind === 'peer' && !input.share) {
       throw new SourceRejection('A peer source must name the share it came from.', 'missing_share_ref', 400);
     }
+    if (input.kind === 'video' && !input.link) {
+      throw new SourceRejection('A video source must carry the link it was fetched from.', 'missing_link_ref', 400);
+    }
     const origin = input.origin ?? ORIGIN[input.kind];
     if (!ALLOWED_ORIGIN[input.kind].includes(origin)) {
       throw new SourceRejection(`A ${input.kind} cannot be filed as '${origin}' material.`, 'origin_mismatch', 400);
     }
 
     // Audio is probed before the bytes are stored: a recording too long to transcribe is a
-    // named refusal, and one ffmpeg cannot parse is not an audio file at all. With no
-    // transcriber wired the probe is skipped — the stored source then reports why instead.
+    // named refusal, and one ffmpeg cannot parse is not an audio file at all. A video's
+    // audio track probes exactly the same. With no transcriber wired the probe is skipped —
+    // the stored source then reports why instead.
     let audioSeconds: number | undefined;
-    if (input.kind === 'audio' && this.audio) {
+    if (isAudioMedia && this.audio) {
       try {
         const probe = await this.audio.probe(input.bytes, input.mediaType);
         audioSeconds = probe.seconds;
@@ -196,6 +207,7 @@ export class SourceIngestor {
       extractions: [],
       ...(input.kind === 'session' || input.kind === 'answer' ? { session: input.session } : {}),
       ...(input.kind === 'peer' ? { share: input.share } : {}),
+      ...(input.kind === 'video' ? { link: input.link } : {}),
     });
 
     // The original is durable before anything is read out of it.

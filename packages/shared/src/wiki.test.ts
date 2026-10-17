@@ -23,7 +23,7 @@ type AnySchema = { safeParse: (v: unknown) => { success: boolean }; parse: (v: u
 const rejects = (schema: AnySchema, value: unknown, message?: string) =>
   assert.equal(schema.safeParse(value).success, false, message);
 
-test('all seven source kinds parse from fixtures', () => {
+test('all eight source kinds parse from fixtures', () => {
   const { sources } = makeContractFixtures();
   for (const [name, record] of Object.entries(sources)) {
     assert.equal(SourceRecordSchema.safeParse(record).success, true, `${name} should parse`);
@@ -43,6 +43,12 @@ test('source variants enforce their origin and detail requirements', () => {
   // A recording is only ever the student's own voice or external material.
   rejects(SourceRecordSchema, { ...sources.audio, origin: 'course' });
   rejects(SourceRecordSchema, { ...sources.audio, origin: 'model' });
+  // A fetched video is always external and must carry its link provenance.
+  const video = sources.video;
+  if (video.kind !== 'video') throw new Error('fixture drift — video source must be kind video');
+  rejects(SourceRecordSchema, { ...video, origin: 'student' });
+  rejects(SourceRecordSchema, { ...video, link: undefined });
+  rejects(SourceRecordSchema, { ...video, link: { ...video.link, provider: 'vimeo' } });
 });
 
 test('an audio source and its audio extraction pass round-trip the contract', () => {

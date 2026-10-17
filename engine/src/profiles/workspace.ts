@@ -15,6 +15,7 @@ import { EmbeddingIndex } from '../embed/index';
 import { EmbeddingService } from '../embed/service';
 import { LogisticsStore } from '../logistics/store';
 import { AudioTranscriber } from '../media/audio';
+import { YouTube } from '../media/youtube';
 import { ProfileSettingsStore } from '../settings/store';
 import { ContentStore } from '../content/store';
 import { ContentSync } from '../content/sync';
@@ -45,6 +46,8 @@ export interface Workspace {
   peerShares: PeerShareService;
   /** Private campus logistics — the student's own deadlines, never shared or taught. */
   logistics: LogisticsStore;
+  /** Consent-gated YouTube preview/fetch — the only egress beside SearXNG. */
+  youtube: YouTube;
 }
 
 export class WorkspaceManager {
@@ -141,6 +144,7 @@ export class WorkspaceManager {
         };
       }),
       logistics: new LogisticsStore(path.join(paths.root, 'logistics.json')),
+      youtube: new YouTube(),
       peerShares: new PeerShareService({
         wiki,
         sources,

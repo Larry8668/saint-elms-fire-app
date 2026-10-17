@@ -1,4 +1,6 @@
+import { z } from 'zod';
 import type { BrainDiffEntry, ConceptStatus, EdgeOrigin, EdgeType, IngestResult, SkyNodeKind } from './brain';
+import { ContractVersionSchema, HttpUrlSchema } from './contracts';
 import type { AnchorCandidate } from './teacher-policy';
 import type { TeacherId } from './teachers';
 import type { CourseConceptRef, ProposalReport, WikiClaim, WikiLink, WikiProposalRecord } from './wiki';
@@ -288,6 +290,31 @@ export interface ContributeBody {
   origin?: 'student' | 'external';
   attribution?: { creator?: string; url?: string };
 }
+
+/**
+ * A video link becomes a source in two calls so the fetch is always consented:
+ * preview answers what a URL is without moving a byte of media; the fetch call —
+ * the student's explicit click — downloads, transcribes and files it.
+ */
+export const VideoUrlBodySchema = z.strictObject({
+  /** Deliberately a bare string — the engine names the exact way a link fails. */
+  url: z.string().trim().min(1).max(2000),
+});
+export type VideoUrlBody = z.infer<typeof VideoUrlBodySchema>;
+
+/** POST /api/sources/video-preview response — what the consent card shows. */
+export const VideoPreviewSchema = z.strictObject({
+  schemaVersion: ContractVersionSchema,
+  provider: z.literal('youtube'),
+  /** The canonical URL the fetch would run against — what it actually resolved to. */
+  url: HttpUrlSchema,
+  videoId: z.string(),
+  title: z.string(),
+  seconds: z.number().nonnegative(),
+  uploader: z.string().optional(),
+  thumbnailUrl: HttpUrlSchema.optional(),
+});
+export type VideoPreview = z.infer<typeof VideoPreviewSchema>;
 
 /** POST /api/proposals/:id/accept — the decided record, the journaled report, and a fresh page diff. */
 export interface ProposalAcceptance {

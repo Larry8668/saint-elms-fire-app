@@ -6,7 +6,8 @@ import type { ContentStore } from '../../content/store';
 import type { SettingsReader } from '../../settings/store';
 import { SessionStore, type Session } from '../../sessions/store';
 import type { WikiStore } from '../../brain/wiki-store';
-import { SourceIngestor } from '../../brain/sources/ingest';
+import { SourceIngestor, type AudioReader } from '../../brain/sources/ingest';
+import { YouTubeError, type YouTube } from '../../media/youtube';
 import { WikiCompiler } from '../../brain/compiler/compile';
 import type { KeeperDraft } from '../../brain/compiler/draft';
 import { readProposalRecord } from '../../brain/proposals';
@@ -77,15 +78,15 @@ interface RouteHarness {
   sessions: SessionStore;
 }
 
-async function routeHarness(prefix: string, opts: { store?: WikiStore; studentId?: string; propose?: (prompt: string) => Promise<KeeperDraft> } = {}): Promise<RouteHarness> {
+async function routeHarness(prefix: string, opts: { store?: WikiStore; studentId?: string; audio?: AudioReader; youtube?: Partial<YouTube>; propose?: (prompt: string) => Promise<KeeperDraft> } = {}): Promise<RouteHarness> {
   const store = opts.store ?? (await vault(prefix));
   const identity = { ...PROFILE, studentId: opts.studentId ?? PROFILE.studentId };
-  const sources = new SourceIngestor(store, async () => identity);
+  const sources = new SourceIngestor(store, async () => identity, opts.audio);
   const compiler = new WikiCompiler(store, { settings, content, profile: async () => identity, propose: opts.propose });
   const sessions = new SessionStore(await tempRoot(`${prefix}-sessions`));
   const profile = { id: identity.studentId, name: 'Student', email: 's@example.test', cohortId: 'cohort-a' };
   const brain = { pageDiffs: async () => [], readImageSource: async () => null };
-  const ws = { profile, sources, compiler, wiki: store, brain, sessions };
+  const ws = { profile, sources, compiler, wiki: store, brain, sessions, youtube: opts.youtube };
   const app = sourceRoutes({
     settings: {},
     auth: { resolve: async (token: string) => (token === 'valid' ? { profile, mode: 'offline' as const } : null) },
@@ -317,4 +318,59 @@ test('only PNG and JPEG render inline; a planted text/html record downloads as o
   assert.equal(png.headers.get('content-type'), 'image/png', 'the preview types still render');
   assert.equal(png.headers.get('x-content-type-options'), 'nosniff');
   assert.equal(png.headers.get('content-disposition'), null);
+});
+
+test('a video link previews metadata-only, then the consented fetch files a video source', async () => {
+  const link = { provider: 'youtube' as const, url: 'https://www.youtube.com/watch?v=abc123XYZ_0', videoId: 'abc123XYZ_0', fetchedAt: new Date().toISOString() };
+  const calls: string[] = [];
+  const youtube: Partial<YouTube> = {
+    preview: async (url: string) => {
+      calls.push(`preview:${url}`);
+      return { provider: 'youtube', url: link.url, videoId: link.videoId, title: 'Orbits, explained', seconds: 95, uploader: 'Example Lectures' };
+    },
+    fetchAudio: async (url: string) => {
+      calls.push(`fetch:${url}`);
+      return { bytes: new Uint8Array([0x52, 0x49, 0x46, 0x46]), mediaType: 'audio/wav', title: 'Orbits, explained', uploader: 'Example Lectures', seconds: 95, link };
+    },
+  };
+  const { app } = await routeHarness('route-video', {
+    youtube,
+    audio: {
+      probe: async () => ({ seconds: 95 }),
+      transcribe: async () => ({ text: '[0:00] Kepler saw the ellipse.', seconds: 95, chunks: 2, attemptedChunks: 2, failedChunks: 0, partial: false }),
+    },
+  });
+
+  // The preview carries the card fields and no bytes.
+  const previewRes = await app.request('/sources/video-preview', { method: 'POST', headers: AUTH, body: JSON.stringify({ url: 'https://youtu.be/abc123XYZ_0' }) });
+  assert.equal(previewRes.status, 200);
+  const preview = (await previewRes.json()) as { title: string; videoId: string; seconds: number };
+  assert.equal(preview.title, 'Orbits, explained');
+  assert.equal(preview.videoId, 'abc123XYZ_0');
+
+  const fetchRes = await app.request('/sources/video', { method: 'POST', headers: AUTH, body: JSON.stringify({ url: link.url }) });
+  assert.equal(fetchRes.status, 201);
+  const receipt = (await fetchRes.json()) as SourceReceipt;
+  assert.equal(receipt.source.kind, 'video');
+  assert.equal(receipt.extraction?.method, 'audio', 'the fetched track reads through the audio pipeline');
+  assert.match(receipt.extraction?.text ?? '', /Kepler/);
+  assert.deepEqual(calls, ['preview:https://youtu.be/abc123XYZ_0', `fetch:${link.url}`], 'preview and fetch are the two distinct, consented calls');
+});
+
+test('video failures map to their named codes over HTTP', async () => {
+  const youtube: Partial<YouTube> = {
+    preview: async () => {
+      throw new YouTubeError('Only YouTube links can be fetched.', 'unsupported_host');
+    },
+    fetchAudio: async () => {
+      throw new YouTubeError('yt-dlp is not installed.', 'ytdlp_missing');
+    },
+  };
+  const { app } = await routeHarness('route-video-errors', { youtube });
+  const previewRes = await app.request('/sources/video-preview', { method: 'POST', headers: AUTH, body: JSON.stringify({ url: 'https://vimeo.com/1' }) });
+  assert.equal(previewRes.status, 400);
+  assert.equal(((await previewRes.json()) as { code: string }).code, 'unsupported_host');
+  const fetchRes = await app.request('/sources/video', { method: 'POST', headers: AUTH, body: JSON.stringify({ url: 'https://youtu.be/abc123XYZ_0' }) });
+  assert.equal(fetchRes.status, 503);
+  assert.equal(((await fetchRes.json()) as { code: string }).code, 'ytdlp_missing');
 });

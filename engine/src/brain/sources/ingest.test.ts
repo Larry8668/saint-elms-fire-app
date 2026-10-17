@@ -361,3 +361,41 @@ test('the audio family pins the kind — a mislabelled pair is refused before pr
   assert.equal(wrongMedia.code, 'kind_mismatch');
   assert.deepEqual(Object.keys(await store.listSources()), []);
 });
+
+const videoFile = (over: Record<string, unknown> = {}) => ({
+  kind: 'video' as const,
+  title: 'A talk on orbits',
+  mediaType: 'audio/wav',
+  bytes: Buffer.from([0x52, 0x49, 0x46, 0x46]),
+  link: { provider: 'youtube' as const, url: 'https://www.youtube.com/watch?v=abc123XYZ_0', videoId: 'abc123XYZ_0', fetchedAt: new Date().toISOString() },
+  ...over,
+});
+
+test('a fetched video is an external source whose audio track transcribes like a recording', async () => {
+  const { store, ingestor } = await harness('ingest-video', fakeAudio());
+  const result = await ingestor.ingest(videoFile());
+
+  assert.equal(result.source.kind, 'video');
+  assert.equal(result.extraction?.method, 'audio', 'the stored track reads through the audio pipeline');
+  assert.match(result.extraction?.text ?? '', /Waves carry energy/);
+  const record = await store.readSource(result.source.id);
+  assert.equal(record?.kind, 'video');
+  if (record?.kind !== 'video') throw new Error('expected a video record');
+  assert.equal(record.link.videoId, 'abc123XYZ_0', 'the URL provenance persists verbatim');
+  assert.equal(record.link.provider, 'youtube');
+});
+
+test('a video without its link provenance is refused, and so is a video as own material', async () => {
+  const { store, ingestor } = await harness('ingest-video-guards', fakeAudio());
+  const noLink = await ingestor.ingest({ kind: 'video', title: 'x', mediaType: 'audio/wav', bytes: Buffer.from([1]) }).catch((e: unknown) => e);
+  assert.ok(noLink instanceof SourceRejection);
+  assert.equal(noLink.code, 'missing_link_ref');
+  const own = await ingestor.ingest(videoFile({ origin: 'student' })).catch((e: unknown) => e);
+  assert.ok(own instanceof SourceRejection);
+  assert.equal(own.code, 'origin_mismatch');
+  // A video kind over non-audio bytes trips the same pin a mislabelled recording does.
+  const textBytes = await ingestor.ingest(videoFile({ title: 'y', mediaType: 'text/markdown' })).catch((e: unknown) => e);
+  assert.ok(textBytes instanceof SourceRejection);
+  assert.equal(textBytes.code, 'kind_mismatch');
+  assert.deepEqual(Object.keys(await store.listSources()), []);
+});
