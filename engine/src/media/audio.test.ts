@@ -1,11 +1,11 @@
 import assert from 'node:assert/strict';
-import { writeFileSync } from 'node:fs';
-import { mkdtemp } from 'node:fs/promises';
+import { readFileSync, writeFileSync } from 'node:fs';
+import { mkdtemp, readdir } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { test } from 'node:test';
 import type { StoredSettings } from '../settings/store';
-import { AudioTranscriber, AudioTranscribeError, chunkPlan, parseFfmpegDuration, wavWrap, type RunCommand } from './audio';
+import { AudioTranscriber, AudioTranscribeError, chunkPlan, parseFfmpegDuration, trimSeamOverlap, wavWrap, type RunCommand } from './audio';
 
 /** Settings with an Ollama vision role — resolved but never contacted by the fakes. */
 const settings = (providerKind: 'ollama' | 'anthropic' = 'ollama') =>
@@ -25,10 +25,13 @@ const probeStderr = (duration: string) =>
  * A fake ffmpeg: `-i` answers the canned probe stderr, the normalize step writes synthetic
  * mono PCM of the requested seconds to the output path (the last argv element).
  */
-const fakeRun = (seconds: number, overrides: { probeStderr?: string } = {}): { run: RunCommand; calls: string[][] } => {
+const fakeRun = (seconds: number, overrides: { probeStderr?: string } = {}): { run: RunCommand; calls: string[][]; staged: Array<{ stdin: boolean; bytes: number[] }> } => {
   const calls: string[][] = [];
-  const run: RunCommand = async (_command, args) => {
+  const staged: Array<{ stdin: boolean; bytes: number[] }> = [];
+  const run: RunCommand = async (_command, args, opts) => {
     calls.push(args);
+    const input = args[args.indexOf('-i') + 1]!;
+    staged.push({ stdin: opts?.input !== undefined || input === 'pipe:0', bytes: input === 'pipe:0' ? [] : [...readFileSync(input)] });
     const outIndex = args.indexOf('-f');
     if (outIndex === -1) {
       return { code: 1, stdout: '', stderr: overrides.probeStderr ?? probeStderr(new Date(seconds * 1000).toISOString().slice(11, 23)) };
@@ -37,7 +40,7 @@ const fakeRun = (seconds: number, overrides: { probeStderr?: string } = {}): { r
     writeFileSync(pcmPath, Buffer.alloc(Math.round(seconds * 32_000)));
     return { code: 0, stdout: '', stderr: '' };
   };
-  return { run, calls };
+  return { run, calls, staged };
 };
 
 const fakeFetch = (answer: (chunk: number) => string | null) => {
@@ -108,9 +111,58 @@ test('a multi-chunk recording joins transcripts with absolute timestamps', async
   assert.match(lines[0]!, /^\[0:00\] words of chunk 0$/);
   assert.match(lines[1]!, /^\[0:49\] words of chunk 1$/);
   assert.match(lines[2]!, /^\[1:38\] words of chunk 2$/);
-  // One probe, one normalize — the source bytes are fed on stdin each time.
+  // One probe, one normalize — both read the same staged file, never stdin.
   assert.equal(calls.length, 2);
   assert.equal(calls[1]!.includes('-f'), true);
+});
+
+test('ffmpeg reads a seekable staged file holding the bytes, and every staging folder is removed', async () => {
+  const dir = await mkdtemp(path.join(tmpdir(), 'sef-audio-test-'));
+  const { run, staged } = fakeRun(60);
+  const { fetchFn } = fakeFetch(() => JSON.stringify({ text: 'ok' }));
+  const transcriber = new AudioTranscriber(settings(), { run, fetchFn, tmpRoot: dir });
+
+  await transcriber.probe(bytes, 'audio/mp4');
+  await Promise.all([transcriber.transcribe(bytes, 'audio/mp4'), transcriber.transcribe(bytes, 'audio/mp4')]);
+  assert.equal(staged.length, 5);
+  for (const call of staged) {
+    assert.equal(call.stdin, false, 'an MP4 with its index at the end cannot be demuxed from a pipe');
+    assert.deepEqual(call.bytes, [...bytes]);
+  }
+  assert.deepEqual(await readdir(dir), [], 'concurrent calls staged in their own folders and cleaned up');
+});
+
+test('seam overlap: the repeated run at a chunk boundary is dropped once, case and punctuation aside', () => {
+  const previous = '[0:00] you need pseudo forces like the centrifugal force to make';
+  assert.equal(trimSeamOverlap(previous, "[0:49] force to make Newton's laws work"), "[0:49] Newton's laws work");
+  assert.equal(trimSeamOverlap('[0:00] Force, to Make.', '[0:49] force to make it work'), '[0:49] it work');
+  // A single shared word is too often coincidence to drop.
+  assert.equal(trimSeamOverlap('[0:00] up to the', '[0:49] the next idea'), '[0:49] the next idea');
+  assert.equal(trimSeamOverlap('[0:00] nothing shared here', '[0:49] fresh words'), '[0:49] fresh words');
+  // A chunk that is entirely overlap leaves nothing behind.
+  assert.equal(trimSeamOverlap('[0:00] and that is all', '[0:49] that is all'), '');
+});
+
+test('adjacent chunks are joined without repeating the overlapped words', async () => {
+  const dir = await mkdtemp(path.join(tmpdir(), 'sef-audio-test-'));
+  const { run } = fakeRun(120);
+  const answers = ['the second law says force equals', 'force equals mass times acceleration and', 'acceleration and that is all'];
+  const { fetchFn } = fakeFetch((n) => JSON.stringify({ text: answers[n] }));
+  const transcriber = new AudioTranscriber(settings(), { run, fetchFn, tmpRoot: dir });
+
+  const result = await transcriber.transcribe(bytes, 'audio/m4a');
+  assert.deepEqual(result.text.split('\n'), ['[0:00] the second law says force equals', '[0:49] mass times acceleration and', '[1:38] that is all']);
+});
+
+test('a chunk after a failed one is not trimmed against text it never touched', async () => {
+  const dir = await mkdtemp(path.join(tmpdir(), 'sef-audio-test-'));
+  const { run } = fakeRun(120);
+  const answers = ['alpha beta gamma delta', null, 'gamma delta epsilon'];
+  const { fetchFn } = fakeFetch((n) => (answers[n] === null ? null : JSON.stringify({ text: answers[n] })));
+  const transcriber = new AudioTranscriber(settings(), { run, fetchFn, tmpRoot: dir });
+
+  const result = await transcriber.transcribe(bytes, 'audio/m4a');
+  assert.deepEqual(result.text.split('\n'), ['[0:00] alpha beta gamma delta', '[1:38] gamma delta epsilon']);
 });
 
 test('verbose_json segments keep their own timestamps, offset by the chunk window', async () => {

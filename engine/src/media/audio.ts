@@ -1,5 +1,4 @@
-import { mkdtempSync } from 'node:fs';
-import { mkdir, open, rm } from 'node:fs/promises';
+import { mkdir, mkdtemp, open, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import type { ProviderConfig } from '@sef/shared';
@@ -108,6 +107,31 @@ export function wavWrap(pcm: Uint8Array): Uint8Array {
   return new Uint8Array(wav);
 }
 
+/** Shortest repeated run treated as seam overlap; a single shared word is too often a coincidence. */
+const MIN_OVERLAP_WORDS = 2;
+const MAX_OVERLAP_WORDS = 12;
+const LINE_STAMP = /^(\[[^\]]+\]\s*)/;
+const wordKey = (word: string) => word.toLowerCase().replace(/[^\p{L}\p{N}']/gu, '');
+
+/**
+ * Chunks overlap by a second, so the next chunk usually opens with the words the previous
+ * one closed on. Drops the longest such repeated run from the head of `next`.
+ */
+export function trimSeamOverlap(previous: string, next: string): string {
+  const stamp = LINE_STAMP.exec(next)?.[1] ?? '';
+  const nextWords = next.slice(stamp.length).split(/\s+/).filter(Boolean);
+  const tail = previous.replace(LINE_STAMP, '').split(/\s+/).filter(Boolean).slice(-MAX_OVERLAP_WORDS).map(wordKey);
+  const head = nextWords.map(wordKey);
+  for (let k = Math.min(tail.length, head.length, MAX_OVERLAP_WORDS); k >= MIN_OVERLAP_WORDS; k--) {
+    const matches = tail.slice(-k).every((word, i) => word !== '' && word === head[i]);
+    if (matches) {
+      const rest = nextWords.slice(k).join(' ');
+      return rest ? `${stamp}${rest}` : '';
+    }
+  }
+  return next;
+}
+
 /** Process failures, translated into this module's own vocabulary. */
 const ffmpegRun: RunCommand = async (command, args, opts) => {
   try {
@@ -177,11 +201,33 @@ export class AudioTranscriber {
    * rather than half-read. A stream ffmpeg cannot parse as audio is rejected by name.
    */
   async probe(bytes: Uint8Array, _mediaType: string): Promise<AudioProbe> {
-    const { stderr } = await this.run(this.ffmpeg, ['-hide_banner', '-i', 'pipe:0'], { input: bytes, timeoutMs: FFMPEG_TIMEOUT_MS });
+    return this.withStagedInput(bytes, (inputPath) => this.probeFile(inputPath));
+  }
+
+  private async probeFile(inputPath: string): Promise<AudioProbe> {
+    const { stderr } = await this.run(this.ffmpeg, ['-hide_banner', '-i', inputPath], { timeoutMs: FFMPEG_TIMEOUT_MS });
     if (!hasAudioStream(stderr)) {
       throw new AudioTranscribeError('That file does not contain a readable audio stream.', 'audio_unreadable');
     }
     return { seconds: parseFfmpegDuration(stderr) ?? Number.NaN };
+  }
+
+  /**
+   * ffmpeg reads from a file, not stdin: MP4/M4A written with the index (`moov`) at the end —
+   * ffmpeg's own default and common for phone recordings — cannot be demuxed from a pipe and
+   * silently decodes to nothing. Each call gets its own folder, removed afterwards.
+   */
+  private async withStagedInput<T>(bytes: Uint8Array, fn: (inputPath: string, work: string) => Promise<T>): Promise<T> {
+    const root = this.tmpRoot ?? tmpdir();
+    if (this.tmpRoot) await mkdir(root, { recursive: true });
+    const work = await mkdtemp(path.join(root, 'sef-audio-'));
+    try {
+      const inputPath = path.join(work, 'input');
+      await writeFile(inputPath, bytes);
+      return await fn(inputPath, work);
+    } finally {
+      await rm(work, { recursive: true, force: true }).catch((error: unknown) => log.warn('audio_tmp_cleanup_failed', errorFields(error)));
+    }
   }
 
   /**
@@ -191,72 +237,74 @@ export class AudioTranscriber {
    * the note counts.
    */
   async transcribe(bytes: Uint8Array, mediaType: string, opts: { seconds?: number; maxSeconds?: number } = {}): Promise<AudioTranscription> {
-    const probed = opts.seconds ?? (await this.probe(bytes, mediaType)).seconds;
+    return this.withStagedInput(bytes, (inputPath, work) => this.transcribeFile(inputPath, work, mediaType, opts));
+  }
+
+  private async transcribeFile(inputPath: string, work: string, mediaType: string, opts: { seconds?: number; maxSeconds?: number }): Promise<AudioTranscription> {
+    const probed = opts.seconds ?? (await this.probeFile(inputPath)).seconds;
     const resolved = await this.resolveEndpoint();
 
-    const owned = !this.tmpRoot;
-    const work = this.tmpRoot ?? mkdtempSync(path.join(tmpdir(), 'sef-audio-'));
-    if (!owned) await mkdir(work, { recursive: true });
     const pcmPath = path.join(work, 'normalized.pcm');
-    try {
-      const normalized = await this.run(
-        this.ffmpeg,
-        ['-y', '-hide_banner', '-loglevel', 'error', '-i', 'pipe:0', '-ac', '1', '-ar', String(SAMPLE_RATE), '-f', 's16le', pcmPath],
-        { input: bytes, timeoutMs: FFMPEG_TIMEOUT_MS },
-      );
-      if (normalized.code !== 0) {
-        throw new AudioTranscribeError(`ffmpeg could not decode that recording${normalized.stderr.trim() ? ` — ${normalized.stderr.trim().slice(0, 200)}` : ''}`, 'transcode_failed');
-      }
+    const normalized = await this.run(
+      this.ffmpeg,
+      ['-y', '-hide_banner', '-loglevel', 'error', '-i', inputPath, '-ac', '1', '-ar', String(SAMPLE_RATE), '-f', 's16le', pcmPath],
+      { timeoutMs: FFMPEG_TIMEOUT_MS },
+    );
+    if (normalized.code !== 0) {
+      throw new AudioTranscribeError(`ffmpeg could not decode that recording${normalized.stderr.trim() ? ` — ${normalized.stderr.trim().slice(0, 200)}` : ''}`, 'transcode_failed');
+    }
 
-      const pcm = await open(pcmPath, 'r');
-      try {
-        const { size } = await pcm.stat();
-        // The PCM length is the honest duration: what we decoded, not what the header
-        // claimed. A stream that hid its length from the probe (MediaRecorder output often
-        // does) is still bound by the cap — refuse by name instead of spending hours of
-        // transcription calls on it.
-        const seconds = size / BYTES_PER_SECOND;
-        const over = checkAudioDuration(seconds, { maxAudioSeconds: opts.maxSeconds });
-        if (over) throw new AudioTranscribeError(over.message, over.code === 'audio_too_long' ? 'audio_too_long' : 'audio_unreadable');
-        const plan = chunkPlan(Number.isFinite(probed) ? probed : seconds);
-        const lines: string[] = [];
-        let attempted = 0;
-        let failed = 0;
-        let produced = 0;
-        for (const [index, chunk] of plan.entries()) {
-          attempted = index + 1;
-          const slice = Buffer.alloc(Math.round(chunk.length * BYTES_PER_SECOND));
-          await pcm.read(slice, 0, slice.byteLength, Math.round(chunk.start * BYTES_PER_SECOND));
-          try {
-            lines.push(...(await this.transcribeChunk(wavWrap(slice), resolved, chunk.start)));
-            produced++;
-          } catch (error) {
-            failed++;
-            log.warn('audio_chunk_failed', { chunk: index, at: chunk.start, ...errorFields(error) });
-            // No chunk has ever answered: the endpoint is down, not the audio. Stop instead
-            // of spending the remaining windows on it — the note below says where we stopped.
-            if (produced === 0 && failed >= MAX_UNANSWERED_CHUNKS) break;
-          }
+    const pcm = await open(pcmPath, 'r');
+    try {
+      const { size } = await pcm.stat();
+      // The PCM length is the honest duration: what we decoded, not what the header
+      // claimed. A stream that hid its length from the probe (MediaRecorder output often
+      // does) is still bound by the cap — refuse by name instead of spending hours of
+      // transcription calls on it.
+      const seconds = size / BYTES_PER_SECOND;
+      const over = checkAudioDuration(seconds, { maxAudioSeconds: opts.maxSeconds });
+      if (over) throw new AudioTranscribeError(over.message, over.code === 'audio_too_long' ? 'audio_too_long' : 'audio_unreadable');
+      const plan = chunkPlan(Number.isFinite(probed) ? probed : seconds);
+      const lines: string[] = [];
+      let attempted = 0;
+      let failed = 0;
+      let produced = 0;
+      let previousChunkOk = false;
+      for (const [index, chunk] of plan.entries()) {
+        attempted = index + 1;
+        const slice = Buffer.alloc(Math.round(chunk.length * BYTES_PER_SECOND));
+        await pcm.read(slice, 0, slice.byteLength, Math.round(chunk.start * BYTES_PER_SECOND));
+        try {
+          const chunkLines = await this.transcribeChunk(wavWrap(slice), resolved, chunk.start);
+          // Only adjacent chunks share a seam; after a failed chunk there is nothing to trim against.
+          if (previousChunkOk && lines.length && chunkLines.length) chunkLines[0] = trimSeamOverlap(lines[lines.length - 1]!, chunkLines[0]!);
+          lines.push(...chunkLines.filter(Boolean));
+          produced++;
+          previousChunkOk = true;
+        } catch (error) {
+          failed++;
+          previousChunkOk = false;
+          log.warn('audio_chunk_failed', { chunk: index, at: chunk.start, ...errorFields(error) });
+          // No chunk has ever answered: the endpoint is down, not the audio. Stop instead
+          // of spending the remaining windows on it — the note below says where we stopped.
+          if (produced === 0 && failed >= MAX_UNANSWERED_CHUNKS) break;
         }
-        const notes: string[] = [];
-        if (failed > 0) notes.push(`${failed} of ${plan.length} audio chunks could not be transcribed`);
-        if (attempted < plan.length) notes.push(`transcription stopped early — ${attempted} of ${plan.length} chunks were tried`);
-        log.info('audio_transcribed', { mediaType, seconds: Math.round(seconds), chunks: plan.length, attempted, failed });
-        return {
-          text: lines.join('\n'),
-          seconds,
-          chunks: plan.length,
-          attemptedChunks: attempted,
-          failedChunks: failed,
-          partial: failed > 0 || attempted < plan.length,
-          ...(notes.length ? { note: `${notes.join('; ')}.` } : {}),
-        };
-      } finally {
-        await pcm.close();
       }
+      const notes: string[] = [];
+      if (failed > 0) notes.push(`${failed} of ${plan.length} audio chunks could not be transcribed`);
+      if (attempted < plan.length) notes.push(`transcription stopped early — ${attempted} of ${plan.length} chunks were tried`);
+      log.info('audio_transcribed', { mediaType, seconds: Math.round(seconds), chunks: plan.length, attempted, failed });
+      return {
+        text: lines.join('\n'),
+        seconds,
+        chunks: plan.length,
+        attemptedChunks: attempted,
+        failedChunks: failed,
+        partial: failed > 0 || attempted < plan.length,
+        ...(notes.length ? { note: `${notes.join('; ')}.` } : {}),
+      };
     } finally {
-      if (owned) await rm(work, { recursive: true, force: true }).catch(() => {});
-      else await rm(pcmPath, { force: true }).catch(() => {});
+      await pcm.close();
     }
   }
 
