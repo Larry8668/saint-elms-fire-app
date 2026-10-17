@@ -8,6 +8,8 @@ build/
 
 # Local runtime data: student brain, downloaded courseware, settings, keys
 .data/
+# Hosted demo stack (scripts/demo-hosted.sh): generated secrets, URLs, PIDs, logs, uni data
+.demo/
 server/uni/keys/
 
 # Env

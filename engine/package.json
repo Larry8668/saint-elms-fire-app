@@ -9,7 +9,8 @@
     "typecheck": "tsc --noEmit -p .",
     "test": "node --test --import tsx 'src/**/*.test.ts'",
     "eval": "tsx src/eval/cli.ts",
-    "store:check": "tsx --env-file-if-exists=../.env src/store/check.ts"
+    "store:check": "tsx --env-file-if-exists=../.env src/store/check.ts",
+    "store:roundtrip": "tsx src/store/roundtrip.ts"
   },
   "dependencies": {
     "@ai-sdk/anthropic": "^2.0.0",

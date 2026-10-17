@@ -69,8 +69,23 @@ async function readBody(req: Request, max: number): Promise<Uint8Array | 'too_la
 export function createGatewayApp({ config, pool, limits, log }: GatewayDeps) {
   const app = new Hono();
   const allowed = new Set(config.models.map(normalizeModel));
+  const aliases = new Map(Object.entries(config.modelAliases ?? {}));
   const metricsDigest = config.metricsToken ? digest(config.metricsToken) : undefined;
   const upstreamAuth: Record<string, string> = config.upstreamToken ? { authorization: `Bearer ${config.upstreamToken}` } : {};
+
+  /** The allowlisted entries, plus an entry under each alias whose served model is listed. */
+  function withAliases<K extends 'name' | 'id'>(entries: Array<Partial<Record<K, string>>>, key: K) {
+    const kept = entries.filter((m) => allowed.has(normalizeModel(m[key] ?? '')));
+    const listed = new Set(kept.map((m) => normalizeModel(m[key] ?? '')));
+    for (const [from, to] of aliases) {
+      const served = kept.find((m) => normalizeModel(m[key] ?? '') === to);
+      if (served && !listed.has(from)) {
+        kept.push({ ...served, [key]: from, ...(key === 'name' && 'model' in served ? { model: from } : {}) });
+        listed.add(from);
+      }
+    }
+    return kept;
+  }
 
   app.get('/health', (c) => {
     const healthy = pool.snapshot().filter((u) => u.healthy).length;
@@ -101,12 +116,14 @@ export function createGatewayApp({ config, pool, limits, log }: GatewayDeps) {
 
     let body: Uint8Array | undefined;
     let model: string | undefined;
+    let servedAs: string | undefined;
     if (route.method === 'POST') {
       const read = await readBody(c.req.raw, config.maxBodyBytes);
       if (read === 'too_large') return fail(c, 413, 'too_large', 'request body is too large');
       body = read;
+      let parsed: { model?: unknown; name?: unknown };
       try {
-        const parsed = JSON.parse(Buffer.from(body).toString('utf8')) as { model?: unknown; name?: unknown };
+        parsed = JSON.parse(Buffer.from(body).toString('utf8')) as { model?: unknown; name?: unknown };
         const named = parsed.model ?? parsed.name;
         model = typeof named === 'string' ? named : undefined;
       } catch {
@@ -115,6 +132,14 @@ export function createGatewayApp({ config, pool, limits, log }: GatewayDeps) {
       if (route.model && (!model || !allowed.has(normalizeModel(model)))) {
         log.info('gw_rejected', { ...who, path, model: model?.slice(0, 80), reason: 'model' });
         return fail(c, 403, 'model_not_allowed', 'this model is not served by the gateway');
+      }
+      const target = model === undefined ? undefined : aliases.get(normalizeModel(model));
+      if (route.model && target) {
+        // Rewrite only the field that named the model; the rest of the body is passed as sent.
+        if (typeof parsed.model === 'string') parsed.model = target;
+        else parsed.name = target;
+        body = Buffer.from(JSON.stringify(parsed));
+        servedAs = target;
       }
     }
 
@@ -163,7 +188,7 @@ export function createGatewayApp({ config, pool, limits, log }: GatewayDeps) {
     }
 
     const logDone = (status: number, tokens?: number, estimated?: boolean) =>
-      log.info('gw_request', { ...who, path, model, status, ms: Date.now() - started, upstream: upstream?.id, attempts: tried.size, tokens, estimated });
+      log.info('gw_request', { ...who, path, model, ...(servedAs ? { servedAs } : {}), status, ms: Date.now() - started, upstream: upstream?.id, attempts: tried.size, tokens, estimated });
 
     if (!lastResponse || !upstream) {
       admission.release();
@@ -191,8 +216,8 @@ export function createGatewayApp({ config, pool, limits, log }: GatewayDeps) {
       let json: Record<string, unknown> = {};
       try {
         json = (await res.json()) as Record<string, unknown>;
-        if (route.list === 'ollama' && Array.isArray(json.models)) json.models = json.models.filter((m: { name?: string }) => allowed.has(normalizeModel(m.name ?? '')));
-        if (route.list === 'openai' && Array.isArray(json.data)) json.data = json.data.filter((m: { id?: string }) => allowed.has(normalizeModel(m.id ?? '')));
+        if (route.list === 'ollama' && Array.isArray(json.models)) json.models = withAliases(json.models as Array<{ name?: string }>, 'name');
+        if (route.list === 'openai' && Array.isArray(json.data)) json.data = withAliases(json.data as Array<{ id?: string }>, 'id');
       } catch {
         json = {};
       }

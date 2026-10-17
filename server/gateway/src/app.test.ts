@@ -250,3 +250,32 @@ test('a client abort cancels the upstream request', async () => {
   const usage = gw.limits.snapshot()[0].tokensToday;
   assert.ok(usage > 0, 'partial streams are still billed (estimated)');
 });
+
+test('a model alias rewrites the requested model and lists the alias next to the served one', async () => {
+  const bodies: string[] = [];
+  const up = await fakeUpstream((req, res, body) => {
+    res.writeHead(200, { 'content-type': 'application/json' });
+    if (req.url === '/api/tags') return res.end(JSON.stringify({ models: [{ name: 'gemma4:e4b', model: 'gemma4:e4b', size: 9 }, { name: 'other' }] }));
+    if (req.url === '/v1/models') return res.end(JSON.stringify({ data: [{ id: 'gemma4:e4b' }] }));
+    bodies.push(body);
+    res.end(JSON.stringify({ message: { content: 'hi' }, done: true }));
+  });
+  const gw = await gateway([up.url], { models: ['gemma4:e2b', 'gemma4:e4b', 'embeddinggemma'], modelAliases: { 'gemma4:e2b': 'gemma4:e4b' } });
+
+  assert.equal((await gw.call('/api/chat', { json: { model: 'gemma4:e2b:latest', messages: [{ role: 'user', content: 'x' }], options: { num_ctx: 12288 } } })).status, 200);
+  assert.deepEqual(JSON.parse(bodies[0]), { model: 'gemma4:e4b', messages: [{ role: 'user', content: 'x' }], options: { num_ctx: 12288 } });
+  assert.equal((await gw.call('/api/show', { json: { name: 'gemma4:e2b' } })).status, 200);
+  assert.deepEqual(JSON.parse(bodies[1]), { name: 'gemma4:e4b' });
+  // Unaliased models pass through byte for byte.
+  assert.equal((await gw.call('/api/embed', { json: { model: 'embeddinggemma', input: 'y' } })).status, 200);
+  assert.equal(bodies[2], JSON.stringify({ model: 'embeddinggemma', input: 'y' }));
+
+  const tags = (await (await gw.call('/api/tags')).json()) as { models: Array<{ name: string; model?: string; size?: number }> };
+  assert.deepEqual(tags.models, [
+    { name: 'gemma4:e4b', model: 'gemma4:e4b', size: 9 },
+    { name: 'gemma4:e2b', model: 'gemma4:e2b', size: 9 },
+  ]);
+  const models = (await (await gw.call('/v1/models')).json()) as { data: Array<{ id: string }> };
+  assert.deepEqual(models.data.map((m) => m.id), ['gemma4:e4b', 'gemma4:e2b']);
+  assert.ok(gw.lines.some((line) => line.includes('"model":"gemma4:e2b:latest","servedAs":"gemma4:e4b"')));
+});

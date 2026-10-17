@@ -1,0 +1,613 @@
+#!/usr/bin/env bash
+# One-command hosted demo stack (PR-46; runbook: docs/demo-hosted.md).
+#
+#   pnpm demo:hosted                  start everything, print the URLs and the checks
+#   pnpm demo:hosted:status           what is running, and whether it answers
+#   pnpm demo:hosted:down             end every session VM, stop the stack, close the tunnels
+#   pnpm demo:hosted:down --reset     the same, then delete the demo data and secrets
+#
+# On this laptop: Postgres and MinIO (docker project `sef-demo`, named volumes), the uni server
+# with the session orchestrator, and the model gateway in front of the local Ollama. Three
+# cloudflared quick tunnels give the session VMs on Instabox public HTTPS URLs for the uni, the
+# gateway and MinIO's S3 API. Nothing else is tunnelled: not Postgres, not the MinIO console,
+# not Ollama.
+#
+# State lives in .demo/ (gitignored): secrets.env (mode 600, generated once, never printed),
+# state.env (URLs and PIDs), logs/. `down` stops only the PIDs recorded there.
+#
+# Environment (all optional):
+#   DEMO_UNI_PORT=3420 DEMO_GATEWAY_PORT=3430 DEMO_PG_PORT=3432 DEMO_S3_PORT=3490 DEMO_S3_CONSOLE_PORT=3491
+#   SEF_GOLDEN_SNAPSHOT_ID    default: the newest line of ~/.local/state/sef-golden/snapshots.tsv
+#   INSTABOX_ENV_FILE         default ~/.config/sef/instabox.env (INSTABOX_API_KEY=...)
+#   DEMO_NO_INSTABOX=1        run the stack without the orchestrator (no VMs; local checks only)
+#   DEMO_SESSION_MODEL        the chat model the golden image asks for (default gemma4:e2b)
+#   DEMO_SERVED_MODEL         what the gateway serves it with when it is not pulled (default gemma4:e4b)
+#   SESSION_MAX_CONCURRENT=3  SESSION_IDLE_MINUTES=15
+#   DEMO_TUNNEL_PROTOCOL      cloudflared --protocol (default: cloudflared's own, quic then http2)
+#   DEMO_SKIP_BUILD=1         do not build the portal/admin UI when it is missing
+#   DEMO_ALLOW_FOREIGN_SESSIONS=1  start even if app:sef-session VMs not owned by this demo exist
+set -Eeuo pipefail
+umask 077
+
+ROOT=$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)
+DEMO_DIR=${DEMO_DIR:-$ROOT/.demo}
+SECRETS=$DEMO_DIR/secrets.env
+STATE=$DEMO_DIR/state.env
+LOGS=$DEMO_DIR/logs
+COMPOSE_FILE=$ROOT/infra/demo/docker-compose.demo.yml
+UNI_PORT=${DEMO_UNI_PORT:-3420}
+GATEWAY_PORT=${DEMO_GATEWAY_PORT:-3430}
+PG_PORT=${DEMO_PG_PORT:-3432}
+S3_PORT=${DEMO_S3_PORT:-3490}
+S3_CONSOLE_PORT=${DEMO_S3_CONSOLE_PORT:-3491}
+OLLAMA=${DEMO_OLLAMA_URL:-http://127.0.0.1:11434}
+INSTABOX_ENV_FILE=${INSTABOX_ENV_FILE:-$HOME/.config/sef/instabox.env}
+INSTABOX_API=https://api.instabox.sh
+SESSION_MODEL=${DEMO_SESSION_MODEL:-gemma4:e2b}
+SERVED_MODEL=${DEMO_SERVED_MODEL:-gemma4:e4b}
+# The seeded demo accounts' password. It is the repo's public demo value on purpose: the
+# audience signs in with it. Anyone with the uni URL can too, while the demo runs.
+DEMO_PASSWORD=${DEMO_PASSWORD:-harbor-lantern}
+export COMPOSE_PROJECT_NAME=sef-demo DEMO_PG_PORT=$PG_PORT DEMO_S3_PORT=$S3_PORT DEMO_S3_CONSOLE_PORT=$S3_CONSOLE_PORT
+
+if [[ -t 1 ]]; then B=$'\e[1m' R=$'\e[31m' Y=$'\e[33m' G=$'\e[32m' N=$'\e[0m'; else B='' R='' Y='' G='' N=''; fi
+log() { printf '%s[demo]%s %s\n' "$B" "$N" "$*"; }
+warn() { printf '%s[demo] warning:%s %s\n' "$Y" "$N" "$*" >&2; }
+die() {
+  printf '%s[demo] error:%s %s\n' "$R" "$N" "$*" >&2
+  exit 1
+}
+now() { date +%s; }
+
+compose() { docker compose -f "$COMPOSE_FILE" --env-file "$SECRETS" "$@"; }
+
+# ---- state ---------------------------------------------------------------------------------
+
+state_get() { [[ -f $STATE ]] && sed -n "s/^$1=//p" "$STATE" | tail -n 1 || true; }
+state_set() {
+  touch "$STATE"
+  grep -v "^$1=" "$STATE" >"$STATE.tmp" || true
+  printf '%s=%s\n' "$1" "$2" >>"$STATE.tmp"
+  mv -f "$STATE.tmp" "$STATE"
+}
+
+# A recorded PID counts only while it is alive AND still runs what we started (PID reuse).
+pid_alive() {
+  local pid=$1 marker=$2 cmd
+  [[ $pid =~ ^[0-9]+$ ]] || return 1
+  cmd=$(ps -p "$pid" -o command= 2>/dev/null) || return 1
+  [[ $cmd == *"$marker"* ]]
+}
+
+stop_pid() {
+  local name=$1 marker=$2 pid
+  pid=$(state_get "${name}_PID")
+  [[ -n $pid ]] || return 0
+  if pid_alive "$pid" "$marker"; then
+    kill -TERM "$pid" 2>/dev/null || true
+    for _ in $(seq 1 50); do
+      pid_alive "$pid" "$marker" || break
+      sleep 0.2
+    done
+    if pid_alive "$pid" "$marker"; then
+      warn "$name ($pid) ignored SIGTERM; sending SIGKILL"
+      kill -KILL "$pid" 2>/dev/null || true
+    fi
+    log "stopped $name (pid $pid)"
+  fi
+  state_set "${name}_PID" ""
+}
+
+# ---- secrets (generated once, mode 600, never printed) -------------------------------------
+
+rand() { openssl rand -base64 48 | tr -d '\n/+=' | cut -c1-"$1"; }
+
+ensure_secrets() {
+  mkdir -p "$DEMO_DIR" "$LOGS"
+  chmod 700 "$DEMO_DIR"
+  if [[ ! -f $SECRETS ]]; then
+    if docker volume inspect sef-demo_pg-data >/dev/null 2>&1; then
+      die "the demo database volume exists but $SECRETS is gone, so its password is lost: run 'pnpm demo:hosted:down --reset' to start over"
+    fi
+    {
+      echo "# Generated by scripts/demo-hosted.sh. Never commit or print. Delete with demo:hosted:down --reset."
+      echo "UNI_DB_PASSWORD=$(rand 32)"
+      echo "BETTER_AUTH_SECRET=$(rand 48)"
+      echo "GATEWAY_TOKEN_SECRET=$(rand 48)"
+      echo "GATEWAY_METRICS_TOKEN=$(rand 40)"
+      echo "MINIO_ROOT_PASSWORD=$(rand 40)"
+      echo "OBJECT_STORE_SECRET_KEY=$(rand 40)"
+    } >"$SECRETS"
+    log "generated secrets in .demo/secrets.env (mode 600)"
+  fi
+  chmod 600 "$SECRETS"
+}
+
+# Reads one value from secrets.env without sourcing it.
+secret() { sed -n "s/^$1=//p" "$SECRETS" | tail -n 1; }
+
+# ---- Instabox (the key goes to curl on stdin, never in argv or the environment of others) --
+
+ib() {
+  local method=$1 path=$2
+  shift 2
+  (
+    set -a
+    # shellcheck disable=SC1090
+    . "$INSTABOX_ENV_FILE"
+    set +a
+    printf 'X-API-Key: %s\n' "${INSTABOX_API_KEY:?INSTABOX_API_KEY is not in $INSTABOX_ENV_FILE}"
+  ) | curl -sS --max-time 30 -H @- -X "$method" "$@" "$INSTABOX_API$path"
+}
+
+# Machines labelled app:sef-session, as "id name session-label" lines.
+session_vms() {
+  ib GET '/v1/machines?metadata=app:sef-session' |
+    jq -r '.machines[]? | select(.metadata.app == "sef-session") | "\(.id) \(.name) \(.metadata.session // "-")"'
+}
+
+# Machine ids that this demo's database owns (sessions not yet ended).
+our_machine_ids() {
+  compose exec -T postgres psql -U sef -d sef_uni -Atc \
+    "select machine_id from student_sessions where machine_id is not null and state in ('queued','spawning','ready','stopping')" 2>/dev/null || true
+}
+our_session_ids() {
+  compose exec -T postgres psql -U sef -d sef_uni -Atc "select id from student_sessions" 2>/dev/null || true
+}
+
+# ---- tunnels -------------------------------------------------------------------------------
+
+start_tunnel() {
+  local name=$1 port=$2 logf=$LOGS/tunnel-$1.log
+  : >"$logf"
+  local proto=()
+  [[ -n ${DEMO_TUNNEL_PROTOCOL:-} ]] && proto=(--protocol "$DEMO_TUNNEL_PROTOCOL")
+  # --config /dev/null: a ~/.cloudflared/config.yml must not turn this into a named tunnel.
+  cloudflared tunnel --no-autoupdate --config /dev/null ${proto[@]+"${proto[@]}"} --url "http://127.0.0.1:$port" >>"$logf" 2>&1 </dev/null &
+  state_set "TUNNEL_${name}_PID" "$!"
+}
+
+tunnel_url() {
+  local name=$1 logf=$LOGS/tunnel-$1.log url="" started
+  started=$(now)
+  while [[ -z $url ]]; do
+    url=$(grep -Eo 'https://[a-z0-9-]+\.trycloudflare\.com' "$logf" | head -n 1 || true)
+    [[ -n $url ]] && break
+    pid_alive "$(state_get "TUNNEL_${name}_PID")" cloudflared || die "the $name tunnel exited: see .demo/logs/tunnel-$name.log"
+    (($(now) - started < 60)) || die "the $name tunnel printed no URL within 60 s: see .demo/logs/tunnel-$name.log"
+    sleep 0.5
+  done
+  printf '%s' "$url"
+}
+
+# GET through a public URL. A brand-new trycloudflare name can lag in the local resolver, so
+# after a resolve failure this asks 1.1.1.1 and pins the answer for that request only.
+public_get() {
+  local url=$1
+  shift
+  local out
+  if out=$(curl -sS --max-time 15 "$@" "$url" 2>&1); then
+    printf '%s' "$out"
+    return 0
+  fi
+  if [[ $out == *"resolve host"* ]] && command -v dig >/dev/null; then
+    local host ip
+    host=${url#https://}
+    host=${host%%/*}
+    ip=$(dig +short @1.1.1.1 "$host" A | grep -E '^[0-9.]+$' | head -n 1 || true)
+    [[ -n $ip ]] && curl -sS --max-time 15 --resolve "$host:443:$ip" "$@" "$url" && return 0
+  fi
+  return 1
+}
+
+wait_public() {
+  local label=$1 url=$2 expect=$3 started body
+  started=$(now)
+  until body=$(public_get "$url" 2>/dev/null) && [[ $body == *"$expect"* ]]; do
+    (($(now) - started < 90)) || die "$label is not reachable through its tunnel ($url) after 90 s"
+    sleep 2
+  done
+}
+
+wait_local() {
+  local label=$1 url=$2 started
+  started=$(now)
+  until curl -fsS --max-time 3 -o /dev/null "$url" 2>/dev/null; do
+    (($(now) - started < 90)) || die "$label did not answer $url within 90 s: see .demo/logs/"
+    sleep 0.5
+  done
+}
+
+port_busy() { lsof -nP -iTCP:"$1" -sTCP:LISTEN >/dev/null 2>&1; }
+
+# ---- up ------------------------------------------------------------------------------------
+
+preflight() {
+  local cmd
+  for cmd in docker cloudflared curl jq node pnpm openssl lsof; do
+    command -v "$cmd" >/dev/null || die "$cmd is not installed (docs/demo-hosted.md, Prerequisites)"
+  done
+  docker info >/dev/null 2>&1 || die "Docker is not running"
+  [[ -d $ROOT/node_modules ]] || die "run pnpm install first"
+  if pid_alive "$(state_get UNI_PID)" server/uni || pid_alive "$(state_get GATEWAY_PID)" server/gateway; then
+    die "the demo is already running (pnpm demo:hosted:status); stop it with pnpm demo:hosted:down"
+  fi
+  for port in "$UNI_PORT" "$GATEWAY_PORT"; do
+    port_busy "$port" && die "port $port is already in use; set DEMO_UNI_PORT / DEMO_GATEWAY_PORT"
+  done
+  local tags
+  tags=$(curl -fsS --max-time 5 "$OLLAMA/api/tags" 2>/dev/null) || die "Ollama is not answering at $OLLAMA"
+  has_model() { jq -e --arg m "$1" '[.models[].name | sub(":latest$"; "")] | index($m | sub(":latest$"; "")) != null' <<<"$tags" >/dev/null; }
+  has_model embeddinggemma || die "Ollama has no embeddinggemma: ollama pull embeddinggemma"
+  if has_model "$SESSION_MODEL"; then
+    MODEL_ALIASES=""
+  elif has_model "$SERVED_MODEL"; then
+    # The golden image asks for $SESSION_MODEL; serve it with the model this GPU already has.
+    MODEL_ALIASES="$SESSION_MODEL=$SERVED_MODEL"
+  else
+    die "Ollama has neither $SESSION_MODEL nor $SERVED_MODEL: ollama pull $SESSION_MODEL"
+  fi
+  if [[ ${DEMO_NO_INSTABOX:-0} != 1 ]]; then
+    [[ -f $INSTABOX_ENV_FILE ]] || die "no Instabox key file at $INSTABOX_ENV_FILE (or set DEMO_NO_INSTABOX=1)"
+    grep -q '^INSTABOX_API_KEY=' "$INSTABOX_ENV_FILE" || die "$INSTABOX_ENV_FILE has no INSTABOX_API_KEY="
+    [[ $(stat -f %Lp "$INSTABOX_ENV_FILE" 2>/dev/null || stat -c %a "$INSTABOX_ENV_FILE") == 600 ]] || warn "$INSTABOX_ENV_FILE should be chmod 600"
+    SNAPSHOT=${SEF_GOLDEN_SNAPSHOT_ID:-$(tail -n 1 "$HOME/.local/state/sef-golden/snapshots.tsv" 2>/dev/null | cut -f2)}
+    [[ $SNAPSHOT =~ ^sn_[a-z0-9]+$ ]] || die "no golden snapshot: set SEF_GOLDEN_SNAPSHOT_ID (infra/seat/golden/README.md)"
+    local snap
+    snap=$(ib GET "/v1/snapshots/$SNAPSHOT" 2>/dev/null | jq -r '.status // .state // empty' 2>/dev/null || true)
+    [[ $snap == ready ]] || die "snapshot $SNAPSHOT is not ready on Instabox (status: ${snap:-not found})"
+  fi
+}
+
+foreign_session_check() {
+  [[ ${DEMO_NO_INSTABOX:-0} == 1 ]] && return 0
+  local vms ours foreign
+  vms=$(session_vms) || die "could not list Instabox machines"
+  [[ -z $vms ]] && return 0
+  ours=$(our_machine_ids)
+  foreign=$(awk 'NR==FNR { own[$1]=1; next } !($1 in own)' <(printf '%s\n' "$ours") <(printf '%s\n' "$vms"))
+  [[ -z $foreign ]] && return 0
+  printf '%s\n' "$foreign" | sed 's/^/    /' >&2
+  # The orchestrator's reaper deletes app:sef-session machines that no row of ITS database owns.
+  if [[ ${DEMO_ALLOW_FOREIGN_SESSIONS:-0} == 1 ]]; then
+    warn "the app:sef-session VMs above belong to another uni; this demo's reaper WILL delete them"
+  else
+    die "the app:sef-session VMs above are not this demo's: its reaper would delete them. End them where they were started, or set DEMO_ALLOW_FOREIGN_SESSIONS=1"
+  fi
+}
+
+build_ui() {
+  [[ -f $ROOT/apps/desktop/dist-portal/index.html && -f $ROOT/apps/admin/dist/index.html ]] && return 0
+  [[ ${DEMO_SKIP_BUILD:-0} == 1 ]] && {
+    warn "the portal is not built; /app and /admin will 404"
+    return 0
+  }
+  log "building the portal and admin UI (pnpm build:hosted; once)"
+  (cd "$ROOT" && pnpm build:hosted) >"$LOGS/build-hosted.log" 2>&1 || die "pnpm build:hosted failed: see .demo/logs/build-hosted.log"
+}
+
+start_containers() {
+  log "starting Postgres (127.0.0.1:$PG_PORT) and MinIO (S3 127.0.0.1:$S3_PORT, console 127.0.0.1:$S3_CONSOLE_PORT)"
+  compose up -d --build --wait postgres minio >"$LOGS/compose.log" 2>&1 || die "docker compose up failed: see .demo/logs/compose.log"
+  compose up --build --exit-code-from minio-init minio-init >>"$LOGS/compose.log" 2>&1 || die "minio-init failed: see .demo/logs/compose.log"
+  log "bucket sef-vaults ready (versioning on); engine key sef-engine scoped to it"
+}
+
+db_url() { printf 'postgresql://sef:%s@127.0.0.1:%s/sef_uni' "$(secret UNI_DB_PASSWORD)" "$PG_PORT"; }
+
+migrate() {
+  (
+    export UNI_DATABASE_URL
+    UNI_DATABASE_URL=$(db_url)
+    cd "$ROOT" && pnpm --silent --filter @sef/uni-server db:migrate
+  ) >"$LOGS/migrate.log" 2>&1 || die "db:migrate failed: see .demo/logs/migrate.log"
+  log "database migrated"
+}
+
+start_gateway() {
+  (
+    unset GATEWAY_DEV_TOKENS NODE_OPTIONS
+    export GATEWAY_PORT=$GATEWAY_PORT GATEWAY_HOST=127.0.0.1 GATEWAY_UPSTREAMS=$OLLAMA
+    export GATEWAY_MODELS="gemma4:e4b,gemma4:e2b,embeddinggemma,shieldgemma:2b"
+    export GATEWAY_MODEL_ALIASES=$MODEL_ALIASES
+    GATEWAY_TOKEN_SECRET=$(secret GATEWAY_TOKEN_SECRET)
+    GATEWAY_METRICS_TOKEN=$(secret GATEWAY_METRICS_TOKEN)
+    export GATEWAY_TOKEN_SECRET GATEWAY_METRICS_TOKEN
+    cd "$ROOT/server/gateway" || exit 1
+    exec node --import tsx "$PWD/src/index.ts"
+  ) >>"$LOGS/gateway.log" 2>&1 </dev/null &
+  state_set GATEWAY_PID "$!"
+}
+
+start_uni() {
+  (
+    unset NODE_ENV NODE_OPTIONS
+    export UNI_PORT=$UNI_PORT UNI_HOST=127.0.0.1
+    export UNI_DATA_DIR=$DEMO_DIR/uni-data KEYS_DIR=$DEMO_DIR/uni-keys
+    export UNI_PUBLIC_URL=$UNI_URL UNI_TRUSTED_ORIGINS="http://127.0.0.1:$UNI_PORT,http://localhost:$UNI_PORT"
+    export SEED_DEMO=true DEMO_PASSWORD=$DEMO_PASSWORD
+    UNI_DATABASE_URL=$(db_url)
+    BETTER_AUTH_SECRET=$(secret BETTER_AUTH_SECRET)
+    GATEWAY_TOKEN_SECRET=$(secret GATEWAY_TOKEN_SECRET)
+    OBJECT_STORE_SECRET_KEY=$(secret OBJECT_STORE_SECRET_KEY)
+    export UNI_DATABASE_URL BETTER_AUTH_SECRET GATEWAY_TOKEN_SECRET OBJECT_STORE_SECRET_KEY
+    export MODEL_GATEWAY_URL=$GATEWAY_URL/v1
+    export OBJECT_STORE_ENDPOINT=$S3_URL OBJECT_STORE_REGION=us-east-1 OBJECT_STORE_BUCKET=sef-vaults
+    export OBJECT_STORE_ACCESS_KEY=sef-engine OBJECT_STORE_FORCE_PATH_STYLE=true
+    export SESSION_MAX_CONCURRENT=${SESSION_MAX_CONCURRENT:-3} SESSION_IDLE_MINUTES=${SESSION_IDLE_MINUTES:-15}
+    if [[ ${DEMO_NO_INSTABOX:-0} != 1 ]]; then
+      set -a
+      # shellcheck disable=SC1090
+      . "$INSTABOX_ENV_FILE"
+      set +a
+      export SEF_GOLDEN_SNAPSHOT_ID=$SNAPSHOT
+    else
+      unset INSTABOX_API_KEY SEF_GOLDEN_SNAPSHOT_ID
+    fi
+    cd "$ROOT/server/uni" || exit 1
+    exec node --import tsx "$PWD/src/index.ts"
+  ) >>"$LOGS/uni.log" 2>&1 </dev/null &
+  state_set UNI_PID "$!"
+}
+
+check_store() {
+  (
+    export OBJECT_STORE_ENDPOINT=$S3_URL OBJECT_STORE_REGION=us-east-1 OBJECT_STORE_BUCKET=sef-vaults
+    export OBJECT_STORE_ACCESS_KEY=sef-engine OBJECT_STORE_FORCE_PATH_STYLE=true
+    OBJECT_STORE_SECRET_KEY=$(secret OBJECT_STORE_SECRET_KEY)
+    export OBJECT_STORE_SECRET_KEY
+    cd "$ROOT" && pnpm --silent --filter @sef/engine store:roundtrip
+  ) 2>&1
+}
+
+check_stream() {
+  (
+    GATEWAY_TOKEN_SECRET=$(secret GATEWAY_TOKEN_SECRET)
+    export GATEWAY_TOKEN_SECRET
+    cd "$ROOT" && pnpm --silent --filter @sef/gateway stream-check --url "$GATEWAY_URL" --model "$SESSION_MODEL"
+  ) 2>&1
+}
+
+check_cors() {
+  # A session VM's served UI (https://4100-<id>.instabox.tech) calling the uni from a browser.
+  local h
+  h=$(public_get "$UNI_URL/v1/session" -o /dev/null -D - -X OPTIONS \
+    -H 'Origin: https://4100-example.instabox.tech' -H 'Access-Control-Request-Method: POST' \
+    -H 'Access-Control-Request-Headers: authorization,content-type' 2>/dev/null | tr -d '\r') || true
+  if grep -qi '^access-control-allow-origin: \*' <<<"$h"; then
+    echo "uni CORS: preflight from a VM origin allowed (Access-Control-Allow-Origin: *, no credentials)"
+  else
+    echo "uni CORS: preflight NOT allowed for a VM origin"
+    return 1
+  fi
+}
+
+banner() {
+  cat <<EOF
+
+${R}${B}┌──────────────────────────────────────────────────────────────────────────────┐
+│  PUBLIC DEMO: these services on this laptop are on the internet right now     │
+└──────────────────────────────────────────────────────────────────────────────┘${N}
+  uni server    $UNI_URL
+                demo accounts with the PUBLIC password '$DEMO_PASSWORD'
+                (admin@, ananya@, brinda@, chetna@saintelms.local): anyone with this URL
+                can sign in, start Instabox VMs on the operator's quota (max ${SESSION_MAX_CONCURRENT:-3}) and use them.
+  model gateway $GATEWAY_URL
+                signed per-VM tokens only (no dev tokens), in front of the local Ollama
+  S3 API        $S3_URL
+                bucket sef-vaults; the VMs hold the bucket-scoped engine key (all vaults)
+  NOT exposed:  Postgres, the MinIO root console, Ollama itself.
+  Stop it all:  pnpm demo:hosted:down    (ends every session VM, then closes the tunnels)
+
+EOF
+}
+
+up() {
+  preflight
+  ensure_secrets
+  # A start that fails half-way closes whatever it opened: no tunnel is left on the internet.
+  trap 'rc=$?; if ((rc != 0)); then warn "start failed: stopping what was started"; down >&2 || true; fi' EXIT
+  build_ui
+  start_containers
+  foreign_session_check
+  migrate
+
+  log "opening three cloudflared quick tunnels"
+  start_tunnel UNI "$UNI_PORT"
+  start_tunnel GATEWAY "$GATEWAY_PORT"
+  start_tunnel S3 "$S3_PORT"
+  UNI_URL=$(tunnel_url UNI)
+  GATEWAY_URL=$(tunnel_url GATEWAY)
+  S3_URL=$(tunnel_url S3)
+  state_set UNI_URL "$UNI_URL"
+  state_set GATEWAY_URL "$GATEWAY_URL"
+  state_set S3_URL "$S3_URL"
+  state_set SNAPSHOT "${SNAPSHOT:-}"
+  state_set STARTED_AT "$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+
+  log "starting the gateway (127.0.0.1:$GATEWAY_PORT${MODEL_ALIASES:+, alias $MODEL_ALIASES}) and the uni (127.0.0.1:$UNI_PORT)"
+  start_gateway
+  start_uni
+  wait_local gateway "http://127.0.0.1:$GATEWAY_PORT/health"
+  wait_local uni "http://127.0.0.1:$UNI_PORT/health"
+  curl -fsS --max-time 5 "http://127.0.0.1:$UNI_PORT/ready" >/dev/null || die "the uni is up but not ready (database or account auth): see .demo/logs/uni.log"
+  if [[ ${DEMO_NO_INSTABOX:-0} != 1 ]]; then
+    grep -q session_orchestrator_enabled "$LOGS/uni.log" || die "the session orchestrator did not start: see .demo/logs/uni.log"
+  fi
+
+  log "waiting for the tunnels to answer from the internet"
+  wait_public "uni" "$UNI_URL/health" '"ok":true'
+  wait_public "gateway" "$GATEWAY_URL/health" '"ok":true'
+  wait_public "S3 API" "$S3_URL/minio/health/live" ''
+
+  local failed=0 out
+  log "checks through the tunnels:"
+  out=$(check_store) || failed=1
+  printf '  %s\n' "$out"
+  out=$(check_stream) || failed=1
+  printf '%s\n' "$out" | sed 's/^/  gateway /'
+  out=$(check_cors) || failed=1
+  printf '  %s\n' "$out"
+
+  banner
+  cat <<EOF
+${B}Demo stack is up${N} (state in .demo/, logs in .demo/logs/)
+  portal          $UNI_URL/app/
+  admin           $UNI_URL/admin/
+  uni health      $UNI_URL/health
+  orchestrator    $([[ ${DEMO_NO_INSTABOX:-0} == 1 ]] && echo "off (DEMO_NO_INSTABOX=1)" || echo "on: snapshot $SNAPSHOT, max ${SESSION_MAX_CONCURRENT:-3} VMs, idle ${SESSION_IDLE_MINUTES:-15} min")
+  gateway         $GATEWAY_URL  (model ${SESSION_MODEL}${MODEL_ALIASES:+ served as $SERVED_MODEL})
+  object store    $S3_URL  (bucket sef-vaults)
+  MinIO console   http://127.0.0.1:$S3_CONSOLE_PORT  (local only; root password in .demo/secrets.env)
+Start a session: docs/demo-hosted.md "What to click".
+EOF
+  ((failed == 0)) || warn "a check above failed: the stack is running, see docs/demo-hosted.md Troubleshooting"
+  trap - EXIT
+}
+
+# ---- down ----------------------------------------------------------------------------------
+
+end_all_sessions() {
+  local base="http://127.0.0.1:$UNI_PORT" token sessions ids id started left
+  token=$(curl -fsS --max-time 10 -H 'content-type: application/json' "$base/v1/auth/login" \
+    -d "$(jq -nc --arg p "$DEMO_PASSWORD" '{email: "admin@saintelms.local", password: $p}')" | jq -r '.token // empty') || token=""
+  [[ -n $token ]] || {
+    warn "could not sign in as the demo admin to end sessions"
+    return 1
+  }
+  auth() { printf 'Authorization: Bearer %s\n' "$token"; }
+  sessions=$(auth | curl -fsS --max-time 10 -H @- "$base/v1/admin/sessions") || {
+    warn "the orchestrator is not answering /v1/admin/sessions"
+    return 1
+  }
+  ids=$(jq -r '.sessions[] | select(.state != "stopping") | .id' <<<"$sessions")
+  for id in $ids; do
+    auth | curl -fsS --max-time 10 -H @- -X POST "$base/v1/admin/sessions/$id/end" >/dev/null && log "ending session $id"
+  done
+  started=$(now)
+  while :; do
+    left=$(auth | curl -fsS --max-time 10 -H @- "$base/v1/admin/sessions" | jq '.sessions | length') || left='?'
+    [[ $left == 0 ]] && break
+    if (($(now) - started > 180)); then
+      warn "$left session(s) still live after 180 s"
+      return 1
+    fi
+    sleep 3
+  done
+  log "every session has ended (final flush, then VM deleted)"
+}
+
+delete_vm() {
+  local id=$1 app
+  [[ $id =~ ^m_[a-z0-9]+$ ]] || return 1
+  # Re-check the label right before deleting: only this orchestrator's machines.
+  app=$(ib GET "/v1/machines/$id" | jq -r '.metadata.app // empty')
+  [[ $app == sef-session ]] || {
+    warn "$id is not an app:sef-session machine; not touching it"
+    return 1
+  }
+  ib DELETE "/v1/machines/$id" -H "Idempotency-Key: $(uuidgen 2>/dev/null || openssl rand -hex 16)" >/dev/null && log "deleted $id directly (no final flush)"
+}
+
+down() {
+  local reset=0
+  [[ ${1:-} == --reset ]] && reset=1
+  [[ -f $STATE || -f $SECRETS || $reset == 1 ]] || {
+    log "no demo state in .demo/: nothing to stop"
+    return 0
+  }
+  local vm_ok=1
+  if pid_alive "$(state_get UNI_PID)" server/uni; then
+    end_all_sessions || vm_ok=0
+  fi
+  # Anything this demo's database still holds (a crashed uni, a failed delete) is deleted
+  # directly, after a label re-check. VMs of any other uni are never touched.
+  if [[ -f $SECRETS && ${DEMO_NO_INSTABOX:-0} != 1 && -f $INSTABOX_ENV_FILE ]] && compose ps --status running postgres 2>/dev/null | grep -q postgres; then
+    local left id
+    left=$(our_machine_ids)
+    for id in $left; do delete_vm "$id" || vm_ok=0; done
+  fi
+
+  stop_pid UNI server/uni
+  stop_pid GATEWAY server/gateway
+  local name
+  for name in UNI GATEWAY S3; do stop_pid "TUNNEL_$name" cloudflared; done
+
+  if [[ -f $SECRETS ]]; then
+    if ((reset)); then
+      compose down -v --remove-orphans >>"$LOGS/compose.log" 2>&1 || warn "docker compose down -v failed"
+      log "removed the demo containers and volumes"
+    else
+      compose stop >>"$LOGS/compose.log" 2>&1 || warn "docker compose stop failed"
+      log "stopped Postgres and MinIO (data kept in volumes sef-demo_pg-data, sef-demo_minio-data)"
+    fi
+  fi
+
+  # Verify.
+  local vms
+  if [[ ${DEMO_NO_INSTABOX:-0} != 1 && -f $INSTABOX_ENV_FILE ]]; then
+    if vms=$(session_vms); then
+      if [[ -z $vms ]]; then
+        log "${G}no app:sef-session VMs on the Instabox account${N}"
+      else
+        warn "app:sef-session VMs still on the account (not this demo's, or a delete in flight):"
+        printf '    %s\n' "$vms" >&2
+        vm_ok=0
+      fi
+    else
+      warn "could not list Instabox machines to verify"
+    fi
+  fi
+  for name in UNI GATEWAY S3; do
+    pid_alive "$(state_get "TUNNEL_${name}_PID")" cloudflared && warn "tunnel $name is still running"
+  done
+  log "tunnels closed"
+  if ((reset)); then
+    rm -rf "$DEMO_DIR"
+    log "deleted .demo/ (secrets, uni data, logs)"
+  else
+    state_set UNI_URL ""
+    state_set GATEWAY_URL ""
+    state_set S3_URL ""
+  fi
+  ((vm_ok)) || warn "check the Instabox machine list by hand (docs/demo-hosted.md, Stop and clean up)"
+}
+
+# ---- status --------------------------------------------------------------------------------
+
+status() {
+  [[ -f $STATE ]] || {
+    log "not running (no .demo/state.env)"
+    return 0
+  }
+  local name pid marker
+  for name in UNI GATEWAY TUNNEL_UNI TUNNEL_GATEWAY TUNNEL_S3; do
+    pid=$(state_get "${name}_PID")
+    case $name in UNI) marker=server/uni ;; GATEWAY) marker=server/gateway ;; *) marker=cloudflared ;; esac
+    if pid_alive "$pid" "$marker"; then printf '  %-15s running (pid %s)\n' "$name" "$pid"; else printf '  %-15s stopped\n' "$name"; fi
+  done
+  local url
+  for name in UNI_URL GATEWAY_URL S3_URL; do
+    url=$(state_get "$name")
+    [[ -n $url ]] || continue
+    local path=/health
+    [[ $name == S3_URL ]] && path=/minio/health/live
+    if public_get "$url$path" -o /dev/null -w '%{http_code}' 2>/dev/null | grep -q '^200$'; then
+      printf '  %-15s %s (answers)\n' "${name%_URL}" "$url"
+    else
+      printf '  %-15s %s (NOT answering)\n' "${name%_URL}" "$url"
+    fi
+  done
+  [[ -f $SECRETS ]] && compose ps --format '  {{.Service}}: {{.Status}}' 2>/dev/null || true
+  if pid_alive "$(state_get UNI_PID)" server/uni && [[ -f $SECRETS ]]; then
+    compose exec -T postgres psql -U sef -d sef_uni -Atc \
+      "select '  session ' || account_id || ' ' || state || coalesce(' ' || step, '') || coalesce(' ' || machine_id, '') from student_sessions where state in ('queued','spawning','ready','stopping')" 2>/dev/null || true
+  fi
+}
+
+case ${1:-up} in
+  up) set -m; up ;;
+  down) down "${2:-}" ;;
+  status) status ;;
+  *) die "usage: demo-hosted.sh [up|down [--reset]|status]" ;;
+esac

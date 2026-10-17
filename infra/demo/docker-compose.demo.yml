@@ -1,0 +1,66 @@
+# Containers for the hosted demo stack (scripts/demo-hosted.sh; docs/demo-hosted.md).
+# Project `sef-demo`, so it never collides with the main `saint-elms-fire` compose project or a
+# dev stack on 4100/4200. Every port is published on host loopback only: the S3 API (3490) is
+# reached from outside through a cloudflared tunnel that demo-hosted.sh starts; Postgres and the
+# MinIO console are never tunnelled. Values come from .demo/secrets.env (--env-file).
+name: sef-demo
+
+services:
+  postgres:
+    image: postgres:17-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: sef_uni
+      POSTGRES_USER: sef
+      POSTGRES_PASSWORD: ${UNI_DB_PASSWORD:?generated into .demo/secrets.env by demo-hosted.sh}
+      PGDATA: /var/lib/postgresql/data/pgdata
+    volumes:
+      - pg-data:/var/lib/postgresql/data
+    ports: ["127.0.0.1:${DEMO_PG_PORT:-3432}:5432"]
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U sef -d sef_uni"]
+      interval: 2s
+      timeout: 3s
+      retries: 30
+
+  minio:
+    # Same image and digest as the main compose file (bump them together).
+    image: cgr.dev/chainguard/minio:latest@sha256:c93745c56fccdaf0e5dcb88999a96a65a136428beb045ef5d546255a80d747a7
+    restart: unless-stopped
+    command: ["server", "/data", "--address", ":9000", "--console-address", ":9001"]
+    environment:
+      MINIO_ROOT_USER: sef-minio-admin
+      MINIO_ROOT_PASSWORD: ${MINIO_ROOT_PASSWORD:?generated into .demo/secrets.env by demo-hosted.sh}
+    volumes:
+      - minio-data:/data
+    ports:
+      - "127.0.0.1:${DEMO_S3_PORT:-3490}:9000"
+      # The root console stays on loopback and is never tunnelled.
+      - "127.0.0.1:${DEMO_S3_CONSOLE_PORT:-3491}:9001"
+    healthcheck:
+      test: ["CMD", "bash", "-c", "exec 3<>/dev/tcp/127.0.0.1/9000 && printf 'GET /minio/health/live HTTP/1.1\\r\\nHost: localhost\\r\\nConnection: close\\r\\n\\r\\n' >&3 && read -r _ code _ <&3 && [[ $$code == 200 ]]"]
+      interval: 2s
+      timeout: 3s
+      retries: 30
+
+  minio-init:
+    # Bucket, versioning and the bucket-scoped engine key (infra/minio/init.sh): the only
+    # credential that leaves the laptop.
+    build:
+      context: ../minio
+      dockerfile: init.Dockerfile
+    restart: "no"
+    environment:
+      MINIO_ROOT_USER: sef-minio-admin
+      MINIO_ROOT_PASSWORD: ${MINIO_ROOT_PASSWORD:?}
+      OBJECT_STORE_BUCKET: sef-vaults
+      OBJECT_STORE_ACCESS_KEY: sef-engine
+      OBJECT_STORE_SECRET_KEY: ${OBJECT_STORE_SECRET_KEY:?generated into .demo/secrets.env by demo-hosted.sh}
+    depends_on:
+      minio: { condition: service_healthy }
+
+volumes:
+  # Named volumes: the demo's accounts, sessions and vaults survive `demo:hosted:down` and a
+  # laptop restart. `pnpm demo:hosted:down --reset` removes them with the secrets.
+  pg-data:
+  minio-data:
