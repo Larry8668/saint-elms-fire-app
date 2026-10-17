@@ -1,7 +1,8 @@
 import { z } from 'zod';
-import type { Settings, TeacherId } from '@sef/shared';
+import type { TeacherId } from '@sef/shared';
 import { generateStructured } from '../agents/factory';
 import { resolveModel } from '../models/registry';
+import type { StoredSettings } from '../settings/store';
 import type { Seed } from './seeds';
 
 export const MAX_DRAFT_CHARS = 240;
@@ -32,7 +33,7 @@ export function draftPrompt(questions: string[]): string {
 }
 
 /** The model-backed rephraser on the `brain` role. Callers treat any throw as "use templates". */
-export function modelRephrase(settings: () => Promise<Settings>): Rephrase {
+export function modelRephrase(settings: () => Promise<StoredSettings>): Rephrase {
   return async (teacher, questions) => {
     const resolved = resolveModel(await settings(), 'brain');
     const { object } = await generateStructured({

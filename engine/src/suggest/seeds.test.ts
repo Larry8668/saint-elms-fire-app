@@ -37,7 +37,7 @@ test('deadline seeds: confirmed, upcoming, within two weeks — and they expire 
     logisticsRecord('ok', { title: 'Essay', dueAt: daysFromNow(2) }),
     logisticsRecord('past', { dueAt: daysFromNow(-1) }),
     logisticsRecord('far', { dueAt: daysFromNow(30) }),
-    logisticsRecord('draft', { state: 'draft' }),
+    logisticsRecord('draft', { state: 'proposed' }),
     logisticsRecord('class', { kind: 'timetable' }),
   ];
   const seeds = extractSeeds({ now: NOW, logistics });
