@@ -167,8 +167,7 @@ export class SignalService {
   async observeSync(status: SyncStatus): Promise<void> {
     if (!status.uniReachable) return;
     const updates = status.courses
-      .filter((course) => course.state === 'update' && course.remoteVersion)
-      .map((course) => ({ id: course.id, title: course.title, remoteVersion: course.remoteVersion! }));
+      .flatMap((course) => (course.state === 'update' && course.remoteVersion !== undefined ? [{ id: course.id, title: course.title, remoteVersion: course.remoteVersion }] : []));
     await this.deps.store.mutate((ledger) => {
       ledger.observations.sync = { at: this.now().toISOString(), updates };
     });

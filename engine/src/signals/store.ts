@@ -2,26 +2,29 @@ import { z } from 'zod';
 import { AttentionStateSchema, SignalSchema, TimestampSchema } from '@sef/shared';
 import { errorFields, log } from '../config';
 import { readJson, writeJson } from '../lib/fs';
-import type { Observations } from './detectors';
 
 export const StoredSignalSchema = SignalSchema.extend({ state: AttentionStateSchema, snoozedUntil: TimestampSchema.optional() });
 export type StoredSignal = z.infer<typeof StoredSignalSchema>;
+
+/** Snapshots of uni-backed state the student's own app already fetched; detectors never call the uni. */
+const ObservationsSchema = z.strictObject({
+  sync: z.strictObject({ at: TimestampSchema, updates: z.array(z.strictObject({ id: z.string(), title: z.string(), remoteVersion: z.string() })) }).optional(),
+  feed: z
+    .strictObject({
+      at: TimestampSchema,
+      incoming: z.array(z.strictObject({ id: z.string(), revision: z.string(), title: z.string(), senderName: z.string() })),
+    })
+    .optional(),
+});
+export type Observations = z.infer<typeof ObservationsSchema>;
 
 const LedgerSchema = z.strictObject({
   version: z.literal(1),
   evaluatedAt: TimestampSchema.nullable(),
   items: z.record(z.string(), StoredSignalSchema),
-  observations: z.strictObject({
-    sync: z.strictObject({ at: TimestampSchema, updates: z.array(z.strictObject({ id: z.string(), title: z.string(), remoteVersion: z.string() })) }).optional(),
-    feed: z
-      .strictObject({
-        at: TimestampSchema,
-        incoming: z.array(z.strictObject({ id: z.string(), revision: z.string(), title: z.string(), senderName: z.string() })),
-      })
-      .optional(),
-  }),
+  observations: ObservationsSchema,
 });
-export type SignalLedger = z.infer<typeof LedgerSchema> & { observations: Observations };
+export type SignalLedger = z.infer<typeof LedgerSchema>;
 
 const emptyLedger = (): SignalLedger => ({ version: 1, evaluatedAt: null, items: {}, observations: {} });
 

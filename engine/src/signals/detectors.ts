@@ -1,15 +1,10 @@
 import { createHash } from 'node:crypto';
 import { dueInstant, formatDue, type LogisticsRecord, type Signal, type SignalKind, type WikiJob } from '@sef/shared';
 import type { HealthProbe } from '../system/health';
+import type { Observations } from './store';
 
 const HOUR = 3_600_000;
 const DAY = 24 * HOUR;
-
-/** Snapshots of uni-backed state the student's own app already fetched; detectors never call the uni. */
-export interface Observations {
-  sync?: { at: string; updates: Array<{ id: string; title: string; remoteVersion: string }> };
-  feed?: { at: string; incoming: Array<{ id: string; revision: string; title: string; senderName: string }> };
-}
 
 export interface QuestionPage {
   id: string;
@@ -50,7 +45,8 @@ const shortHash = (parts: string[]) => createHash('sha256').update([...parts].so
 const DUE_KINDS = new Set<LogisticsRecord['kind']>(['deadline', 'event', 'reminder']);
 const NOTICE_WINDOW_MS = 14 * DAY;
 const QUESTION_IDLE_MS = 7 * DAY;
-const MAX_QUESTION_PAGES = 500;
+/** Bounds the items one detector can add; the idle filter runs over every page first. */
+const MAX_QUESTION_SIGNALS = 50;
 const ESSENTIAL_ROLES = new Set(['tutor', 'brain', 'vision']);
 
 export const deadlineDetector: Detector = {
@@ -83,7 +79,8 @@ export const noticeDetector: Detector = {
   detect: ({ logistics, now }) =>
     logistics?.flatMap((record) => {
       if (record.state !== 'confirmed' || record.kind !== 'notice') return [];
-      if (now.getTime() - Date.parse(record.updatedAt) > NOTICE_WINDOW_MS) return [];
+      const updated = Date.parse(record.updatedAt);
+      if (Number.isNaN(updated) || now.getTime() - updated > NOTICE_WINDOW_MS) return [];
       return [
         {
           key: `notice:${record.id}`,
@@ -150,9 +147,10 @@ export const proposalDetector: Detector = {
 export const questionDetector: Detector = {
   kind: 'vault_question',
   detect: ({ questions, now }) =>
-    questions?.slice(0, MAX_QUESTION_PAGES).flatMap((page) => {
-      if (now.getTime() - Date.parse(page.lastActivityAt) < QUESTION_IDLE_MS) return [];
-      return [
+    questions
+      ?.filter((page) => now.getTime() - Date.parse(page.lastActivityAt) >= QUESTION_IDLE_MS)
+      .slice(0, MAX_QUESTION_SIGNALS)
+      .flatMap((page) => [
         {
           key: `vault_question:${page.id}:${page.revision}`,
           kind: 'vault_question' as const,
@@ -162,8 +160,7 @@ export const questionDetector: Detector = {
           urgency: 'info' as const,
           entityRefs: [`page:${page.id}`],
         },
-      ];
-    }) ?? null,
+      ]) ?? null,
 };
 
 export const maintenanceDetector: Detector = {

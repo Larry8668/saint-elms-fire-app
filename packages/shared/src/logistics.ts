@@ -175,8 +175,11 @@ export function dueInstant(record: Pick<LogisticsRecord, 'dueAt' | 'allDay' | 't
   }
   if (!record.timeZone) return Date.parse(wall);
   try {
-    const guess = Date.UTC(Number(m[1]), Number(m[2]) - 1, Number(m[3]), Number(m[4]), Number(m[5]), Number(m[6] ?? 0));
-    return guess - zoneOffsetMs(guess, record.timeZone);
+    const asUtc = Date.UTC(Number(m[1]), Number(m[2]) - 1, Number(m[3]), Number(m[4]), Number(m[5]), Number(m[6] ?? 0));
+    // The offset must be the one in force at the target instant, not at the naive guess,
+    // or a wall time near a DST change lands an hour out — so resolve it twice.
+    const first = asUtc - zoneOffsetMs(asUtc, record.timeZone);
+    return asUtc - zoneOffsetMs(first, record.timeZone);
   } catch {
     return null;
   }

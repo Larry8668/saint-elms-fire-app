@@ -16,15 +16,23 @@ export function inQuietHours(quiet: ProactivitySettings['quietHours'], now: Date
   return start < end ? at >= start && at < end : at >= start || at < end;
 }
 
-/** Only a deadline under 24 hours away is loud enough to break quiet hours. */
+/** Only an upcoming deadline under 24 hours away is loud enough to break quiet hours. */
 export function bypassesQuietHours(item: Pick<StoredSignal, 'kind' | 'dueAt'>, now: Date): boolean {
-  return item.kind === 'deadline' && Boolean(item.dueAt) && Date.parse(item.dueAt!) - now.getTime() < URGENT_BYPASS_MS;
+  if (item.kind !== 'deadline' || !item.dueAt) return false;
+  const left = Date.parse(item.dueAt) - now.getTime();
+  return left > 0 && left < URGENT_BYPASS_MS;
+}
+
+/** Dated items before undated ones, soonest first. */
+function byDue(a: StoredSignal, b: StoredSignal): number {
+  if (a.dueAt && b.dueAt) return Date.parse(a.dueAt) - Date.parse(b.dueAt);
+  if (a.dueAt) return -1;
+  if (b.dueAt) return 1;
+  return 0;
 }
 
 const byPriority = (a: StoredSignal, b: StoredSignal) =>
-  URGENCY_RANK[b.urgency] - URGENCY_RANK[a.urgency] ||
-  (a.dueAt && b.dueAt ? Date.parse(a.dueAt) - Date.parse(b.dueAt) : 0) ||
-  b.updatedAt.localeCompare(a.updatedAt);
+  URGENCY_RANK[b.urgency] - URGENCY_RANK[a.urgency] || byDue(a, b) || Date.parse(b.updatedAt) - Date.parse(a.updatedAt);
 
 /** What the student is shown. The ledger itself is never filtered by policy. */
 export function attentionView(items: StoredSignal[], settings: ProactivitySettings, now: Date): { items: AttentionItem[]; quiet: boolean } {

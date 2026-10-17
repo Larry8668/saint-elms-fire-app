@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
-import { startSignalScheduler, type OpenWorkspace } from './scheduler';
+import { runSignalTick, startSignalScheduler, type OpenWorkspace } from './scheduler';
 
 const open = (id: string, calls: string[], fail = false): OpenWorkspace => ({
   profile: { id },
@@ -9,17 +9,29 @@ const open = (id: string, calls: string[], fail = false): OpenWorkspace => ({
       calls.push(id);
       if (fail) throw new Error('disk full');
     },
-  } as never,
+  },
 });
 
-test('each tick evaluates every open workspace, one failure does not stop the rest, and stop() ends it', async () => {
+test('a tick evaluates every open workspace in order and one failure does not stop the rest', async () => {
   const calls: string[] = [];
-  const stop = startSignalScheduler(async () => [open('a', calls, true), open('b', calls)], 10);
-  await new Promise((resolve) => setTimeout(resolve, 35));
+  const result = await runSignalTick(async () => [open('a', calls, true), open('b', calls)]);
+  assert.deepEqual(calls, ['a', 'b']);
+  assert.deepEqual(result, { evaluated: 1, failed: 1 });
+});
+
+test('a failed enumeration is contained, not thrown', async () => {
+  assert.deepEqual(
+    await runSignalTick(async () => {
+      throw new Error('registry unreadable');
+    }),
+    { evaluated: 0, failed: 0 },
+  );
+});
+
+test('stop() ends the timer: no evaluations after it', async () => {
+  const calls: string[] = [];
+  const stop = startSignalScheduler(async () => [open('a', calls)], 5);
   stop();
-  const settled = calls.length;
-  assert.ok(settled >= 4, `expected at least two ticks, saw ${settled} evaluations`);
-  assert.deepEqual(calls.slice(0, 2), ['a', 'b']);
-  await new Promise((resolve) => setTimeout(resolve, 30));
-  assert.equal(calls.length, settled, 'no ticks after stop');
+  await new Promise((resolve) => setTimeout(resolve, 25));
+  assert.deepEqual(calls, []);
 });

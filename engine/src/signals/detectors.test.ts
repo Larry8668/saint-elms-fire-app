@@ -98,6 +98,12 @@ test('idle question pages surface after a week of no activity, counting learning
   assert.deepEqual(questionDetector.detect(inputs({ questions }))!.map((s) => s.key), ['vault_question:q-idle:q-idle@1']);
 });
 
+test('the question cap applies after the idle filter, so a large vault still surfaces its idle question', () => {
+  const fresh = Array.from({ length: 600 }, (_, i) => ({ id: `q-${i}`, title: `Q${i}`, revision: 'r', lastActivityAt: '2026-10-16T00:00:00Z' }));
+  const idle = { id: 'q-idle', title: 'Idle', revision: 'r', lastActivityAt: '2026-09-01T00:00:00Z' };
+  assert.deepEqual(questionDetector.detect(inputs({ questions: [...fresh, idle] }))!.map((s) => s.key), ['vault_question:q-idle:r']);
+});
+
 test('maintenance findings collapse into one item whose key changes when the set changes', () => {
   const a = maintenanceDetector.detect(inputs({ findings: [{ id: 'f1', title: 'Orphan page', pageIds: ['p1'] }] }))!;
   const b = maintenanceDetector.detect(inputs({ findings: [{ id: 'f1', title: 'Orphan page', pageIds: ['p1'] }, { id: 'f2', title: 'Dup', pageIds: ['p2'] }] }))!;

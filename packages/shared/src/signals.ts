@@ -75,6 +75,30 @@ export function defaultProactivity(): ProactivitySettings {
   };
 }
 
+/** What a settings PUT may send: any subset, down to a single kind toggle. */
+export const ProactivityPatchSchema = z.strictObject({
+  nudges: z.boolean().optional(),
+  draftedAdvice: z.boolean().optional(),
+  quietHours: z.strictObject({ enabled: z.boolean().optional(), start: ClockSchema.optional(), end: ClockSchema.optional() }).optional(),
+  kinds: z.partialRecord(SignalKindSchema, z.boolean()).optional(),
+});
+export type ProactivityPatch = z.infer<typeof ProactivityPatchSchema>;
+
+/** Field-wise merge: omitted fields keep `base`. Also backfills older stored files over the defaults. */
+export function mergeProactivity(base: ProactivitySettings, patch: ProactivityPatch | undefined): ProactivitySettings {
+  if (!patch) return base;
+  return {
+    nudges: patch.nudges ?? base.nudges,
+    draftedAdvice: patch.draftedAdvice ?? base.draftedAdvice,
+    quietHours: {
+      enabled: patch.quietHours?.enabled ?? base.quietHours.enabled,
+      start: patch.quietHours?.start ?? base.quietHours.start,
+      end: patch.quietHours?.end ?? base.quietHours.end,
+    },
+    kinds: { ...base.kinds, ...patch.kinds },
+  };
+}
+
 /** GET /api/attention and POST /api/attention/evaluate. */
 export const AttentionResponseSchema = z.strictObject({
   schemaVersion: ContractVersionSchema,

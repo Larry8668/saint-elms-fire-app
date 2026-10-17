@@ -9,6 +9,7 @@ process.env.ENGINE_DATA_DIR = await mkdtemp(path.join(tmpdir(), 'sef-private-set
 const { config, profilePaths } = await import('../config');
 const { writeJson } = await import('../lib/fs');
 const { ProfileSettingsStore, SettingsStore } = await import('./store');
+const { SettingsPatchSchema } = await import('./schema');
 
 const provider = (id: string, apiKey?: string) => ({
   id,
@@ -87,7 +88,14 @@ test('proactivity defaults are private, backfilled for older files, and merged p
   assert.equal(erin.proactivity.kinds.deadline, false);
   assert.equal(erin.proactivity.kinds.connectivity, true);
 
-  await dave.update({ proactivity: { ...fresh.proactivity, nudges: false } });
-  assert.equal((await dave.get()).proactivity.nudges, false);
+  await dave.update({ proactivity: { quietHours: { enabled: true, start: '23:00' }, kinds: { notice: false } } });
+  await dave.update({ proactivity: { nudges: false } });
+  const patched = (await dave.get()).proactivity;
+  assert.equal(patched.nudges, false);
+  assert.deepEqual(patched.quietHours, { enabled: true, start: '23:00', end: '07:00' }, 'a partial patch keeps what it did not name');
+  assert.equal(patched.kinds.notice, false);
+  assert.equal(patched.kinds.deadline, true);
+  assert.equal(SettingsPatchSchema.safeParse({ proactivity: { kinds: { deadline: false } } }).success, true, 'a single kind toggle is a valid PUT');
+  assert.equal(SettingsPatchSchema.safeParse({ proactivity: { kinds: { bogus: true } } }).success, false);
   assert.equal((await new ProfileSettingsStore(device, profilePaths('frank').privateSettings).get()).proactivity.nudges, true, 'one student’s choice never leaks to another');
 });

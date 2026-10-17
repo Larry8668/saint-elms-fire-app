@@ -19,7 +19,7 @@ export async function uniReachable(url: string): Promise<boolean> {
   }
 }
 
-/** The same probe `/api/health` runs; signals reuse it rather than opening new traffic. */
+/** The probe `/api/health` runs. Signals call the same function, so they reach no new destination. */
 export async function probeHealth(settings: StoredSettings): Promise<HealthProbe> {
   const [uni, models] = await Promise.all([uniReachable(settings.uniServerUrl), checkRoles(settings)]);
   return { uni, models };

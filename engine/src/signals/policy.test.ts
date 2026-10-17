@@ -50,6 +50,16 @@ test('quiet hours suppress highlighting but keep the item; a <24 h deadline brea
   );
 });
 
+test('an overdue deadline does not break quiet hours; dated items sort before undated ones of equal urgency', () => {
+  const now = local(23);
+  const overdue = item('deadline:late:48h', { kind: 'deadline', urgency: 'urgent', dueAt: new Date(now.getTime() - 3_600_000).toISOString() });
+  assert.equal(attentionView([overdue], settings({ quietHours: quietNight }), now).items[0]!.highlight, false);
+
+  const undated = item('notice:fresh', { urgency: 'soon', updatedAt: '2026-10-17T12:00:00Z' });
+  const dated = item('deadline:x:7d', { kind: 'deadline', urgency: 'soon', dueAt: new Date(now.getTime() + 5 * 86_400_000).toISOString(), updatedAt: '2026-10-01T00:00:00Z' });
+  assert.deepEqual(attentionView([undated, dated], settings(), now).items.map((i) => i.key), ['deadline:x:7d', 'notice:fresh']);
+});
+
 test('dismissed, snoozed, disabled kinds and the master switch all hide items', () => {
   const now = local(12);
   const items = [
