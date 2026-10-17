@@ -4,6 +4,7 @@ import { config, errorFields, log } from './config';
 import { createCredentialStore } from './credentials/store';
 import { bootstrapDemo } from './demo/bootstrap';
 import { createApp } from './http/app';
+import { edgeStartupCheck } from './http/edge';
 import { AuthService } from './profiles/auth';
 import { AnonymousDataManager } from './profiles/anonymous';
 import { ProfileRegistry } from './profiles/registry';
@@ -13,6 +14,12 @@ import { SettingsStore } from './settings/store';
 import { startSignalScheduler } from './signals/scheduler';
 
 async function main() {
+  const edge = edgeStartupCheck(process.env);
+  for (const warning of edge.warnings) log.warn('edge_config_warning', { warning });
+  if (edge.errors.length > 0) {
+    for (const error of edge.errors) log.error('edge_config_refused', { error });
+    process.exit(1);
+  }
   await mkdir(config.paths.trust, { recursive: true });
 
   const settings = new SettingsStore();

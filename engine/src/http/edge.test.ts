@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
 import { Hono } from 'hono';
-import { edgePolicy, parseProxyList, parsePublicHost } from './edge';
+import { edgePolicy, edgeStartupCheck, parseProxyEntries, parseProxyList, parsePublicHost } from './edge';
 
 /** The node-server binding getConnInfo reads; `null` models an in-process request with no socket. */
 const socketFrom = (remoteAddress: string | null) => (remoteAddress ? { incoming: { socket: { remoteAddress, remotePort: 50000, remoteFamily: remoteAddress.includes(':') ? 'IPv6' : 'IPv4' } } } : {});
@@ -123,6 +123,30 @@ test('malformed trusted-proxy entries are dropped, never widening the set', () =
   assert.equal(list.check('192.168.4.4', 'ipv4'), true);
   assert.equal(list.check('10.0.0.1', 'ipv4'), false);
   assert.equal(list.check('::1', 'ipv6'), true);
+});
+
+test('a trailing slash or a bad prefix never becomes /0', () => {
+  const v4 = ['172.17.0.1/', '172.17.0.1/ ', '172.17.0.1/abc', '172.17.0.1/33', '172.17.0.1/-1', '172.17.0.1/+8', '172.17.0.1/8.0', '172.17.0.1/0x8', '172.17.0.1/8/0'];
+  const v6 = ['::1/', '::1/ ', '::1/abc', '::1/129', '::1/1e2'];
+  for (const entry of [...v4, ...v6]) {
+    const { list, dropped } = parseProxyEntries(entry);
+    assert.deepEqual(dropped, [entry.trim()], `${entry} is dropped`);
+    assert.equal(list.check('198.51.100.7', 'ipv4'), false, `${entry} trusts no stranger`);
+    assert.equal(list.check('2001:db8::7', 'ipv6'), false, `${entry} trusts no stranger`);
+  }
+  // Valid prefixes still work, at both ends of the range.
+  assert.equal(parseProxyList('10.0.0.0/8').check('10.9.9.9', 'ipv4'), true);
+  assert.equal(parseProxyList('10.0.0.1/32').check('10.0.0.2', 'ipv4'), false);
+  assert.equal(parseProxyList('fd00::/8').check('fd12::1', 'ipv6'), true);
+  assert.equal(parseProxyList('::1/128').check('::1', 'ipv6'), true);
+});
+
+test('startup names every dropped trusted-proxy entry', () => {
+  const { warnings, errors } = edgeStartupCheck({ ENGINE_TRUSTED_PROXIES: '127.0.0.1, 172.17.0.1/, ::1/129, not-an-ip' });
+  assert.deepEqual(errors, []);
+  for (const entry of ['172.17.0.1/', '::1/129', 'not-an-ip']) assert.ok(warnings.some((w) => w.includes(`"${entry}"`)), entry);
+  assert.equal(warnings.length, 3);
+  assert.deepEqual(edgeStartupCheck({}).warnings, []);
 });
 
 test('Origin allowlist: built-ins always, the seat origin derived, extras from env, never a wildcard', () => {

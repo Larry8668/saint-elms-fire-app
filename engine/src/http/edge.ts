@@ -62,23 +62,36 @@ const normalizeIp = (address: string): string => {
   return mapped ?? address;
 };
 
-/** Parses `ip` and `ip/prefix` entries; malformed ones are dropped rather than widening the set. */
-export function parseProxyList(raw: string): BlockList {
+/**
+ * Parses `ip` and `ip/prefix` entries; malformed ones are dropped rather than widening the
+ * set, and named in `dropped` so startup can say so. The prefix must be 1-3 digits inside
+ * the family's range: `Number('')` is 0, so a lenient parse would turn `10.0.0.1/` into /0.
+ */
+export function parseProxyEntries(raw: string): { list: BlockList; dropped: string[] } {
   const list = new BlockList();
+  const dropped: string[] = [];
   for (const entry of raw.split(',').map((e) => e.trim()).filter(Boolean)) {
-    const [address, prefix] = entry.split('/');
-    const family = isIP(address ?? '');
-    if (!family) continue;
-    const type = family === 4 ? 'ipv4' : 'ipv6';
-    if (prefix === undefined) {
-      list.addAddress(address!, type);
+    const parts = entry.split('/');
+    const address = parts[0]!;
+    const family = isIP(address);
+    if (!family || parts.length > 2) {
+      dropped.push(entry);
       continue;
     }
-    const bits = Number(prefix);
-    if (Number.isInteger(bits) && bits >= 0 && bits <= (family === 4 ? 32 : 128)) list.addSubnet(address!, bits, type);
+    const type = family === 4 ? 'ipv4' : 'ipv6';
+    if (parts.length === 1) {
+      list.addAddress(address, type);
+      continue;
+    }
+    const prefix = parts[1]!;
+    const bits = /^\d{1,3}$/.test(prefix) ? Number(prefix) : NaN;
+    if (bits >= 0 && bits <= (family === 4 ? 32 : 128)) list.addSubnet(address, bits, type);
+    else dropped.push(entry);
   }
-  return list;
+  return { list, dropped };
 }
+
+export const parseProxyList = (raw: string): BlockList => parseProxyEntries(raw).list;
 
 const listed = (list: BlockList, address: string | null): boolean => {
   if (!address) return false;
@@ -146,4 +159,21 @@ export function edgePolicy(env: NodeJS.ProcessEnv = process.env): EdgePolicy {
     },
     scheme: (c) => (viaProxy(c) && lastEntry(c.req.header('x-forwarded-proto'))?.toLowerCase() === 'https' ? 'https' : 'http'),
   };
+}
+
+export interface EdgeStartupCheck {
+  /** Configurations that would fail open; the engine refuses to start on any of these. */
+  errors: string[];
+  warnings: string[];
+}
+
+/** Read once at boot: what the edge env would do, said out loud before the first request. */
+export function edgeStartupCheck(env: NodeJS.ProcessEnv = process.env): EdgeStartupCheck {
+  const errors: string[] = [];
+  const warnings: string[] = [];
+  const proxiesRaw = env.ENGINE_TRUSTED_PROXIES?.trim();
+  if (proxiesRaw) {
+    for (const entry of parseProxyEntries(proxiesRaw).dropped) warnings.push(`ENGINE_TRUSTED_PROXIES entry "${entry}" is malformed and was dropped.`);
+  }
+  return { errors, warnings };
 }
