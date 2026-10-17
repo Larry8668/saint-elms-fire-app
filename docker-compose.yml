@@ -98,7 +98,9 @@ services:
       # The port is published on host loopback only, so a direct caller arrives from the
       # Docker bridge gateway: count it as this device (profile picker, offline unlock).
       # Without this — or ENGINE_PUBLIC_HOST — a non-loopback bind refuses to start.
-      ENGINE_DEVICE_PEERS: ${ENGINE_DEVICE_PEERS:-172.16.0.0/12,192.168.0.0/16}
+      # Default is Docker's bridge range only. Colima/Docker Desktop setups whose bridge is
+      # on 192.168.x can set ENGINE_DEVICE_PEERS explicitly in .env (e.g. 192.168.0.0/16).
+      ENGINE_DEVICE_PEERS: ${ENGINE_DEVICE_PEERS:-172.16.0.0/12}
       ENGINE_DATA_DIR: /data
       UNI_SERVER_URL: http://uni:4200
       SEARXNG_URL: http://searxng:8080
@@ -119,6 +121,30 @@ services:
       retries: 5
     depends_on:
       uni: { condition: service_healthy }
+
+  gateway:
+    # Central model gateway (docs/model-gateway.md): authenticated, load-balanced proxy in
+    # front of Ollama/vLLM workers. Opt-in: `docker compose --profile gateway up -d gateway`.
+    # The engine above still talks to Ollama directly unless pointed here.
+    <<: *node-service
+    profiles: ["gateway"]
+    build:
+      context: .
+      dockerfile: infra/docker/node-service.Dockerfile
+      args: { SERVICE: "@sef/gateway" }
+    environment:
+      GATEWAY_PORT: "4300"
+      GATEWAY_HOST: 0.0.0.0
+      # Comma list of workers; with `--profile ollama` use http://ollama:11434.
+      GATEWAY_UPSTREAMS: ${GATEWAY_UPSTREAMS:-http://host.docker.internal:11434}
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    ports: ["127.0.0.1:4300:4300"]
+    healthcheck:
+      test: ["CMD", "node", "-e", "fetch('http://127.0.0.1:4300/health').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"]
+      interval: 15s
+      timeout: 5s
+      retries: 5
 
   minio:
     # S3-compatible object store for vault sync (docs/object-store.md). Opt-in (`pnpm store:up`);

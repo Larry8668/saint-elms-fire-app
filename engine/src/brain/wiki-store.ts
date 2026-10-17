@@ -20,6 +20,7 @@ import {
 import { errorFields, log } from '../config';
 import { readBytes, readJson, readText, writeFileAtomic, writeFileExclusive } from '../lib/fs';
 import { sha256Hex } from '../lib/hash';
+import { syncHooks } from '../sync/hooks';
 import { deriveGrowthEvents } from './growth';
 import { renderIndex, type IndexEntry } from './index-format';
 import { recentLogEntries, renderLogEntry } from './log-format';
@@ -354,7 +355,9 @@ export class WikiStore {
     const wanted = revision ?? record.revision;
     const entry = manifest.manifest?.sources[safeId];
     const relativePath = entry && entry.revision === wanted ? entry.path : rawRelativePath(safeId, wanted, record.mediaType);
-    const bytes = await readBytes(vaultPath(this.root, relativePath));
+    const target = vaultPath(this.root, relativePath);
+    // A session VM restores media as a stub; the first read fetches it (vault sync, PR-41b).
+    const bytes = (await readBytes(target)) ?? ((await syncHooks.materialize(target)) ? await readBytes(target) : null);
     if (!bytes) return null;
     if (sha256Hex(bytes) !== record.sha256) {
       throw new VaultIntegrityError(`Source ${safeId} does not match the hash recorded for revision ${wanted}.`);
@@ -614,6 +617,7 @@ export class WikiStore {
 
   async writeJob(job: WikiJob): Promise<void> {
     await writeJob(this.root, job);
+    syncHooks.written(this.root);
   }
 
   readJob(id: string): Promise<WikiJob | null> {
@@ -783,6 +787,7 @@ export class WikiStore {
       throw error;
     }
     await completeJournal(this.root, journal.id);
+    syncHooks.written(this.root);
     return journal.id;
   }
 }

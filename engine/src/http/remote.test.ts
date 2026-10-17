@@ -74,6 +74,7 @@ test('unauthenticated health is liveness only; the detail needs a session', asyn
   assert.equal(live.status, 200);
   const liveBody = (await live.json()) as { ok: boolean; engine: string; uni: object };
   // Exactly these keys, and the uni object is a bare boolean: no url, version, model, host or error text.
+  // A session VM with vault sync on adds one more, `sync: { state }` (internal-sync.test.ts); off, never.
   assert.deepEqual(Object.keys(liveBody).sort(), ['engine', 'ok', 'uni']);
   assert.deepEqual(liveBody.uni, { reachable: false });
 

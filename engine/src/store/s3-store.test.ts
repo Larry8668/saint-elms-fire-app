@@ -59,3 +59,15 @@ test('list decodes url-encoded keys and XML entities, and returns the continuati
   assert.deepEqual(page.items, [{ key: 'vaults/a/files/café & té.md', size: 12, etag: 'abc', lastModified: new Date('2026-10-17T10:00:00.000Z') }]);
   assert.ok(seen.at(-1)?.includes('encoding-type=url') && seen.at(-1)?.includes('max-keys=1'));
 });
+
+test('ifMatch sends a quoted If-Match, and a 404 under it is a lost compare-and-swap', async () => {
+  let ifMatch: string | undefined;
+  handle = (req, res) => {
+    ifMatch = req.headers['if-match'] as string | undefined;
+    xmlError(404, 'NoSuchKey')(req, res);
+  };
+  await assert.rejects(store.put('vaults/a/manifest.json', '{}', { ifMatch: 'abc123' }), PreconditionFailedError);
+  assert.equal(ifMatch, '"abc123"');
+  handle = xmlError(404, 'NoSuchKey');
+  await assert.rejects(store.put('vaults/a/manifest.json', '{}'), (error: ObjectStoreError) => !(error instanceof PreconditionFailedError) && error.status === 404);
+});

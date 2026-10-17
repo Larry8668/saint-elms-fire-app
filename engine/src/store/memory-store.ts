@@ -25,6 +25,7 @@ export class MemoryObjectStore implements ObjectStore {
   async put(key: string, body: ObjectBody, options: PutOptions = {}): Promise<{ etag: string }> {
     assertObjectKey(key);
     if (options.ifNoneMatch === '*' && this.objects.has(key)) throw new PreconditionFailedError(key, 412);
+    if (options.ifMatch !== undefined && this.objects.get(key)?.info.etag !== options.ifMatch) throw new PreconditionFailedError(key, 412);
     const bytes = Uint8Array.from(toBytes(body));
     const etag = createHash('md5').update(bytes).digest('hex');
     this.objects.set(key, {

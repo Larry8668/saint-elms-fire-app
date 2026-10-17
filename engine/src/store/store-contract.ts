@@ -70,6 +70,16 @@ export function objectStoreContract(name: string, makeStore: () => ObjectStore, 
     assert.equal(new TextDecoder().decode(got!.body), '{"first":true}');
   });
 
+  run('ifMatch swaps only while the etag is current, and refuses a missing key', async () => {
+    const key = vaultKey(account, '.meta/cas.json');
+    const first = await store.put(key, '{"v":1}', { ifNoneMatch: '*' });
+    const second = await store.put(key, '{"v":2}', { ifMatch: first.etag });
+    await assert.rejects(store.put(key, '{"v":3}', { ifMatch: first.etag }), PreconditionFailedError);
+    assert.equal(new TextDecoder().decode((await store.get(key))!.body), '{"v":2}');
+    assert.equal((await store.head(key))?.etag, second.etag);
+    await assert.rejects(store.put(vaultKey(account, '.meta/never.json'), 'x', { ifMatch: first.etag }), PreconditionFailedError);
+  });
+
   run('unicode and URL-hostile names round-trip through put, list and get', async () => {
     const paths = ['concepts/naïve café.md', 'raw/数学 ノート.pdf', 'syntheses/a+b=c %20 & <x>.md'];
     for (const rel of paths) await store.put(vaultKey(account, rel), rel);
