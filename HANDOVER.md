@@ -69,11 +69,12 @@ engine/src/
   settings/            per-profile settings store (model roles, SearXNG, thinking)
   uni/                 uni-server client: device grant, entitlement, key trust/pinning
   web/                 SearXNG client (consent-gated Philosopher web queries)
+  store/               S3-compatible object store adapter (MinIO/Spaces) for vault sync — off unless OBJECT_STORE_* is set
   demo/                personas, deterministic seed generator, bootstrap
   models/              role → provider/model resolution
   http/routes/         Hono routes: auth, student (sync, library, chat, sessions, brain, quiz), anchors,
                        logistics, maintenance, shares, sources, vault, wiki, settings…
-docs/                  agentic-layer.md, knowledge-graph.md
+docs/                  agentic-layer.md, knowledge-graph.md, object-store.md
 e2e/                   Playwright suite — real uni :4310 + engine :4311, no mocks (§6)
 server/uni/src/
   routes/              account, auth (legacy bearer + device grant), me, student (catalogue, packages),
@@ -90,7 +91,7 @@ server/uni/src/
   signing.ts           ed25519 course-package signing; keys/ holds the generated key
 packages/shared/src/   contracts shared by all packages: auth, brain, teachers, demo personas, API types
 courseware/            B.Sc. Physics/Maths/Astro programme: semester-<n>/<subject>/<course>/ lessons + university-support/
-infra/                 Dockerfiles and SearXNG config
+infra/                 Dockerfiles, SearXNG config, MinIO bucket bootstrap (minio/)
 scripts/preflight.sh   demo-machine checklist
 ```
 
@@ -103,6 +104,7 @@ pnpm install
 cp .env.example .env     # the demo opts in here (SEED_DEMO/VITE_DEMO_MODE); every other value has a default
 pnpm ollama:pull         # pulls gemma4:e4b + embeddinggemma + shieldgemma:2b (the safety role that screens peer shares)
 pnpm search:up           # SearXNG on :8888 (the Philosopher degrades gracefully without it)
+pnpm store:up            # optional: MinIO on 127.0.0.1:9000, console :9001 (pnpm store:console); see docs/object-store.md
 pnpm dev                 # uni :4200, engine :4100, UI :5173
 pnpm preflight           # green/red checklist before a demo
 ```
@@ -119,7 +121,7 @@ pnpm preflight           # green/red checklist before a demo
 
 Thresholds allow 5% slack, because the OS reports a little under the installed size. Vision stays on an E-model because only those carry the audio encoder that source transcription uses. Caveat: on `26b`/`31b`, keeper and reviewer passes (proposals, quizzes, maintenance) take noticeably longer. That's why the brain moves up a size first and the chat-facing tutor moves last.
 
-**Self-hosted stack:** `pnpm docker:up` runs the uni server, SearXNG and the engine. Add the Ollama container with `docker compose --profile ollama up -d`. The `uni` image target also bakes the hosted surfaces in: the Dockerfile's `web-assets` stage runs `build:portal` and the admin build, and the compose service sets `UNI_PORTAL_DIR`/`UNI_ADMIN_DIR` to the copied output, so `/app` and `/admin` are served by the uni itself — no Vite preview anywhere.
+**Self-hosted stack:** `pnpm docker:up` runs the uni server, SearXNG and the engine. Add the Ollama container with `docker compose --profile ollama up -d`. The `store` profile (`pnpm store:up`) adds MinIO plus a one-shot `minio-init` that creates the versioned `sef-vaults` bucket and a bucket-scoped engine key; nothing uses it yet beyond `pnpm store:check` ([docs/object-store.md](docs/object-store.md)). The `uni` image target also bakes the hosted surfaces in: the Dockerfile's `web-assets` stage runs `build:portal` and the admin build, and the compose service sets `UNI_PORTAL_DIR`/`UNI_ADMIN_DIR` to the copied output, so `/app` and `/admin` are served by the uni itself — no Vite preview anywhere.
 
 **Deploying the uni server, in order:**
 1. Set the real values: `UNI_DATABASE_URL`, `BETTER_AUTH_SECRET` (32+ chars — required in production), `MAIL_SMTP_URL` (a real SMTP relay; production refuses to start account auth without it), `UNI_PUBLIC_URL` (the canonical https origin — production requires https here and in `UNI_TRUSTED_ORIGINS`), `DEMO_PASSWORD` (see below), and `UNI_DATA_DIR`/`KEYS_DIR` for durable state.
