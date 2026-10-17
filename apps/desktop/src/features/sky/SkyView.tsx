@@ -7,6 +7,7 @@ import { Tooltip } from '@/components/ui/overlays';
 import { EmptyState } from '@/components/ui/primitives';
 import { SkyLoading } from './SkyLoading';
 import { ConceptSheet } from '@/features/brain/ConceptSheet';
+import { PlansCard } from '@/features/plans/PlansCard';
 import { KIND_STYLE, LESSON_HEX, ORIGIN_STYLE, starHex, STATUS_STYLE } from '@/lib/brain-style';
 import { cn } from '@/lib/cn';
 import { useNav } from '@/lib/nav';
@@ -159,6 +160,7 @@ function SkyChart({ graph }: { graph: GraphResponse }) {
       <div className="pointer-events-none absolute top-5 left-6 hidden w-[290px] flex-col gap-4 md:flex">
         <Stats graph={graph} />
         <NextUp items={suggestions} selectedId={selectedId} onPick={select} />
+        <PlansCard />
       </div>
 
       <SearchBox graph={graph} className={cn('absolute top-5 w-56 transition-[right] duration-300 sm:w-72', sheetOpen ? 'right-[476px] max-md:hidden' : 'right-6')} onPick={select} />

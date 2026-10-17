@@ -1,4 +1,4 @@
-import { dueInstant, TEACHER_POLICIES, type LogisticsRecord, type TeacherId } from '@sef/shared';
+import { dueInstant, TEACHER_POLICIES, type LogisticsRecord, type PlanStepKind, type TeacherId } from '@sef/shared';
 import type { QuestionPage } from '../signals/detectors';
 
 const DAY = 86_400_000;
@@ -7,6 +7,10 @@ const NOTICE_WINDOW_MS = 14 * DAY;
 const STALE_CONCEPT_MS = 21 * DAY;
 const DEFAULT_TTL_MS = DAY;
 const MAX_UNSTARTED_LESSONS = 3;
+const FEED_SEED_WINDOW_MS = 7 * DAY;
+const MAX_FEED_SEEDS = 3;
+const MAX_PLAN_SEEDS = 3;
+const PLAN_DEADLINE_SOON_MS = 3 * DAY;
 
 export type KnowledgeClass = (typeof TEACHER_POLICIES)[TeacherId]['knowledge'][number];
 
@@ -19,6 +23,8 @@ export const SEED_KINDS = [
   'open_question',
   'synthesis_link',
   'missing_connection',
+  'feed_item',
+  'plan_step',
 ] as const;
 export type SeedKind = (typeof SEED_KINDS)[number];
 
@@ -36,6 +42,8 @@ export const SEED_SCOPE: Record<SeedKind, Partial<Record<TeacherId, KnowledgeCla
   open_question: { guide: 'course_wiki_claims', philosopher: 'anchored_wiki' },
   synthesis_link: { philosopher: 'anchored_wiki' },
   missing_connection: { philosopher: 'anchored_wiki' },
+  feed_item: { philosopher: 'consented_web' },
+  plan_step: { guide: 'learner_evidence' },
 };
 
 /** A deterministic reason to suggest something. Wording is derived from `slots` only. */
@@ -51,6 +59,10 @@ export interface Seed {
   /** Epoch ms of the underlying activity, for recency ranking. */
   at: number;
   expiresAt: number;
+  /** Set on outside text (feed headlines): it reaches a model only when the student clicks it. */
+  draftable?: false;
+  /** Picks the template wording within a kind; not an entity, so never checked against drafts. */
+  variant?: PlanStepKind;
 }
 
 export interface ConceptSummary {
@@ -87,6 +99,8 @@ export interface SeedInputs {
   pages?: PageSummary[];
   questions?: QuestionPage[];
   findings?: Array<{ id: string; kind: string; pageIds: string[] }>;
+  feedItems?: Array<{ id: string; feedId: string; title: string; fetchedAt: string }>;
+  planSteps?: Array<{ planId: string; goal: string; deadlineAt: string | null; step: { id: string; kind: PlanStepKind; subject: string; entityRefs: string[] } }>;
 }
 
 const parsed = (iso: string) => {
@@ -196,8 +210,58 @@ function connectionSeeds({ pages = [], findings = [], now }: SeedInputs): Seed[]
   return [...syntheses, ...missing];
 }
 
+function feedSeeds({ feedItems = [], now }: SeedInputs): Seed[] {
+  const t = now.getTime();
+  return feedItems
+    .filter((item) => t - parsed(item.fetchedAt) <= FEED_SEED_WINDOW_MS)
+    .slice(0, MAX_FEED_SEEDS)
+    .map((item) => ({
+      key: `feed_item:${item.id}`,
+      kind: 'feed_item' as const,
+      slots: { title: item.title },
+      refs: [`feed:${item.feedId}`, `feed_item:${item.id}`],
+      why: 'A recent headline from a subject feed you follow',
+      urgency: 0.2,
+      at: parsed(item.fetchedAt),
+      expiresAt: parsed(item.fetchedAt) + FEED_SEED_WINDOW_MS,
+      draftable: false as const,
+    }));
+}
+
+/** The next pending step of each active plan; signal steps are left to the attention list. */
+function planSeeds({ planSteps = [], now }: SeedInputs): Seed[] {
+  const t = now.getTime();
+  const nextPerPlan = new Map<string, NonNullable<SeedInputs['planSteps']>[number]>();
+  for (const entry of planSteps) {
+    if (entry.step.kind !== 'resolve_signal' && !nextPerPlan.has(entry.planId)) nextPerPlan.set(entry.planId, entry);
+  }
+  return [...nextPerPlan.values()].slice(0, MAX_PLAN_SEEDS).map(({ planId, goal, deadlineAt, step }) => {
+    const due = deadlineAt ? parsed(deadlineAt) : 0;
+    const soon = due > t && due - t <= PLAN_DEADLINE_SOON_MS;
+    return {
+      key: `plan_step:${planId}:${step.id}`,
+      kind: 'plan_step' as const,
+      variant: step.kind,
+      slots: { subject: step.subject },
+      refs: [`plan:${planId}`, ...step.entityRefs],
+      why: `The next step of your plan “${goal.length > 80 ? `${goal.slice(0, 79)}…` : goal}”`,
+      urgency: soon ? 0.9 : 0.7,
+      at: t,
+      expiresAt: t + DEFAULT_TTL_MS,
+    };
+  });
+}
+
 export function extractSeeds(inputs: SeedInputs): Seed[] {
-  return [...logisticsSeeds(inputs), ...conceptSeeds(inputs), ...lessonSeeds(inputs), ...questionSeeds(inputs), ...connectionSeeds(inputs)];
+  return [
+    ...logisticsSeeds(inputs),
+    ...conceptSeeds(inputs),
+    ...lessonSeeds(inputs),
+    ...questionSeeds(inputs),
+    ...connectionSeeds(inputs),
+    ...feedSeeds(inputs),
+    ...planSeeds(inputs),
+  ];
 }
 
 /** The seeds this teacher may suggest from: scoped by kind, then re-checked against its policy. */

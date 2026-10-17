@@ -19,3 +19,6 @@ export * from './portability';
 export * from './signals';
 export * from './suggest';
 export * from './seat';
+export * from './feeds';
+export * from './plans';
+export * from './metrics';

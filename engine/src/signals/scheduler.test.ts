@@ -35,3 +35,19 @@ test('stop() ends the timer: no evaluations after it', async () => {
   await new Promise((resolve) => setTimeout(resolve, 25));
   assert.deepEqual(calls, []);
 });
+
+test('feeds are polled before evaluation, and a failing poll never blocks signals', async () => {
+  const calls: string[] = [];
+  const ws: OpenWorkspace = {
+    profile: { id: 'a' },
+    feeds: {
+      poll: async () => {
+        calls.push('poll');
+        throw new Error('offline');
+      },
+    },
+    signals: { evaluate: async () => void calls.push('evaluate') },
+  };
+  assert.deepEqual(await runSignalTick(async () => [ws]), { evaluated: 1, failed: 0 });
+  assert.deepEqual(calls, ['poll', 'evaluate']);
+});

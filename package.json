@@ -20,6 +20,7 @@
     "build:hosted": "pnpm --filter @sef/desktop build:portal && pnpm --filter @sef/admin build",
     "typecheck": "pnpm -r typecheck",
     "test": "pnpm -r test",
+    "eval": "pnpm --filter @sef/engine eval",
     "preflight": "bash scripts/preflight.sh",
     "docker:up": "docker compose up -d --build",
     "docker:down": "docker compose down",
