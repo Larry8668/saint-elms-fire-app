@@ -2,7 +2,7 @@ import { CONTRACT_VERSION, MAX_SUGGESTIONS, type ProactivitySettings, type Sugge
 import { errorFields, log } from '../config';
 import { sha256Hex } from '../lib/hash';
 import { acceptDraft, type Rephrase } from './draft';
-import { rank } from './score';
+import { diversify, rank } from './score';
 import { extractSeeds, seedsFor, type Seed, type SeedInputs } from './seeds';
 import type { SuggestionStore } from './store';
 import { templateText } from './templates';
@@ -53,7 +53,7 @@ export class SuggestionService {
     const [inputs, turns] = await Promise.all([this.deps.inputs(), this.deps.recentTurns(teacher).catch(() => [])]);
     const all = extractSeeds({ ...inputs, now });
     const live = (seed: Seed) => seed.expiresAt > now.getTime();
-    const chosen = rank(seedsFor(teacher, all).filter(live), now, turns).slice(0, MAX_SUGGESTIONS);
+    const chosen = diversify(rank(seedsFor(teacher, all).filter(live), now, turns), MAX_SUGGESTIONS);
     const drafted = settings.draftedAdvice && this.deps.rephrase !== undefined;
     const print = fingerprint(teacher, drafted, chosen);
 

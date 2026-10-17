@@ -21,6 +21,25 @@ export function score(seed: Seed, now: Date, recentTurns: readonly string[]): nu
   return seed.urgency * 3 + recency - (recentlyAsked(seed, recentTurns) ? NOVELTY_PENALTY : 0);
 }
 
+/**
+ * Takes `limit` seeds in rank order with at most `perKind` of any one kind, so five weak
+ * concepts cannot crowd out everything else; skipped seeds backfill only if the bank is short.
+ */
+export function diversify(ranked: Seed[], limit: number, perKind = 2): Seed[] {
+  const counts = new Map<string, number>();
+  const picked: Seed[] = [];
+  const skipped: Seed[] = [];
+  for (const seed of ranked) {
+    const n = counts.get(seed.kind) ?? 0;
+    if (n < perKind) {
+      counts.set(seed.kind, n + 1);
+      picked.push(seed);
+    } else skipped.push(seed);
+  }
+  const order = new Map(ranked.map((seed, i) => [seed.key, i]));
+  return [...picked.slice(0, limit), ...skipped.slice(0, Math.max(0, limit - picked.length))].sort((a, b) => order.get(a.key)! - order.get(b.key)!);
+}
+
 /** Highest score first; the key breaks ties so the order is fully deterministic. */
 export function rank(seeds: Seed[], now: Date, recentTurns: readonly string[]): Seed[] {
   return seeds
