@@ -1,8 +1,9 @@
 /**
  * The onboarding shell is a small state machine over account creation and admission.
  * `admission` is the only signed-in state; every other mode is reachable without a session.
+ * (A signed-in demo student is held apart, in PortalApp, because it has no account session.)
  */
-export type PortalMode = 'sign-in' | 'register' | 'magic-link' | 'check-email' | 'recover' | 'reset-password' | 'admission';
+export type PortalMode = 'sign-in' | 'demo-sign-in' | 'register' | 'magic-link' | 'check-email' | 'recover' | 'reset-password' | 'admission';
 
 /** What the server put in the URL after the student clicked an emailed link. */
 export type Landing = 'verified' | 'link-error';

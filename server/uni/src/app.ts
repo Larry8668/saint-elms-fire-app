@@ -57,8 +57,10 @@ export function createApp(deps: UniDeps) {
     return c.json({ error: 'internal_error' }, 500);
   });
 
+  // `demo` only says whether demo students are seeded (SEED_DEMO), so the portal knows to offer
+  // their sign-in. It never carries the password.
   app.get('/health', (c) =>
-    c.json({ ok: true, service: 'uni', issuer: config.issuer, courses: deps.courseware.courses.size }),
+    c.json({ ok: true, service: 'uni', issuer: config.issuer, courses: deps.courseware.courses.size, demo: config.seedDemo }),
   );
 
   /**
