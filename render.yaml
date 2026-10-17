@@ -20,7 +20,8 @@ services:
     dockerfilePath: ./infra/docker/node-service.Dockerfile
     dockerContext: .
     # The uni does not migrate on boot; migrations are idempotent, so run them before every start.
-    dockerCommand: sh -c "pnpm --filter @sef/uni-server db:migrate && exec pnpm --filter @sef/uni-server start"
+    # (Render does not run dockerCommand through a shell, hence a package script, not `sh -c`.)
+    dockerCommand: pnpm --filter @sef/uni-server start:migrate
     healthCheckPath: /ready
     disk:
       name: uni-data # signing keys, legacy accounts, releases, shares, audit
