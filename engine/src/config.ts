@@ -44,6 +44,62 @@ export const profilePaths = (profileId: string, rootDir = dataDir): ProfilePaths
   };
 };
 
+/** S3-compatible object storage for vault sync (docs/object-store.md): MinIO locally, Spaces later. */
+export interface ObjectStoreConfig {
+  endpoint: string;
+  region: string;
+  bucket: string;
+  accessKeyId: string;
+  secretAccessKey: string;
+  /** `bucket` in the path (MinIO) instead of the host name (Spaces, AWS). */
+  forcePathStyle: boolean;
+}
+
+const BUCKET_NAME = /^[a-z0-9][a-z0-9.-]{1,61}[a-z0-9]$/;
+
+/**
+ * Off (null) unless both OBJECT_STORE_ENDPOINT and OBJECT_STORE_BUCKET are set, so the engine
+ * behaves exactly as before. Once switched on, a half-configured store fails boot, never later.
+ */
+export function parseObjectStoreConfig(environment: NodeJS.ProcessEnv = process.env): ObjectStoreConfig | null {
+  const read = (name: string) => environment[name]?.trim() ?? '';
+  const endpoint = read('OBJECT_STORE_ENDPOINT');
+  const bucket = read('OBJECT_STORE_BUCKET');
+  if (!endpoint && !bucket) return null;
+  const fail = (message: string): never => {
+    throw new Error(`Object store config: ${message}`);
+  };
+  if (!endpoint || !bucket) fail('set both OBJECT_STORE_ENDPOINT and OBJECT_STORE_BUCKET, or neither');
+  let url: URL;
+  try {
+    url = new URL(endpoint);
+  } catch {
+    return fail('OBJECT_STORE_ENDPOINT must be an http(s) URL');
+  }
+  if (url.pathname !== '/' || url.search || url.username || url.password) {
+    fail('OBJECT_STORE_ENDPOINT must be an origin only, without a path, query or credentials');
+  }
+  // Plain http only where traffic cannot leave the machine or the compose network.
+  const privateHost = ['localhost', '127.0.0.1', '[::1]'].includes(url.hostname) || !url.hostname.includes('.');
+  if (url.protocol !== 'https:' && !(url.protocol === 'http:' && privateHost)) {
+    fail('OBJECT_STORE_ENDPOINT must use https (http is allowed only for loopback or compose service names)');
+  }
+  if (!BUCKET_NAME.test(bucket) || bucket.includes('..')) fail('OBJECT_STORE_BUCKET is not a valid bucket name');
+  const accessKeyId = read('OBJECT_STORE_ACCESS_KEY');
+  const secretAccessKey = read('OBJECT_STORE_SECRET_KEY');
+  if (!accessKeyId || !secretAccessKey) fail('OBJECT_STORE_ACCESS_KEY and OBJECT_STORE_SECRET_KEY are required');
+  const pathStyle = read('OBJECT_STORE_FORCE_PATH_STYLE').toLowerCase() || 'true';
+  if (pathStyle !== 'true' && pathStyle !== 'false') fail('OBJECT_STORE_FORCE_PATH_STYLE must be true or false');
+  return {
+    endpoint: url.origin,
+    region: read('OBJECT_STORE_REGION') || 'us-east-1',
+    bucket,
+    accessKeyId,
+    secretAccessKey,
+    forcePathStyle: pathStyle === 'true',
+  };
+}
+
 export const config = {
   port: envPort('ENGINE_PORT', 4100),
   host: env('ENGINE_HOST', '127.0.0.1'),
@@ -75,6 +131,8 @@ export const config = {
     /** The on-device safety model used to screen peer shares — advisory only, never a teacher. */
     safetyModel: env('SAFETY_MODEL', 'shieldgemma:2b'),
   },
+  /** Null (off) by default; nothing but `pnpm store:check` uses it yet. */
+  objectStore: parseObjectStoreConfig(),
 };
 
 export const log = createLogger('engine', process.env.LOG_LEVEL === 'debug');

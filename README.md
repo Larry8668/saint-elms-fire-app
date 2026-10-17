@@ -111,6 +111,7 @@ pnpm test          # node:test suites (uni auth & signing, engine validator, mas
 pnpm preflight     # checks tools, models and services on a demo machine
 pnpm desktop       # Tauri desktop shell (needs Rust)
 pnpm docker:up     # self-hosted stack
+pnpm store:up      # optional: MinIO object store for vault sync (docs/object-store.md)
 ```
 
 Licence: see `LICENSE`.

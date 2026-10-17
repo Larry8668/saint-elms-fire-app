@@ -8,7 +8,8 @@
     "start": "tsx --env-file-if-exists=../.env src/index.ts",
     "typecheck": "tsc --noEmit -p .",
     "test": "node --test --import tsx 'src/**/*.test.ts'",
-    "eval": "tsx src/eval/cli.ts"
+    "eval": "tsx src/eval/cli.ts",
+    "store:check": "tsx --env-file-if-exists=../.env src/store/check.ts"
   },
   "dependencies": {
     "@ai-sdk/anthropic": "^2.0.0",
@@ -17,6 +18,7 @@
     "@hono/node-server": "^1.19.5",
     "@mastra/core": "^1.77.0",
     "@sef/shared": "workspace:*",
+    "aws4fetch": "1.0.20",
     "hono": "^4.10.1",
     "ollama-ai-provider-v2": "^1.5.0",
     "pdfjs-dist": "6.4.299",
