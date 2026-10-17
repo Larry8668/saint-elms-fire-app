@@ -490,9 +490,12 @@ test.describe('release drill — the full student lifecycle', () => {
           claims: Array<{ assertable: boolean; reason?: string; citations: Array<{ sourceId: string }> }>;
         };
         assert.ok(page.missingSourceIds.includes(sourceId), 'an erased source is named as missing, not hidden');
+        // evaluateClaim judges a claim's own status, kind and origin before its citations, so a
+        // live-model compile can legitimately yield these reasons ahead of the missing source.
+        const precedingReasons = new Set(['superseded', 'disputed', 'open_question', 'foreign_origin']);
         for (const claim of page.claims.filter((c) => c.citations.some((citation) => citation.sourceId === sourceId))) {
           assert.equal(claim.assertable, false, 'a claim resting on an erased source is withheld');
-          assert.equal(claim.reason, 'unresolved_source');
+          if (!precedingReasons.has(claim.reason ?? '')) assert.equal(claim.reason, 'unresolved_source');
         }
       } else {
         test.info().annotations.push({ type: 'note', description: 'no compiled page cites the ingested note — dependent-erasure check skipped' });
