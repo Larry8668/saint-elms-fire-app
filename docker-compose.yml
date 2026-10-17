@@ -95,6 +95,10 @@ services:
     environment:
       ENGINE_PORT: "4100"
       ENGINE_HOST: 0.0.0.0
+      # The port is published on host loopback only, so a direct caller arrives from the
+      # Docker bridge gateway: count it as this device (profile picker, offline unlock).
+      # Without this — or ENGINE_PUBLIC_HOST — a non-loopback bind refuses to start.
+      ENGINE_DEVICE_PEERS: ${ENGINE_DEVICE_PEERS:-172.16.0.0/12,192.168.0.0/16}
       ENGINE_DATA_DIR: /data
       UNI_SERVER_URL: http://uni:4200
       SEARXNG_URL: http://searxng:8080

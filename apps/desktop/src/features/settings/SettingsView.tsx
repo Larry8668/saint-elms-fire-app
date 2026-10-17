@@ -89,7 +89,7 @@ export function SettingsView() {
                   key={role}
                   role={role}
                   settings={form}
-                  reachable={health.data?.models.find((m) => m.role === role)}
+                  reachable={health.data?.models?.find((m) => m.role === role)}
                   recommended={suggestionFor(role, capability.data, form)}
                   onChange={(patch) => set('roles', { ...form.roles, [role]: { ...form.roles[role], ...patch } })}
                 />

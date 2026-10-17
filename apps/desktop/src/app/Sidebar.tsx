@@ -24,7 +24,7 @@ export function Sidebar({ onOpenAttention }: { onOpenAttention: () => void }) {
   const attention = useAttention();
   const newItems = attention.data?.items.filter((item) => item.state === 'new').length ?? 0;
   const openQuestions = lint.data?.filter((f) => f.kind === 'misconception').length ?? 0;
-  const modelsOk = health.data ? health.data.models.every((m) => m.reachable) : undefined;
+  const modelsOk = health.data?.models ? health.data.models.every((m) => m.reachable) : undefined;
 
   return (
     <aside className="relative z-30 flex h-full w-[76px] shrink-0 flex-col items-center border-r border-white/[0.06] bg-night-950/70 py-4 backdrop-blur-xl">
@@ -45,9 +45,9 @@ export function Sidebar({ onOpenAttention }: { onOpenAttention: () => void }) {
           content={
             <div className="space-y-1 text-xs">
               <Row label="Engine" ok={health.data?.ok ?? (health.isError ? false : undefined)} />
-              <Row label="University" ok={health.data?.uni.reachable} />
-              {health.data?.models.map((m) => <Row key={m.role} label={`${m.role} · ${m.model}`} ok={m.reachable} />)}
-              <Row label="Web search" ok={health.data?.web.reachable} />
+              <Row label="University" ok={health.data?.uni?.reachable} />
+              {health.data?.models?.map((m) => <Row key={m.role} label={`${m.role} · ${m.model}`} ok={m.reachable} />)}
+              <Row label="Web search" ok={health.data?.web?.reachable} />
             </div>
           }
         >

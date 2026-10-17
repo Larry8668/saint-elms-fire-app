@@ -5,10 +5,11 @@ import { toast } from 'sonner';
 import type { DevicePollResult, DeviceProfile, DeviceSignInStart } from '@sef/shared';
 import { Button } from '@/components/ui/button';
 import { Label } from '@/components/ui/primitives';
-import { api } from '@/lib/api';
+import { api, EngineError } from '@/lib/api';
 import { log } from '@/lib/log';
 import { useSession } from '@/lib/session';
 import { formatCountdown, initialPollInterval, nextPollIntervalSeconds, outcomeMessage, type GrantOutcome } from './device-grant';
+import { uniOfflineMessage } from './uni-offline';
 
 /**
  * First-time university sign-in. The engine opens a device grant; the person approves it
@@ -58,7 +59,7 @@ export function DeviceSignInCard({ uniOffline }: { uniOffline: boolean }) {
       {uniOffline && (
         <div className="flex gap-2.5 rounded-xl border border-ember-400/25 bg-ember-500/[0.08] p-3 text-[12.5px] leading-5 text-ember-300">
           <ShieldAlert className="mt-0.5 size-3.5 shrink-0" />
-          <span>The university server is unreachable, so first-time sign-in is unavailable. Students who signed in here before can still unlock offline.</span>
+          <span>{uniOfflineMessage(known.length > 0)}</span>
         </div>
       )}
 
@@ -115,6 +116,12 @@ function DeviceGrantPending({ grant, poll, onCancel }: { grant: DeviceSignInStar
         }
       } catch (err) {
         if (stopped) return;
+        if (err instanceof EngineError && err.code === 'seat_not_yours') {
+          stopped = true;
+          clearInterval(countdown);
+          setOutcome('seat_not_yours');
+          return;
+        }
         log.warn('device_poll_failed', { error: String(err) });
         setMessage('Lost contact with the university server. Still trying…');
       }

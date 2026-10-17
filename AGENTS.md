@@ -17,6 +17,7 @@ Start here if you are a coding agent (or a new developer) picking up Saint Elms 
 | [HANDOVER.md](HANDOVER.md) | Runbook: setup, demo accounts, demo script, data locations, common tasks, troubleshooting |
 | [docs/agentic-layer.md](docs/agentic-layer.md) | Teachers, tools, the chat-turn harness, source attribution, chat history, model providers |
 | [docs/knowledge-graph.md](docs/knowledge-graph.md) | Course sky, second brain, mastery rules, the brain-update pipeline, the Sky view |
+| [docs/hosted-seat.md](docs/hosted-seat.md) | Running the engine on a public URL: env, host/origin gates, rate limits, sessions, served UI, threat notes |
 | [README.md](README.md) | Pitch, architecture diagram, hackathon tracks |
 
 ## Commands

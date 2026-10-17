@@ -12,6 +12,7 @@ import { useHealth } from '@/lib/queries';
 import { useSession } from '@/lib/session';
 import { UNI_URL } from '@/lib/uni-url';
 import { DeviceSignInCard } from './DeviceSignInCard';
+import { uniOfflineFrom } from './uni-offline';
 
 const YEAR_LABEL = ['First-year', 'Second-year', 'Third-year'];
 
@@ -32,7 +33,8 @@ const PROMISES = [
 export function SignInView() {
   const health = useHealth();
   const engineDown = health.isError;
-  const uniOffline = health.data ? !health.data.uni.reachable : false;
+  // Signed out, public health still carries the bare uni boolean; that drives the banner and Continue.
+  const uniOffline = uniOfflineFrom(health.data);
 
   return (
     <div className="sky-backdrop relative flex min-h-screen items-center justify-center overflow-y-auto px-6 py-12">
