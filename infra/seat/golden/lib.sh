@@ -16,6 +16,7 @@ for tool in curl jq uuidgen; do command -v "$tool" >/dev/null || { echo "$tool i
 
 RESP=$(mktemp)
 trap 'rm -f "$RESP"' EXIT
+trap 'log "stopped at line $LINENO (exit $?)"' ERR
 STATUS=000
 
 log() { printf '%s %s\n' "$(date -u +%H:%M:%S)" "$*" >&2; }
@@ -31,9 +32,10 @@ state() {
   if (($# == 3)); then
     { grep -v "^$key=" "$file" 2>/dev/null || true; printf '%s=%s\n' "$key" "$3"; } >"$file.tmp"
     mv -f "$file.tmp" "$file"
-  else
-    sed -n "s/^$key=//p" "$file" 2>/dev/null | tail -n 1
+  elif [[ -f $file ]]; then
+    sed -n "s/^$key=//p" "$file" | tail -n 1
   fi
+  return 0
 }
 
 # api METHOD PATH [JSON] [IDEMPOTENCY-KEY]: body in $RESP, HTTP status in $STATUS (000 = no answer).
@@ -165,7 +167,7 @@ wait_running() {
     stopped) machine_op "$mid" start "$file" ;;
     suspended) machine_op "$mid" resume "$file" ;;
   esac
-  until box_exec "$mid" true >/dev/null 2>&1; do
+  until api POST "/v1/machines/$mid/exec" '{"cmd":"true","timeoutSeconds":10}' && [[ $STATUS == 200 ]]; do
     (($(now) < deadline)) || die "machine $mid is not answering exec"
     sleep 2
   done

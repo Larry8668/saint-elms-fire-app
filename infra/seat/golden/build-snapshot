@@ -45,7 +45,7 @@ log "building the golden image for $COMMIT"
 MID=$(state $FILE MACHINE)
 if [[ -z $MID ]]; then
   ids=$(list_by_app $APP)
-  (($(grep -c . <<<"$ids") <= 1)) || die "several $APP machines exist; delete the extras first"
+  (($(grep -c . <<<"$ids" || true) <= 1)) || die "several $APP machines exist; delete the extras first"
   MID=$ids
 fi
 if [[ -z $MID ]]; then
