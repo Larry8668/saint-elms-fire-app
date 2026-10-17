@@ -22,19 +22,26 @@ export interface SettingsSource extends SettingsReader {
 /** The provider a hosted session's gateway takes over; its label already reads "University model". */
 export const GATEWAY_PROVIDER_ID = 'uni';
 
+/** True for the provider that is the operator's model gateway on this engine (none on a laptop). */
+export const isGatewayProvider = (provider: Pick<ProviderConfig, 'id'>, gateway: ModelGateway | null = config.modelGateway): boolean =>
+  Boolean(gateway) && provider.id === GATEWAY_PROVIDER_ID;
+
 /**
  * On a hosted session (MODEL_GATEWAY_URL set) the `uni` provider is the operator's model
- * gateway. Its URL and token come from the environment on every read and are never written to
- * disk, so a rotated per-session token or a moved gateway takes effect on the next engine start.
+ * gateway, spoken to over Ollama's native API, so every role keeps the tuning a local Ollama
+ * gets (`num_ctx`, `think`, the `format` grammar). Its URL and token come from the environment
+ * on every read and are never written to disk, so a rotated per-session token or a moved
+ * gateway takes effect on the next engine start. The token travels as the provider's apiKey,
+ * which native Ollama calls send as `Authorization: Bearer` (see `ollamaHeaders`).
  */
 export function withGateway<T extends { providers: ProviderConfig[]; roles?: StoredSettings['roles'] }>(
   settings: T,
   gateway: ModelGateway | null = config.modelGateway,
 ): T {
   if (!gateway) return settings;
-  const managed = (p: ProviderConfig): ProviderConfig => ({ ...p, kind: 'openai-compatible', baseUrl: gateway.url, apiKey: gateway.token });
+  const managed = (p: ProviderConfig): ProviderConfig => ({ ...p, kind: 'ollama', baseUrl: gateway.url, apiKey: gateway.token });
   const providers = settings.providers.map((p) => (p.id === GATEWAY_PROVIDER_ID ? managed(p) : p));
-  if (!providers.some((p) => p.id === GATEWAY_PROVIDER_ID)) providers.push(managed({ id: GATEWAY_PROVIDER_ID, kind: 'openai-compatible', label: 'University model' }));
+  if (!providers.some((p) => p.id === GATEWAY_PROVIDER_ID)) providers.push(managed({ id: GATEWAY_PROVIDER_ID, kind: 'ollama', label: 'University model' }));
   // A session box runs no Ollama: a role stored on it (a restored profile, say) uses the gateway.
   const roles = settings.roles
     ? (Object.fromEntries(
@@ -54,7 +61,8 @@ function defaultSettings(): StoredSettings {
     thinking: true,
     providers: [
       { id: 'ollama', kind: 'ollama', label: 'Ollama (on this device)', baseUrl: d.ollamaUrl },
-      { id: GATEWAY_PROVIDER_ID, kind: 'openai-compatible', label: 'University model', baseUrl: config.modelGateway?.url ?? 'http://localhost:11434/v1' },
+      // What a laptop stores; on a hosted session withGateway() overlays the gateway on every read.
+      { id: GATEWAY_PROVIDER_ID, kind: 'openai-compatible', label: 'University model', baseUrl: 'http://localhost:11434/v1' },
     ],
     roles: {
       tutor: { provider: roleProvider, model: d.tutorModel },

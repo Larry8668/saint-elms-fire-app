@@ -3,7 +3,7 @@ import type { ChatAttachment } from '@sef/shared';
 import { z } from 'zod';
 import { log } from '../config';
 import { parsePartialJson } from '../lib/partial-json';
-import { OLLAMA_OPTIONS, type ResolvedModel } from '../models/registry';
+import { OLLAMA_OPTIONS, ollamaHeaders, type ResolvedModel } from '../models/registry';
 import { imageParts } from './messages';
 
 type MastraTools = ConstructorParameters<typeof Agent>[0]['tools'];
@@ -63,7 +63,7 @@ async function ollamaStructured<T extends z.ZodTypeAny>(req: StructuredRequest<T
   try {
     const res = await fetch(`${base}/api/chat`, {
       method: 'POST',
-      headers: { 'content-type': 'application/json' },
+      headers: { 'content-type': 'application/json', ...ollamaHeaders(req.resolved.provider) },
       signal: abort.signal,
       body: JSON.stringify({
         model: req.resolved.modelId,

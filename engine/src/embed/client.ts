@@ -1,4 +1,5 @@
 import type { ProviderConfig } from '@sef/shared';
+import { ollamaHeaders } from '../models/registry';
 
 const EMBED_TIMEOUT_MS = 30_000;
 /** Texts per HTTP call — bounded so one request never holds the whole corpus. */
@@ -37,8 +38,9 @@ export async function embedTexts(provider: ProviderConfig, model: string, texts:
   switch (provider.kind) {
     case 'ollama': {
       const base = trimSlash(provider.baseUrl ?? 'http://localhost:11434');
+      const headers = ollamaHeaders(provider);
       try {
-        const res = (await postJson(`${base}/api/embed`, { model, input: texts })) as { embeddings?: number[][] };
+        const res = (await postJson(`${base}/api/embed`, { model, input: texts }, headers)) as { embeddings?: number[][] };
         if (!Array.isArray(res.embeddings) || res.embeddings.length !== texts.length) {
           throw new Error('Ollama /api/embed returned a short or malformed batch');
         }
@@ -48,7 +50,7 @@ export async function embedTexts(provider: ProviderConfig, model: string, texts:
         // Older Ollama only serves the single-text /api/embeddings.
         const out: number[][] = [];
         for (const text of texts) {
-          const res = (await postJson(`${base}/api/embeddings`, { model, prompt: text })) as { embedding?: number[] };
+          const res = (await postJson(`${base}/api/embeddings`, { model, prompt: text }, headers)) as { embedding?: number[] };
           if (!Array.isArray(res.embedding)) throw new Error('Ollama /api/embeddings returned no vector');
           out.push(res.embedding);
         }

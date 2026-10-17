@@ -13,7 +13,10 @@ function env(name: string, fallback: string): string {
   return value ? value : fallback;
 }
 
-/** The operator's model gateway for hosted sessions (PR-43); null unless MODEL_GATEWAY_URL is set. */
+/**
+ * The operator's model gateway for hosted sessions (PR-43); null unless MODEL_GATEWAY_URL is set.
+ * `url` is the gateway root: the engine speaks Ollama's native `/api/*` surface to it.
+ */
 export interface ModelGateway {
   url: string;
   token?: string;
@@ -24,7 +27,9 @@ export function parseModelGateway(environment: NodeJS.ProcessEnv = process.env):
   if (!url) return null;
   if (!/^https?:\/\/[^\s/]+/.test(url)) throw new Error('MODEL_GATEWAY_URL must be an http(s) URL');
   const token = environment.MODEL_GATEWAY_TOKEN?.trim();
-  return { url: url.replace(/\/+$/, ''), ...(token ? { token } : {}) };
+  // The orchestrator hands out the OpenAI-style `<root>/v1`; the native surface lives at the root.
+  const root = url.replace(/\/+$/, '').replace(/\/(?:v1|api)$/, '');
+  return { url: root, ...(token ? { token } : {}) };
 }
 
 const dataDir = path.resolve(env('ENGINE_DATA_DIR', path.join(here, '../../.data/engine')));
