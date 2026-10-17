@@ -9,6 +9,7 @@ const migratedRows = [
   { version: 2, name: 'better_auth', checksum: 'b'.repeat(64) },
   { version: 3, name: 'admission', checksum: 'c'.repeat(64) },
   { version: 4, name: 'published_shares', checksum: 'd'.repeat(64) },
+  { version: 5, name: 'student_sessions', checksum: 'e'.repeat(64) },
 ];
 
 function fakePool(handlers: { failOn?: RegExp; rows?: (sql: string) => unknown[] }): Pool {
@@ -52,5 +53,5 @@ test('secondary storage readiness resolves once the registry is complete and the
   await assertSecondaryStorageReady(pool);
   const queries = (pool as unknown as { calls: string[] }).calls;
   assert.ok(queries.some((sql) => sql.includes('FROM auth_kv')));
-  assert.equal(supportedMigrationVersion, 4);
+  assert.equal(supportedMigrationVersion, 5);
 });

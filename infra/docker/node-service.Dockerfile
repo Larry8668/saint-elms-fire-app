@@ -1,9 +1,11 @@
 # One image recipe for every Node service in the workspace.
-# Build with:  --build-arg SERVICE=@sef/uni-server  (or @sef/engine)
+# Build with:  --build-arg SERVICE=@sef/uni-server  (or @sef/engine, @sef/gateway)
 # The `uni` target additionally carries the hosted portal/admin builds into the
 # university image; compose builds it with `target: uni`.
 FROM node:24-slim AS base
-ENV PNPM_HOME=/pnpm PATH=/pnpm:$PATH CI=true
+# youtube-dl-exec's preinstall refuses without Python, which the slim image lacks; the
+# engine's video lane already degrades without yt-dlp (same fix as infra/seat/bootstrap.sh).
+ENV PNPM_HOME=/pnpm PATH=/pnpm:$PATH CI=true YOUTUBE_DL_SKIP_PYTHON_CHECK=1
 RUN corepack enable
 WORKDIR /app
 
@@ -12,6 +14,7 @@ ARG SERVICE
 COPY pnpm-lock.yaml pnpm-workspace.yaml package.json tsconfig.base.json ./
 COPY packages/shared/package.json packages/shared/
 COPY server/uni/package.json server/uni/
+COPY server/gateway/package.json server/gateway/
 COPY engine/package.json engine/
 COPY apps/desktop/package.json apps/desktop/
 COPY apps/admin/package.json apps/admin/
@@ -38,6 +41,7 @@ ARG SERVICE
 ENV SERVICE=${SERVICE} NODE_ENV=production
 COPY packages/shared packages/shared
 COPY server/uni server/uni
+COPY server/gateway server/gateway
 COPY engine engine
 RUN rm -rf server/uni/keys && mkdir -p /data && chown -R node:node /data /app/server/uni /app/engine
 USER node

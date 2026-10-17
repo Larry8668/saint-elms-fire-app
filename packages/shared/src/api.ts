@@ -282,12 +282,17 @@ export interface DeviceCapability {
   suggested: Record<TieredRole, string>;
 }
 
+/** Vault sync on a session VM (PR-41b): restoring until the vault is back, then ready; error is loud. */
+export type VaultSyncState = 'restoring' | 'ready' | 'error';
+
 export interface HealthResponse {
   ok: boolean;
   engine: string;
   uni: { reachable: boolean; url: string };
   models: Array<{ role: ModelRole; provider: string; model: string; reachable: boolean; detail?: string }>;
   web: { reachable: boolean };
+  /** Present only when vault sync is on. `savedAt`: when the store last matched this machine. */
+  sync?: { state: VaultSyncState; savedAt: string | null; pending: boolean };
 }
 
 export type { IngestResult };
