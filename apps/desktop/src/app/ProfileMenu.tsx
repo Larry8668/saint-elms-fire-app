@@ -13,7 +13,7 @@ export function ProfileMenu() {
   const health = useHealth();
   const [open, setOpen] = useState(false);
   const ref = useRef<HTMLDivElement>(null);
-  const online = health.data?.uni.reachable;
+  const online = health.data?.uni?.reachable;
 
   useEffect(() => {
     if (!open) return;

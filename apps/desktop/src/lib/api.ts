@@ -19,6 +19,7 @@ import type {
   GraphResponse,
   AttentionResponse,
   DeviceCapability,
+  HealthLiveness,
   HealthResponse,
   IngestResult,
   JobList,
@@ -167,7 +168,9 @@ export interface QuizResult {
 export type { SessionDetail, SessionSummary };
 
 export const api = {
-  health: () => request<HealthResponse>('/api/health'),
+  health: () => request<HealthLiveness>('/api/health'),
+  /** The full model/uni/web report; needs a session. */
+  healthDetail: () => request<HealthResponse>('/api/health/detail'),
   profiles: () => request<DeviceProfile[]>('/api/auth/profiles'),
   login: (email: string, password: string) => post<EngineLoginResponse>('/api/auth/login', { email, password }),
   me: () => request<EngineMe>('/api/auth/me'),
@@ -176,7 +179,7 @@ export const api = {
   /** First-time sign-in: the engine asks the university for a device grant to show. */
   startDeviceSignIn: () => post<DeviceSignInStart>('/api/auth/device/start'),
   /** One poll of the in-flight grant; repeat on the interval the server returned. */
-  pollDeviceSignIn: () => post<DevicePollResult>('/api/auth/device/poll'),
+  pollDeviceSignIn: (flowKey?: string) => post<DevicePollResult>('/api/auth/device/poll', flowKey ? { flowKey } : undefined),
   /** Offline entry for a profile that has already signed in online on this device. */
   offlineLogin: (profileId: string) => post<Extract<EngineLoginResponse, { role: 'student' }>>('/api/auth/offline-login', { profileId }),
 

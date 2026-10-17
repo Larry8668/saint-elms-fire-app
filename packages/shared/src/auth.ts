@@ -130,6 +130,11 @@ export interface DeviceSignInStart {
   verificationUriComplete?: string;
   expiresInSeconds: number;
   intervalSeconds: number;
+  /**
+   * Proves a poll comes from the client that started the grant. A hosted engine requires
+   * it on every poll, so nobody else reaching the seat can collect the approved session.
+   */
+  flowKey?: string;
 }
 
 export type DevicePollResult =
