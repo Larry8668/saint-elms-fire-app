@@ -56,6 +56,7 @@ try {
     'src/admission.integration.test.ts',
     'src/shares.integration.test.ts',
     'src/sessions/store.integration.test.ts',
+    'src/sessions/sessions.integration.test.ts',
   ], {
     cwd: packageDir,
     env: {
