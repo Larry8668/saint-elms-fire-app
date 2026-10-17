@@ -35,6 +35,7 @@
     "store:check": "pnpm --filter @sef/engine store:check",
     "ollama:pull": "ollama pull gemma4:e4b && ollama pull embeddinggemma && ollama pull shieldgemma:2b",
     "keys:uni": "pnpm --filter @sef/uni-server keys",
+    "keys:uni:export": "pnpm --silent --filter @sef/uni-server keys:export",
     "test:e2e": "playwright test",
     "test:e2e:install": "playwright install chromium"
   },

@@ -32,6 +32,7 @@ the repo); `INSTABOX_API_KEY` comes from `~/.config/sef/instabox.env`.
 |---|---|---|---|
 | uni | `SERVICE`, `PORT`/`UNI_PORT` | | `@sef/uni-server`, `4200` |
 | uni | `UNI_DATA_DIR`, `KEYS_DIR` | | `/data`, `/data/keys` (the disk: signing keys, legacy accounts, releases, shares, audit) |
+| uni | `UNI_SIGNING_PRIVATE_KEY` | yes | base64 of the ed25519 PKCS#8 PEM (see Signing key). Set: wins over `KEYS_DIR`, nothing is written there |
 | uni | `UNI_DATABASE_URL` | yes | Postgres internal connection string |
 | uni | `UNI_PUBLIC_URL` | | `https://sef-uni.onrender.com` (production requires https) |
 | uni | `BETTER_AUTH_SECRET` | yes | generated, 32+ chars |
@@ -50,6 +51,34 @@ the repo); `INSTABOX_API_KEY` comes from `~/.config/sef/instabox.env`.
 | gateway | `GATEWAY_UPSTREAMS` | | the model workers (see below) |
 | minio | `PORT`, `MINIO_BROWSER` | | `9000`, `off` |
 | minio | `MINIO_ROOT_USER`, `MINIO_ROOT_PASSWORD` | password: yes | `sef-minio-admin`, generated; never given to the uni or a VM |
+
+## Signing key
+
+Course packages and offline entitlements are signed with the uni's ed25519 key, and every engine
+pins that key on first use (`engine/src/uni/trust.ts`): a different key later is refused. On a host
+without a persistent disk a key in `KEYS_DIR` is regenerated on every boot, which breaks every
+pinned device, so the hosted uni takes its key from the environment:
+
+```bash
+KEYS_DIR=$(mktemp -d) pnpm -s keys:uni:export >> ~/.config/sef/render.env   # generates a pair; stdout is only the env line
+# from an existing keys dir instead: KEYS_DIR=/path/to/keys pnpm -s keys:uni:export
+# or with openssl: printf 'UNI_SIGNING_PRIVATE_KEY=%s\n' "$(base64 < /path/to/keys/signing-private.pem | tr -d '\n')"
+```
+
+The value is base64 of the PEM (a raw PEM, with real or `\n`-escaped newlines, is accepted too).
+On boot the uni logs `signing_keys_from_env` with the key's fingerprint (sha256 of the SPKI DER,
+16 hex chars), never the key. A value that is not an ed25519 private key refuses to boot. Unset:
+the file behaviour is unchanged. Rotating it invalidates every pinned device (VMs are recreated
+fresh, so only long-lived engines are affected).
+
+Set it through the REST API, then redeploy (see Model workers for the deploy call):
+
+```bash
+T=$(awk '/^ *key:/ {print $2; exit}' ~/.render/cli.yaml)
+V=$(sed -n 's/^UNI_SIGNING_PRIVATE_KEY=//p' ~/.config/sef/render.env)
+curl -fsS -o /dev/null -X PUT -H "Authorization: Bearer $T" -H 'Content-Type: application/json' \
+  https://api.render.com/v1/services/<uni-id>/env-vars/UNI_SIGNING_PRIVATE_KEY -d "{\"value\":\"$V\"}"
+```
 
 ## First deploy
 
