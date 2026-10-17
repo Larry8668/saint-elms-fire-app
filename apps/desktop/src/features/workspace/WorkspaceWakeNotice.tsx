@@ -2,7 +2,7 @@ import { useQueryClient } from '@tanstack/react-query';
 import { CloudOff, PowerOff, RotateCcw } from 'lucide-react';
 import { useSyncExternalStore } from 'react';
 import { Button } from '@/components/ui/button';
-import { WorkingLabel } from '@/components/ui/loading';
+import { ConnectingScene } from '@/components/ui/connecting-scene';
 import { cn } from '@/lib/cn';
 import { currentEngineTarget, isRemoteTarget } from '@/lib/seat';
 import { seatWaker, wakeNoticeOf, type WakeState } from '@/lib/seat-wake';
@@ -30,8 +30,8 @@ export function WorkspaceWakeNotice({ failed = false, className }: { failed?: bo
   if (notice === 'waking' || notice === 'starting') {
     return (
       <div role="status" className={cn(box, 'border-beacon-400/20 bg-beacon-500/[0.06] text-night-200')}>
-        <WorkingLabel label="Reconnecting to your workspace…" startedAt={since} />
-        <p className="mt-1 text-[12.5px] text-night-400">
+        <ConnectingScene step="Reconnecting to your workspace…" startedAt={since} size="sm" className="py-1" />
+        <p className="mt-2 text-center text-[12.5px] text-night-400">
           {notice === 'starting' ? 'The machine is up; the study engine is still starting.' : 'The connection dropped. An idle workspace usually answers within a few seconds.'}
         </p>
       </div>

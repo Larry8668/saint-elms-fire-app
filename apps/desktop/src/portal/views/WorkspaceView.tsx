@@ -2,8 +2,9 @@ import { Check, Circle, RotateCcw, X } from 'lucide-react';
 import { useCallback, useEffect, useRef, useState } from 'react';
 import type { SessionStepStatus } from '@sef/shared';
 import { Button } from '@/components/ui/button';
+import { ConnectingScene } from '@/components/ui/connecting-scene';
 import { WorkingLabel } from '@/components/ui/loading';
-import { Eyebrow, Panel, Skeleton, SkeletonText } from '@/components/ui/primitives';
+import { Eyebrow, Panel } from '@/components/ui/primitives';
 import { cn } from '@/lib/cn';
 import { log } from '@/lib/log';
 import { Notice } from '../components/Notice';
@@ -30,6 +31,25 @@ const CONNECT_STEP = (restoring: boolean): SessionStepStatus => ({
   label: restoring ? 'Restoring your notes' : 'Connecting this browser',
   status: 'active',
 });
+
+/** The real step the university reports, as the waiting scene's primary line; null once it failed. */
+function realStep(flow: WorkspaceFlow, steps: SessionStepStatus[]): string | undefined | null {
+  switch (flow.phase) {
+    case 'requesting':
+      return 'Asking the university for a workspace';
+    case 'queued':
+      return 'Waiting for a free workspace';
+    case 'previous-stopping':
+      return 'Saving your previous workspace';
+    case 'spawning':
+    case 'connecting':
+      return steps.find((s) => s.status === 'active')?.label;
+    case 'ready':
+      return 'Opening your workspace';
+    case 'failed':
+      return null;
+  }
+}
 
 /** "Starting your workspace…": the real steps from the university, then the hand-off. */
 export function WorkspaceView({ onBack }: { onBack: () => void }) {
@@ -91,6 +111,7 @@ export function WorkspaceView({ onBack }: { onBack: () => void }) {
       : flow.phase === 'connecting'
         ? [...flow.steps.map((s) => ({ ...s, status: 'done' as const })), CONNECT_STEP(flow.restoring)]
         : [];
+  const step = realStep(flow, steps);
 
   return (
     <div className="mx-auto w-full max-w-xl px-5 py-8 sm:px-8 sm:py-12">
@@ -99,17 +120,10 @@ export function WorkspaceView({ onBack }: { onBack: () => void }) {
       <p className="mt-1 text-[13px] text-night-500">Your workspace runs on the university&apos;s servers; your notes are saved to your university storage.</p>
 
       <Panel className="mt-6 p-5 sm:p-7" aria-live="polite">
-        {flow.phase === 'requesting' && (
-          <div aria-busy>
-            <WorkingLabel label="Asking the university for a workspace" startedAt={startedAt} />
-            <Skeleton className="mt-5 h-4 w-3/4" />
-            <SkeletonText lines={3} className="mt-3" />
-          </div>
-        )}
+        {step !== null && <ConnectingScene step={step} startedAt={startedAt} className={flow.phase === 'requesting' || flow.phase === 'ready' ? undefined : 'mb-5'} />}
 
         {flow.phase === 'queued' && (
           <div className="space-y-3">
-            <WorkingLabel label="Waiting for a free workspace" startedAt={startedAt} />
             <p className="text-[14px] leading-6 text-night-300">
               {flow.position === null
                 ? 'All workspaces are in use right now. You are in the queue.'
@@ -123,7 +137,6 @@ export function WorkspaceView({ onBack }: { onBack: () => void }) {
 
         {flow.phase === 'previous-stopping' && (
           <div className="space-y-3">
-            <WorkingLabel label="Saving your previous workspace" startedAt={startedAt} />
             <p className="text-[14px] leading-6 text-night-300">Your last workspace is saving your notes before it shuts down. A new one starts right after, so nothing is restored from an old copy.</p>
           </div>
         )}
@@ -133,11 +146,9 @@ export function WorkspaceView({ onBack }: { onBack: () => void }) {
             {flow.phase === 'spawning' && flow.waitingForCapacity && (
               <Notice tone="info">The university&apos;s machine provider is busy. Still trying; this can take a few minutes.</Notice>
             )}
-            <StepList steps={steps} startedAt={startedAt} />
+            <StepList steps={steps} />
           </div>
         )}
-
-        {flow.phase === 'ready' && <WorkingLabel label="Opening your workspace" />}
 
         {flow.phase === 'failed' && (
           <div className="space-y-4">
@@ -168,14 +179,14 @@ export function WorkspaceView({ onBack }: { onBack: () => void }) {
   );
 }
 
-function StepList({ steps, startedAt }: { steps: SessionStepStatus[]; startedAt: number }) {
+function StepList({ steps }: { steps: SessionStepStatus[] }) {
   return (
     <ol className="space-y-2.5">
       {steps.map((step) => (
         <li key={`${step.name}-${step.label}`} className={cn('flex items-center gap-3 text-[14px]', step.status === 'pending' ? 'text-night-500' : 'text-night-200')}>
           {step.status === 'active' ? (
-            // WorkingLabel carries its own PixelLoader, in the same column as the icons.
-            <WorkingLabel label={step.label} startedAt={startedAt} className="gap-3 text-[14px] text-beacon-200" />
+            // WorkingLabel carries its own PixelLoader, in the same column as the icons. The scene above shows the elapsed time.
+            <WorkingLabel label={step.label} className="gap-3 text-[14px] text-beacon-200" />
           ) : (
             <>
               <span className="grid size-3.5 shrink-0 place-items-center">
