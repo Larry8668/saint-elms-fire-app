@@ -6,7 +6,7 @@ import { Panel } from '@/components/ui/primitives';
 import type { StoredSettings } from '@/lib/api';
 import { describeDevice, dismissCard, isCardDismissed, pendingSuggestions, type RoleSuggestion } from './recommendation';
 
-const ROLE_NAME: Record<TieredRole, string> = { tutor: 'Teachers', brain: 'Brain keeper', vision: 'Vision' };
+const ROLE_NAME: Record<TieredRole, string> = { tutor: 'Teachers', brain: 'Brain keeper', vision: 'Vision', safety: 'Share screening' };
 
 const browserStorage = (): Storage | undefined => {
   try {
@@ -37,7 +37,7 @@ export function RecommendationCard({
           <div className="flex items-center gap-2 text-sm font-semibold text-night-100">
             <Gauge className="size-4 text-beacon-300" /> Recommended for this device
           </div>
-          <p className="mt-1 text-[12px] text-night-400">{describeDevice(capability)}. Bigger brain models write better proposals but take noticeably longer.</p>
+          <p className="mt-1 text-[12px] text-night-400">{describeDevice(capability)}. Bigger models write better proposals and screen shares more reliably, but take noticeably longer.</p>
         </div>
         <Button
           variant="ghost"

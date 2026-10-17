@@ -15,7 +15,7 @@ const deps = {
   workspaces: { get: async () => ({}) },
 };
 
-const capability: DeviceCapability = { ramGb: 32, gpu: 'Apple M2 Max', suggested: { tutor: 'gemma4:e4b', brain: 'gemma4:26b', vision: 'gemma4:e4b' } };
+const capability: DeviceCapability = { ramGb: 32, gpu: 'Apple M2 Max', suggested: { tutor: 'gemma4:e4b', brain: 'gemma4:26b', vision: 'gemma4:e4b', safety: 'shieldgemma:9b' } };
 let detections = 0;
 const app = systemRoutes(deps as never, async () => {
   detections += 1;

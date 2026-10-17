@@ -3,7 +3,7 @@ import { test } from 'node:test';
 import type { DeviceCapability, EngineSettings } from '@sef/shared';
 import { applySuggestions, describeDevice, dismissCard, DISMISS_KEY, isCardDismissed, pendingSuggestions, suggestionFor } from './recommendation';
 
-const bigMachine: DeviceCapability = { ramGb: 32, gpu: 'Apple M2 Max', suggested: { tutor: 'gemma4:e4b', brain: 'gemma4:26b', vision: 'gemma4:e4b' } };
+const bigMachine: DeviceCapability = { ramGb: 32, gpu: 'Apple M2 Max', suggested: { tutor: 'gemma4:e4b', brain: 'gemma4:26b', vision: 'gemma4:e4b', safety: 'shieldgemma:9b' } };
 
 const settings = (overrides: Partial<EngineSettings['roles']> = {}): Pick<EngineSettings, 'providers' | 'roles'> => ({
   providers: [
@@ -25,20 +25,32 @@ const memoryStore = () => {
   return { getItem: (k: string) => data.get(k) ?? null, setItem: (k: string, v: string) => void data.set(k, v), data };
 };
 
-test('a fresh profile on a big machine is offered 26b for the brain only', () => {
-  assert.deepEqual(pendingSuggestions(bigMachine, settings()), [{ role: 'brain', current: 'gemma4:e4b', suggested: 'gemma4:26b' }]);
+test('a fresh profile on a big machine is offered 26b for the brain and 9b for share screening', () => {
+  assert.deepEqual(pendingSuggestions(bigMachine, settings()), [
+    { role: 'brain', current: 'gemma4:e4b', suggested: 'gemma4:26b' },
+    { role: 'safety', current: 'shieldgemma:2b', suggested: 'shieldgemma:9b' },
+  ]);
+});
+
+test('a safety role already on the suggested screener is left alone', () => {
+  const s = settings({ safety: { provider: 'ollama', model: 'shieldgemma:9b' } });
+  assert.deepEqual(pendingSuggestions(bigMachine, s).map((x) => x.role), ['brain']);
 });
 
 test('roles on a non-Ollama provider, and untiered roles, get no suggestion', () => {
-  const s = settings({ brain: { provider: 'uni', model: 'uni-large' } });
+  const s = settings({ brain: { provider: 'uni', model: 'uni-large' }, safety: { provider: 'uni', model: 'uni-guard' } });
   assert.equal(suggestionFor('brain', bigMachine, s), undefined);
+  assert.equal(suggestionFor('safety', bigMachine, s), undefined);
   assert.deepEqual(pendingSuggestions(bigMachine, s), []);
   assert.equal(suggestionFor('embed', bigMachine, s), undefined);
   assert.equal(suggestionFor('tutor', undefined, s), undefined);
 });
 
 test('a :latest alias counts as already matching', () => {
-  assert.deepEqual(pendingSuggestions(bigMachine, settings({ brain: { provider: 'ollama', model: 'gemma4:26b:latest' } })), []);
+  assert.deepEqual(
+    pendingSuggestions(bigMachine, settings({ brain: { provider: 'ollama', model: 'gemma4:26b:latest' }, safety: { provider: 'ollama', model: 'shieldgemma:9b' } })),
+    [],
+  );
 });
 
 test('applying writes only the suggested roles into the form', () => {
@@ -55,9 +67,9 @@ test('dismissing hides the card for this suggestion, and a new tier brings it ba
   assert.equal(isCardDismissed(store, bigMachine), false);
   dismissCard(store, bigMachine);
   assert.equal(isCardDismissed(store, bigMachine), true);
-  assert.equal(store.data.get(DISMISS_KEY), 'gemma4:e4b|gemma4:26b|gemma4:e4b');
+  assert.equal(store.data.get(DISMISS_KEY), 'gemma4:e4b|gemma4:26b|gemma4:e4b|shieldgemma:9b');
 
-  const upgraded: DeviceCapability = { ...bigMachine, ramGb: 64, suggested: { tutor: 'gemma4:26b', brain: 'gemma4:31b', vision: 'gemma4:e4b' } };
+  const upgraded: DeviceCapability = { ...bigMachine, ramGb: 64, suggested: { tutor: 'gemma4:26b', brain: 'gemma4:31b', vision: 'gemma4:e4b', safety: 'shieldgemma:9b' } };
   assert.equal(isCardDismissed(store, upgraded), false);
 });
 

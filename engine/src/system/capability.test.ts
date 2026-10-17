@@ -2,7 +2,7 @@ import assert from 'node:assert/strict';
 import { test } from 'node:test';
 import { config } from '../config';
 import { ProcessError, type RunCommand } from '../media/process';
-import { detectCapability, GEMMA4, parseDarwinGpu, probeGpu, suggestFor, type CapabilityProbe } from './capability';
+import { detectCapability, GEMMA4, parseDarwinGpu, probeGpu, SHIELDGEMMA, suggestFor, type CapabilityProbe } from './capability';
 
 const GB = 1024 ** 3;
 
@@ -23,19 +23,20 @@ const machine = (ramGb: number, platform: NodeJS.Platform = 'darwin', run: RunCo
 });
 
 test('the tier table sizes each role to installed memory', () => {
-  const cases: Array<[number, string, string, string]> = [
-    [8, GEMMA4.e2b, GEMMA4.e2b, GEMMA4.e2b],
-    [16, GEMMA4.e4b, GEMMA4.e4b, GEMMA4.e4b],
-    [24, GEMMA4.e4b, GEMMA4.e4b, GEMMA4.e4b],
-    [32, GEMMA4.e4b, GEMMA4.b26, GEMMA4.e4b],
-    [36, GEMMA4.e4b, GEMMA4.b26, GEMMA4.e4b],
-    [48, GEMMA4.e4b, GEMMA4.b31, GEMMA4.e4b],
-    [64, GEMMA4.b26, GEMMA4.b31, GEMMA4.e4b],
-    [128, GEMMA4.b26, GEMMA4.b31, GEMMA4.e4b],
+  const cases: Array<[number, string, string, string, string]> = [
+    [8, GEMMA4.e2b, GEMMA4.e2b, GEMMA4.e2b, SHIELDGEMMA.b2],
+    [16, GEMMA4.e4b, GEMMA4.e4b, GEMMA4.e4b, SHIELDGEMMA.b2],
+    [24, GEMMA4.e4b, GEMMA4.e4b, GEMMA4.e4b, SHIELDGEMMA.b2],
+    [32, GEMMA4.e4b, GEMMA4.b26, GEMMA4.e4b, SHIELDGEMMA.b9],
+    [36, GEMMA4.e4b, GEMMA4.b26, GEMMA4.e4b, SHIELDGEMMA.b9],
+    [48, GEMMA4.e4b, GEMMA4.b31, GEMMA4.e4b, SHIELDGEMMA.b9],
+    [64, GEMMA4.b26, GEMMA4.b31, GEMMA4.e4b, SHIELDGEMMA.b9],
+    [128, GEMMA4.b26, GEMMA4.b31, GEMMA4.e4b, SHIELDGEMMA.b9],
   ];
-  for (const [ram, tutor, brain, vision] of cases) {
-    assert.deepEqual(suggestFor(ram), { tutor, brain, vision }, `${ram} GB`);
+  for (const [ram, tutor, brain, vision, safety] of cases) {
+    assert.deepEqual(suggestFor(ram), { tutor, brain, vision, safety }, `${ram} GB`);
   }
+  assert.equal(suggestFor(31.2).safety, SHIELDGEMMA.b9, 'a 32 GB machine reporting ~31 GiB still gets the larger screener');
 });
 
 test('a machine reporting slightly under its installed size keeps its tier', () => {
@@ -52,7 +53,7 @@ test('vision never leaves the E-models, which carry the audio encoder', () => {
 
 test('unreadable memory degrades quietly to the configured defaults', async () => {
   const d = config.defaults;
-  assert.deepEqual(suggestFor(null), { tutor: d.tutorModel, brain: d.brainModel, vision: d.visionModel });
+  assert.deepEqual(suggestFor(null), { tutor: d.tutorModel, brain: d.brainModel, vision: d.visionModel, safety: d.safetyModel });
 
   for (const totalMemBytes of [() => 0, () => Number.NaN, () => { throw new Error('no /proc'); }]) {
     const capability = await detectCapability({ platform: 'linux', totalMemBytes, run: fakeRun({}) });
