@@ -11,7 +11,7 @@ import { ProfileRegistry } from './profiles/registry';
 import { enforceSeatOwner, SeatOwner } from './profiles/seat-owner';
 import { AuthSessions } from './profiles/sessions';
 import { WorkspaceManager } from './profiles/workspace';
-import { SettingsStore } from './settings/store';
+import { ProfileSettingsStore, SettingsStore } from './settings/store';
 import { createObjectStore } from './store';
 import { createVaultSync, parseVaultSyncConfig } from './sync';
 import { startSignalScheduler } from './signals/scheduler';
@@ -38,7 +38,15 @@ async function main() {
   const syncConfig = parseVaultSyncConfig(process.env, config.objectStore);
   for (const warning of syncConfig.warnings) log.warn('vault_sync_config_warning', { warning });
   const store = syncConfig.config ? createObjectStore(config.objectStore) : null;
-  const vaultSync = syncConfig.config && store ? createVaultSync(syncConfig.config, store, profilePaths(syncConfig.config.account).root) : undefined;
+  const vaultSync =
+    syncConfig.config && store
+      ? (() => {
+          const paths = profilePaths(syncConfig.config.account);
+          return createVaultSync(syncConfig.config, store, paths.root, {
+            embedModel: async () => (await new ProfileSettingsStore(settings, paths.privateSettings).get()).roles.embed?.model ?? null,
+          });
+        })()
+      : undefined;
 
   if (config.seedDemo) await bootstrapDemo(registry, workspaces);
 

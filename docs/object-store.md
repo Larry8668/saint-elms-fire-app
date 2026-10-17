@@ -1,8 +1,8 @@
 # Object store: where vaults live between sessions
 
-Status: **PR-41a** added an S3-compatible bucket and an engine adapter; **PR-41b** syncs the seat
-owner's profile through it (below), and PR-41c makes media lazy and caches embeddings. With
-`OBJECT_STORE_*` or `VAULT_SYNC_ACCOUNT` unset (the default), the engine behaves exactly as before.
+Status: **PR-41a** added an S3-compatible bucket and an engine adapter; **PR-41b/41c** sync the
+seat owner's profile through it (below). With `OBJECT_STORE_*` or `VAULT_SYNC_ACCOUNT` unset (the
+default), the engine behaves exactly as before.
 
 Why it exists: study sessions are moving to ephemeral per-session VMs. A backend spawns a fresh
 VM, restores the student's vault from a central store, syncs often, then makes a final sync and
@@ -20,7 +20,7 @@ vaults/<accountId>/
   manifest.json                 the sync manifest: which bytes make up the latest version (CAS-only)
   files/<relPath>               text files, relPath relative to ENGINE_DATA_DIR/profiles/<id>/
     brain/concepts/ … brain/.meta/manifest.json, sessions/, quizzes/, content/, plans/, …
-  blobs/sha256/<hh>/<sha256>    media and large files, content-addressed
+  blobs/sha256/<hh>/<sha256>    media and large files, content-addressed; the embeddings pack
 ```
 
 Versioning is **on** for the bucket. This is cheap protection against sync bugs: an overwrite or
@@ -102,7 +102,7 @@ paginated `list`, idempotent `delete`, `ping`), `S3ObjectStore` (SigV4 over `fet
 `createObjectStore(config.objectStore)` returns `null` when the store is off. Bodies are buffers
 for now (see the risks below).
 
-## Vault sync (PR-41b)
+## Vault sync (PR-41b, PR-41c)
 
 `engine/src/sync/`. On when the object store is configured **and** `VAULT_SYNC_ACCOUNT` names the
 seat owner's uni account id (it must be in `ENGINE_SEAT_OWNER` when that is set, or boot fails).
@@ -117,8 +117,8 @@ it is named there.
 | --- | --- | --- | --- |
 | `brain/` pages, `index.md`, `log.md`, `SCHEMA.md`, `.history/` | yes | text, `files/…` | The vault is the source of truth; the graph is recomputed from it |
 | `brain/.meta/` manifest, sources, extracted text, events, proposals, jobs, recovery, tombstones, maintenance | yes | text | Pending proposals and job status are what a student resumes |
-| `brain/raw/` (uploaded originals) | yes | `blobs/…` | Uploaded once per hash; fetched during the restore (lazily from PR-41c) |
-| `brain/.meta/embeddings/` | no (cache in PR-41c) | | Derived and rebuilt by the existing code |
+| `brain/raw/` (uploaded originals) | yes | `blobs/…`, **lazy** | Uploaded once per hash; a restore writes no bytes, the first read fetches them |
+| `brain/.meta/embeddings/` | cache | one gzip pack in `blobs/…` | Derived: restored only when the embed model matches, otherwise rebuilt |
 | `brain/.meta/journal/`, `brain/.meta/writer.lock` | no | | In-flight state of one process; `recover()` finishes a commit locally and the result syncs |
 | `sessions/`, `quizzes/`, `plans/` | yes | text | Chat history, quiz evidence (mastery is computed from it), approved plans |
 | `content/` (installed courseware) | yes | text | Saves a re-install per session. Trusted at the bucket's level (see risks) |
@@ -133,7 +133,7 @@ it is named there.
 
 ### Manifest
 
-`vaults/<acc>/manifest.json` is `{format, account, version, updatedAt, files, tombstones}`
+`vaults/<acc>/manifest.json` is `{format, account, version, updatedAt, files, tombstones, embeddings?}`
 with `files: {relPath: {sha256, size, mtime, kind}}` (`kind` is `text`, `media` or `large`) and
 `tombstones: {relPath: {deletedAt, sha256}}`. Every write is a compare-and-swap: `If-Match` on the
 etag this machine last saw (`If-None-Match: *` for a new account). The adapter gained `ifMatch`
@@ -153,8 +153,8 @@ it does, sync refuses: no merge and no retry. It logs `vault_sync_conflict`, hea
 bucket versioning keeps everything.
 
 **Deletes** become tombstones in the manifest (kept 90 days, at most 20,000); a machine restoring
-a newer version deletes those paths locally. Erasing a source in the vault removes its `raw/` file,
-so the next push tombstones it and deletes its blob.
+a newer version deletes those paths locally. A source erased in the vault (its tombstone in
+`.meta/tombstones/`) also ends the lazy stub of its media, so erasure is never undone by a fetch.
 
 **Restore** runs at boot, before `/api/*` is served: until it finishes, every `/api/*` route except
 `/api/health` and the flush answers `503 vault_restoring` (or `vault_restore_failed`). It
@@ -165,6 +165,18 @@ restart), nothing is pulled, so unpushed local edits survive. A text object whos
 than the manifest is what a push cut off between its uploads and its swap leaves behind; it is
 kept ("rolled forward", logged) and the next push commits it. A blob that fails its hash fails
 the restore. Three attempts with backoff, then `error`.
+
+**Lazy media.** Restored `brain/raw/` files are stubs: nothing is on disk until
+`WikiStore.readSourceBytes`, the one reader every raw path uses (the source preview
+`GET /api/sources/:id/raw`, vision re-reads, corrections, compile), misses, fetches the blob,
+verifies it and writes it (concurrent reads share one fetch). Two paths fetch **eagerly**
+because they compare or carry every original: vault export and import planning
+(`brain/portable/service.ts`) call `materializeAll` first.
+
+**Embeddings** are packed (`{format, files}` gzip) into one blob, pushed at most every 10 minutes
+when changed and always on the final flush. A restore unpacks them when every index in the pack
+was built by the embed model this engine is configured with; otherwise it skips them and the
+existing code rebuilds. A failure here never fails a restore.
 
 **Timing.** A push runs 7 s after the last write (capped at 30 s of continuous writes), plus a
 safety push every 60 s that catches writes no hook saw (a background job, an edit in Obsidian).
@@ -180,7 +192,8 @@ and nothing else; without sync the shape is unchanged. The orchestrator polls it
 
 ### Final flush
 
-`POST /api/internal/sync/flush` pushes everything after any push in flight and returns `{ok, pushed, version}`, or `{ok: false, error}` (`conflict`, `push_failed`,
+`POST /api/internal/sync/flush` pushes everything (the embeddings pack too) after any push in
+flight and returns `{ok, pushed, version}`, or `{ok: false, error}` (`conflict`, `push_failed`,
 `timeout` after 50 s, `not_restored`). It is refused unless the socket peer is loopback, **no**
 `X-Forwarded-*`, `Forwarded` or `X-Real-IP` header is present, and `Authorization: Bearer
 $SYNC_FLUSH_TOKEN` matches (constant-time; at least 24 characters, else the endpoint stays shut).
@@ -203,8 +216,8 @@ SYNC_FLUSH_TOKEN=<random, ≥ 24 chars>                    # the flush endpoint'
 ### Integration test
 
 `engine/src/sync/vault-sync.integration.test.ts` runs two engines (two data dirs) for one account
-against a real server: A writes pages, ~6 MB of history and a 4 MB image and flushes; B restores
-and sees all of it; B then pushes and the stale A is refused.
+against a real server: A writes pages, ~6 MB of history and a 4 MB image and flushes; B restores,
+sees the pages, and the image arrives only on first read; B then pushes and the stale A is refused.
 Same variables as the store test:
 
 ```bash

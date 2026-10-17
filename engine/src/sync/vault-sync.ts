@@ -1,5 +1,6 @@
-import { readFile, rm, stat } from 'node:fs/promises';
+import { readdir, readFile, rm, stat } from 'node:fs/promises';
 import path from 'node:path';
+import { gunzipSync, gzipSync } from 'node:zlib';
 import { errorFields, log } from '../config';
 import { VaultLock } from '../brain/vault-lock';
 import { VaultLockError } from '../brain/vault-errors';
@@ -7,9 +8,9 @@ import { readJson, writeFileAtomic, writeJson } from '../lib/fs';
 import { sha256Hex } from '../lib/hash';
 import { blobKey, syncManifestKey, vaultKey } from '../store/keys';
 import { type ObjectStore, PreconditionFailedError } from '../store/object-store';
-import { diffManifest, emptySyncManifest, nextManifest, referencedBlobs, type LocalEntry, type SyncFile, type SyncManifest, SyncManifestSchema } from './manifest';
+import { diffManifest, emptySyncManifest, nextManifest, referencedBlobs, type LocalEntry, type SyncEmbeddings, type SyncFile, type SyncManifest, SyncManifestSchema } from './manifest';
 import { PushScheduler, type SchedulerOptions } from './scheduler';
-import { scanProfile } from './scope';
+import { EMBEDDINGS_DIRECTORY, mediaSourceId, scanProfile } from './scope';
 
 import type { VaultSyncState } from '@sef/shared';
 
@@ -22,11 +23,15 @@ export interface VaultSyncOptions {
   root: string;
   now?: () => Date;
   scheduler?: SchedulerOptions;
+  /** The embed model this engine would use, so a cache built by another model is skipped. Null: unknown. */
+  embedModel?: () => Promise<string | null>;
+  /** The vector cache is pushed at most this often (and always on the final flush). */
+  embeddingsEveryMs?: number;
 }
 
 export interface PushResult {
   ok: true;
-  /** Objects uploaded: changed files and new blobs. */
+  /** Objects uploaded: changed files, new blobs, the embeddings pack. */
   pushed: number;
   deleted: number;
   version: number;
@@ -36,9 +41,12 @@ export interface RestoreReport {
   version: number;
   fetched: number;
   bytes: number;
+  /** Media restored as a stub, fetched on first read. */
+  lazy: number;
   removed: number;
   /** Objects newer than the manifest (a push cut off before its swap); kept, and pushed next. */
   rolledForward: number;
+  embeddings: 'restored' | 'absent' | 'model_mismatch' | 'failed';
   ms: number;
 }
 
@@ -71,6 +79,7 @@ interface Snapshot {
 }
 
 export const SYNC_STATE_FILE = '.vault-sync.json';
+const EMBEDDINGS_FILE = /^[a-z0-9_-]{1,64}\.json$/;
 const CONCURRENCY = 6;
 
 /**
@@ -88,6 +97,10 @@ export class VaultSync {
   private stats: Record<string, StatCache> = {};
   private savedAt: Date | null = null;
   private lastError: string | null = null;
+  private embeddingsDue = false;
+  private embeddingsSignature: string | null = null;
+  private embeddingsPushedAt = 0;
+  private readonly fetching = new Map<string, Promise<boolean>>();
   private readonly scheduler: PushScheduler<PushResult>;
   private readonly now: () => Date;
   private readonly lock: VaultLock;
@@ -137,7 +150,7 @@ export class VaultSync {
     this.scheduler.stop();
   }
 
-  /** Pull the remote manifest and every file that differs, verifying what it fetches. */
+  /** Pull the remote manifest and every text file that differs; media becomes a stub fetched on first read. */
   async restore(): Promise<RestoreReport> {
     const started = Date.now();
     this.stateValue = 'restoring';
@@ -155,7 +168,7 @@ export class VaultSync {
       }
       this.stats = saved?.stats ?? {};
       const local = await this.hashLocal();
-      const report: RestoreReport = { version: manifest.version, fetched: 0, bytes: 0, removed: 0, rolledForward: 0, ms: 0 };
+      const report: RestoreReport = { version: manifest.version, fetched: 0, bytes: 0, lazy: 0, removed: 0, rolledForward: 0, embeddings: 'absent', ms: 0 };
       // The remote is still what this machine last pushed (an engine restart): what is on disk
       // is newer, so nothing is pulled, and the next push carries any edits made since.
       const unchanged = saved !== null && remote !== null && saved.etag === remote.etag;
@@ -175,6 +188,13 @@ export class VaultSync {
         if (here?.sha256 === file.sha256) continue;
         // Edited here after this machine's last push, then superseded by another machine's push.
         if (saved && here && saved.manifest.files[relPath]?.sha256 !== here.sha256) replaced.push(relPath);
+        if (file.kind === 'media') {
+          // Media is immutable: a stale local copy is dropped and the right one fetched when read.
+          if (local.has(relPath)) await rm(this.abs(relPath), { force: true });
+          delete this.stats[relPath];
+          report.lazy += 1;
+          continue;
+        }
         fetches.push(async () => {
           const bytes = await this.download(relPath, file);
           if (sha256Hex(bytes) !== file.sha256) report.rolledForward += 1;
@@ -184,6 +204,7 @@ export class VaultSync {
       }
       await pool(fetches, CONCURRENCY);
       if (replaced.length) log.warn('vault_sync_local_edits_replaced', { account: this.options.account, files: replaced.length, sample: replaced.slice(0, 5) });
+      report.embeddings = await this.restoreEmbeddings(manifest.embeddings);
       return await this.finishRestore(manifest, remote?.etag ?? null, report, started);
     } catch (error) {
       this.stateValue = 'error';
@@ -205,9 +226,10 @@ export class VaultSync {
     return report;
   }
 
-  /** The final flush: everything, after any push in flight. */
+  /** The final flush: everything, the vector cache included, after any push in flight. */
   flush(): Promise<PushResult> {
     if (!this.restoredValue) return Promise.reject(new Error('Vault sync has not restored yet; refusing to push over the remote vault.'));
+    this.embeddingsDue = true;
     return this.scheduler.run();
   }
 
@@ -243,8 +265,10 @@ export class VaultSync {
   private async pushOnce(): Promise<PushResult> {
     const { store, account } = this.options;
     const snapshot = await this.snapshot();
-    const diff = diffManifest(this.base, snapshot.entries);
-    if (!diff.upload.length && !diff.deleted.length) return { ok: true, pushed: 0, deleted: 0, version: this.base.version };
+    const lazy = this.lazyMedia(snapshot.entries);
+    const diff = diffManifest(this.base, snapshot.entries, await lazy);
+    const embeddings = await this.embeddingsPack();
+    if (!diff.upload.length && !diff.deleted.length && !embeddings) return { ok: true, pushed: 0, deleted: 0, version: this.base.version };
 
     // Cheap early refusal: someone else moved the manifest since our last swap.
     const head = await store.head(syncManifestKey(account));
@@ -267,8 +291,10 @@ export class VaultSync {
       }),
       CONCURRENCY,
     );
+    if (embeddings && (await this.putBlob(embeddings.meta.sha256, embeddings.body))) pushed += 1;
 
-    const next = nextManifest(this.base, snapshot.entries, diff, this.now());
+    const next = nextManifest(this.base, snapshot.entries, await lazy, diff, this.now());
+    if (embeddings) next.embeddings = embeddings.meta;
     let etag: string;
     try {
       ({ etag } = await store.put(syncManifestKey(account), `${JSON.stringify(next)}\n`, {
@@ -282,6 +308,10 @@ export class VaultSync {
     const previous = this.base;
     this.base = next;
     this.etag = etag;
+    if (embeddings) {
+      this.embeddingsSignature = embeddings.signature;
+      this.embeddingsPushedAt = Date.now();
+    }
     await this.saveState();
     const deleted = await this.collectGarbage(previous, next);
     log.info('vault_sync_pushed', { account, version: next.version, pushed, deleted });
@@ -342,6 +372,52 @@ export class VaultSync {
     return bytes;
   }
 
+  /** Fetch-on-miss for a media stub. False when the path is not a stub this sync knows. */
+  async materialize(absolutePath: string): Promise<boolean> {
+    const relPath = path.relative(this.root, path.resolve(absolutePath)).split(path.sep).join('/');
+    const file = this.base.files[relPath];
+    if (!this.restoredValue || !file || file.kind !== 'media') return false;
+    if (await exists(this.abs(relPath))) return true;
+    // Erased here but not pushed yet: never bring it back.
+    if (await this.erasedHere(relPath)) return false;
+    let pending = this.fetching.get(relPath);
+    if (!pending) {
+      const started = Date.now();
+      pending = this.download(relPath, file)
+        .then((bytes) => {
+          log.info('vault_sync_media_fetched', { path: relPath, bytes: bytes.byteLength, ms: Date.now() - started });
+          return true;
+        })
+        .finally(() => this.fetching.delete(relPath));
+      this.fetching.set(relPath, pending);
+    }
+    return pending;
+  }
+
+  async materializeAll(absoluteDirectory: string): Promise<void> {
+    const prefix = path.relative(this.root, path.resolve(absoluteDirectory)).split(path.sep).join('/');
+    const wanted = Object.entries(this.base.files).filter(([relPath, file]) => file.kind === 'media' && (prefix === '' || relPath.startsWith(`${prefix}/`)));
+    await pool(wanted.map(([relPath]) => async () => void (await this.materialize(this.abs(relPath)))), CONCURRENCY);
+  }
+
+  /**
+   * Media in the base that is not on disk is a stub, not a delete, unless the student erased
+   * its source here: erasure leaves a vault tombstone and removes the source record.
+   */
+  private async lazyMedia(local: ReadonlyMap<string, LocalEntry>): Promise<Set<string>> {
+    const lazy = new Set<string>();
+    for (const [relPath, file] of Object.entries(this.base.files)) {
+      if (file.kind !== 'media' || local.has(relPath)) continue;
+      if (!(await this.erasedHere(relPath))) lazy.add(relPath);
+    }
+    return lazy;
+  }
+
+  private async erasedHere(relPath: string): Promise<boolean> {
+    const id = mediaSourceId(relPath);
+    return id !== null && (await exists(this.abs(`brain/.meta/tombstones/${id}.json`))) && !(await exists(this.abs(`brain/.meta/sources/${id}.json`)));
+  }
+
   /**
    * Every synced file with its hash, rereading only what changed size or mtime since the last
    * look. With `bodies`, text that differs from the base is kept in memory for the upload, and
@@ -390,6 +466,60 @@ export class VaultSync {
       if (info) this.stats[relPath] = { size: info.size, mtimeMs: info.mtimeMs, sha256: entry.sha256 };
     }
     return { entries, bodies };
+  }
+
+  private async embeddingsPack(): Promise<{ meta: SyncEmbeddings; body: Buffer; signature: string } | null> {
+    const due = this.embeddingsDue || Date.now() - this.embeddingsPushedAt >= (this.options.embeddingsEveryMs ?? 10 * 60_000);
+    this.embeddingsDue = false;
+    if (!due) return null;
+    const directory = this.abs(EMBEDDINGS_DIRECTORY);
+    const names = (await readdir(directory).catch(() => [] as string[])).filter((name) => EMBEDDINGS_FILE.test(name)).sort();
+    if (!names.length) return null;
+    const files: Record<string, string> = {};
+    const models = new Set<string>();
+    const signatureParts: string[] = [];
+    for (const name of names) {
+      const text = await readFile(path.join(directory, name), 'utf8').catch(() => null);
+      if (text === null) continue;
+      files[name] = text;
+      signatureParts.push(`${name}:${sha256Hex(text)}`);
+      try {
+        const model = (JSON.parse(text) as { model?: unknown }).model;
+        if (typeof model === 'string') models.add(model);
+      } catch {
+        // A corrupt index file is still carried; the reader drops it and rebuilds.
+      }
+    }
+    const signature = signatureParts.join('|');
+    if (signature === this.embeddingsSignature) return null;
+    const body = gzipSync(JSON.stringify({ format: 1, files }));
+    const meta: SyncEmbeddings = { sha256: sha256Hex(body), size: body.byteLength, models: [...models].sort(), updatedAt: this.now().toISOString() };
+    return { meta, body, signature };
+  }
+
+  /** Optional and derived: any failure here costs a rebuild, never the restore. */
+  private async restoreEmbeddings(meta: SyncEmbeddings | undefined): Promise<RestoreReport['embeddings']> {
+    if (!meta) return 'absent';
+    try {
+      const expected = (await this.options.embedModel?.()) ?? null;
+      if (expected !== null && meta.models.some((model) => model !== expected)) return 'model_mismatch';
+      const object = await this.options.store.get(blobKey(this.options.account, meta.sha256));
+      if (!object || sha256Hex(object.body) !== meta.sha256) return 'failed';
+      const pack = JSON.parse(gunzipSync(object.body).toString('utf8')) as { format?: unknown; files?: Record<string, unknown> };
+      if (pack.format !== 1 || typeof pack.files !== 'object' || pack.files === null) return 'failed';
+      const parts: string[] = [];
+      for (const [name, text] of Object.entries(pack.files).sort(([a], [b]) => a.localeCompare(b))) {
+        if (!EMBEDDINGS_FILE.test(name) || typeof text !== 'string') continue;
+        await writeFileAtomic(path.join(this.abs(EMBEDDINGS_DIRECTORY), name), text);
+        parts.push(`${name}:${sha256Hex(text)}`);
+      }
+      this.embeddingsSignature = parts.join('|');
+      this.embeddingsPushedAt = Date.now();
+      return 'restored';
+    } catch (error) {
+      log.warn('vault_sync_embeddings_restore_failed', errorFields(error));
+      return 'failed';
+    }
   }
 
   private abs(relPath: string): string {

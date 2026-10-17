@@ -29,6 +29,10 @@ export type SyncFile = z.infer<typeof SyncFileSchema>;
 export const SyncTombstoneSchema = z.strictObject({ deletedAt: z.string().min(1), sha256: Sha256 });
 export type SyncTombstone = z.infer<typeof SyncTombstoneSchema>;
 
+/** The optional derived-vector cache: one gzip pack, content-addressed among the blobs. */
+export const SyncEmbeddingsSchema = z.strictObject({ sha256: Sha256, size: z.number().int().nonnegative(), models: z.array(z.string()), updatedAt: z.string() });
+export type SyncEmbeddings = z.infer<typeof SyncEmbeddingsSchema>;
+
 /**
  * `vaults/<account>/manifest.json`: the one object that says which bytes make up the vault's
  * latest version. Every write is a compare-and-swap on its ETag, so `version` only ever moves
@@ -41,6 +45,7 @@ export const SyncManifestSchema = z.strictObject({
   updatedAt: z.string(),
   files: z.record(RelPath, SyncFileSchema),
   tombstones: z.record(RelPath, SyncTombstoneSchema),
+  embeddings: SyncEmbeddingsSchema.optional(),
 });
 export type SyncManifest = z.infer<typeof SyncManifestSchema>;
 
@@ -58,12 +63,15 @@ export interface LocalEntry {
 export interface ManifestDiff {
   /** New or changed since the base manifest. */
   upload: string[];
-  /** In the base but gone locally. */
+  /** In the base but gone locally (and not merely waiting to be fetched). */
   deleted: string[];
 }
 
-/** What a push must send. */
-export function diffManifest(base: SyncManifest, local: ReadonlyMap<string, LocalEntry>): ManifestDiff {
+/**
+ * What a push must send. `lazy` names base files that were never fetched to this machine
+ * (media restored as a stub): their absence is not a delete.
+ */
+export function diffManifest(base: SyncManifest, local: ReadonlyMap<string, LocalEntry>, lazy: ReadonlySet<string> = new Set()): ManifestDiff {
   const upload: string[] = [];
   const deleted: string[] = [];
   for (const [relPath, entry] of local) {
@@ -71,14 +79,15 @@ export function diffManifest(base: SyncManifest, local: ReadonlyMap<string, Loca
     if (!known || known.sha256 !== entry.sha256 || known.kind !== entry.kind) upload.push(relPath);
   }
   for (const relPath of Object.keys(base.files)) {
-    if (!local.has(relPath)) deleted.push(relPath);
+    if (!local.has(relPath) && !lazy.has(relPath)) deleted.push(relPath);
   }
   return { upload: upload.sort(), deleted: deleted.sort() };
 }
 
-/** The next manifest version: the local files, and tombstones for deletes. */
-export function nextManifest(base: SyncManifest, local: ReadonlyMap<string, LocalEntry>, diff: ManifestDiff, at: Date): SyncManifest {
+/** The next manifest version: local files (plus still-lazy base entries), and tombstones for deletes. */
+export function nextManifest(base: SyncManifest, local: ReadonlyMap<string, LocalEntry>, lazy: ReadonlySet<string>, diff: ManifestDiff, at: Date): SyncManifest {
   const files: Record<string, SyncFile> = {};
+  for (const relPath of lazy) if (base.files[relPath] && !local.has(relPath)) files[relPath] = base.files[relPath]!;
   for (const [relPath, entry] of local) files[relPath] = { sha256: entry.sha256, size: entry.size, mtime: entry.mtime, kind: entry.kind };
   const tombstones: Record<string, SyncTombstone> = {};
   for (const [relPath, tombstone] of Object.entries(base.tombstones)) {
@@ -94,5 +103,6 @@ export function nextManifest(base: SyncManifest, local: ReadonlyMap<string, Loca
 export function referencedBlobs(manifest: SyncManifest): Set<string> {
   const hashes = new Set<string>();
   for (const file of Object.values(manifest.files)) if (file.kind !== 'text') hashes.add(file.sha256);
+  if (manifest.embeddings) hashes.add(manifest.embeddings.sha256);
   return hashes;
 }

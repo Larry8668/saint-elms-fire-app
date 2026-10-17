@@ -8,9 +8,8 @@ import { assertVaultRelPath } from '../store/keys';
  * it is named here on purpose. The table in docs/object-store.md mirrors this file.
  *
  *  - text:  a file object under files/<path>, fetched on restore.
- *  - media: brain/raw/ originals, content-addressed under blobs/sha256/…, uploaded once.
- *  - large: any other file of 1 MiB or more, content-addressed the same way.
- * Both blob kinds are fetched during the restore (lazy media is PR-41c).
+ *  - media: content-addressed under blobs/sha256/…, uploaded once, fetched on first read.
+ *  - large: content-addressed like media, but fetched eagerly on restore (no lazy reader).
  */
 export type SyncKind = 'text' | 'media' | 'large';
 
@@ -22,13 +21,14 @@ const SYNCED_FILES = new Set(['logistics.json', 'feeds.json', 'signals.json', 's
  * Never synced, even inside a synced directory:
  *  - brain/.meta/writer.lock and journal/: in-flight state of this one process. An interrupted
  *    commit is finished locally by recover(); its result then syncs like any other write.
- *  - brain/.meta/embeddings/: derived vectors, rebuilt by the existing code (an optional cache is PR-41c).
+ *  - brain/.meta/embeddings/: derived vectors, carried separately as an optional cache.
  *  - *.tmp: a writeFileAtomic temp file caught mid-rename.
  * Outside the allowlist (so never synced): private-settings.json (provider credentials),
  * eval-events.jsonl (local-only counters, promised never sent), suggestions-*.json (a cache),
  * the sync's own state, and every device-level file (auth sessions, trust, profiles, settings).
  */
 const EXCLUDED_PREFIXES = ['brain/.meta/writer.lock', 'brain/.meta/journal/', 'brain/.meta/embeddings/'];
+export const EMBEDDINGS_DIRECTORY = 'brain/.meta/embeddings';
 export const MEDIA_DIRECTORY = 'brain/raw/';
 /** Anything this big outside raw/ is stored content-addressed too, so it is uploaded once. */
 export const LARGE_FILE_BYTES = 1024 * 1024;
@@ -78,4 +78,11 @@ export async function scanProfile(root: string): Promise<Map<string, LocalFile>>
   };
   await walk('');
   return files;
+}
+
+/** `brain/raw/<sourceId>/<revision>.<ext>` → the source id, so erasure can be recognised. */
+export function mediaSourceId(relPath: string): string | null {
+  if (!relPath.startsWith(MEDIA_DIRECTORY)) return null;
+  const parts = relPath.slice(MEDIA_DIRECTORY.length).split('/');
+  return parts.length === 2 ? parts[0]! : null;
 }
