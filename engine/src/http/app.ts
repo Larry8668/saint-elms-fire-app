@@ -44,6 +44,14 @@ export function createApp(deps: EngineDeps) {
     await next();
   });
 
+  // Public liveness is readable from any origin: the university portal checks a workspace VM
+  // answers before handing the student to it (PR-45). The body is public anyway, carries no
+  // credentials (no Allow-Credentials) and the route takes none.
+  app.use('/api/health', async (c, next) => {
+    await next();
+    if (c.req.method === 'GET' && !c.res.headers.has('access-control-allow-origin')) c.res.headers.set('access-control-allow-origin', '*');
+  });
+
   app.use(
     '*',
     cors({

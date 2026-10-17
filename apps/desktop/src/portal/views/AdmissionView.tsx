@@ -1,4 +1,4 @@
-import { CircleCheck, CircleSlash, Clock, LogOut, RefreshCw, ShieldAlert } from 'lucide-react';
+import { CircleCheck, CircleSlash, Clock, Cloud, LogOut, RefreshCw, ShieldAlert } from 'lucide-react';
 import type { AdmissionMe } from '@sef/shared';
 import { Button } from '@/components/ui/button';
 import { WorkingLabel } from '@/components/ui/loading';
@@ -8,7 +8,21 @@ import type { Banner } from '../portal-copy';
 import { Notice } from '../components/Notice';
 import { ProgrammeApply } from '../components/ProgrammeApply';
 
-export function AdmissionView({ me, banner, refreshing, onRefresh, onSignOut }: { me: AdmissionMe; banner: Banner | null; refreshing: boolean; onRefresh: () => void; onSignOut: () => void }) {
+export function AdmissionView({
+  me,
+  banner,
+  refreshing,
+  onRefresh,
+  onSignOut,
+  onOpenWorkspace,
+}: {
+  me: AdmissionMe;
+  banner: Banner | null;
+  refreshing: boolean;
+  onRefresh: () => void;
+  onSignOut: () => void;
+  onOpenWorkspace: () => void;
+}) {
   const state = admissionState(me);
 
   return (
@@ -27,7 +41,7 @@ export function AdmissionView({ me, banner, refreshing, onRefresh, onSignOut }: 
 
       {banner && <div className="mb-4"><Notice tone={banner.tone} title={banner.title}>{banner.body}</Notice></div>}
 
-      <Panel className="p-5 sm:p-7">{refreshing ? <AdmissionSkeleton /> : <AdmissionBody state={state} me={me} onApplied={onRefresh} />}</Panel>
+      <Panel className="p-5 sm:p-7">{refreshing ? <AdmissionSkeleton /> : <AdmissionBody state={state} me={me} onApplied={onRefresh} onOpenWorkspace={onOpenWorkspace} />}</Panel>
 
       <div className="mt-4 flex justify-center">
         <Button size="sm" variant="ghost" disabled={refreshing} onClick={onRefresh}>
@@ -38,7 +52,7 @@ export function AdmissionView({ me, banner, refreshing, onRefresh, onSignOut }: 
   );
 }
 
-function AdmissionBody({ state, me, onApplied }: { state: AdmissionState; me: AdmissionMe; onApplied: () => void }) {
+function AdmissionBody({ state, me, onApplied, onOpenWorkspace }: { state: AdmissionState; me: AdmissionMe; onApplied: () => void; onOpenWorkspace: () => void }) {
   if (state === 'not-applied') {
     return (
       <div className="space-y-5">
@@ -68,8 +82,14 @@ function AdmissionBody({ state, me, onApplied }: { state: AdmissionState; me: Ad
             <span>The registrar has approved your place{me.enrolment?.cohortId ? ` in cohort ${me.enrolment.cohortId}` : ''}.</span>
           </span>
         </Notice>
+        <div className="space-y-2">
+          <Button variant="primary" size="lg" className="w-full" onClick={onOpenWorkspace}>
+            <Cloud /> Open my workspace
+          </Button>
+          <p className="text-[12px] leading-5 text-night-500">Your workspace runs on the university&apos;s servers; your notes are saved to your university storage. Nothing to install.</p>
+        </div>
         <div>
-          <Eyebrow className="mb-2">Set up your device</Eyebrow>
+          <Eyebrow className="mb-2">Or study on your own device</Eyebrow>
           <ol className="list-decimal space-y-2 pl-5 text-[13.5px] leading-6 text-night-300">
             <li>Install and open the Saint Elms app on the device you will study on.</li>
             <li>Choose <em>Sign in with a device code</em>. The app shows a short code.</li>
@@ -78,7 +98,7 @@ function AdmissionBody({ state, me, onApplied }: { state: AdmissionState; me: Ad
             </li>
           </ol>
           <p className="mt-3 text-[12px] leading-5 text-night-500">
-            This page only handles your account. The student dashboard runs on your own device, not here.
+            The desktop app keeps your notes on that device instead.
           </p>
         </div>
       </div>

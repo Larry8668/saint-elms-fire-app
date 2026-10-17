@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
-import { parseSessionConfig } from './config';
+import { parseSessionConfig, parseWorkspaceOrigins } from './config';
 import { flushErrorCode, healthVerdict } from './orchestrator';
 
 const base = { INSTABOX_API_KEY: 'ibk_x', SEF_GOLDEN_SNAPSHOT_ID: 'sn_agquvqu6h2bc33n7w2bfctcxni' };
@@ -45,4 +45,12 @@ test('the flush answer is read from the last JSON line session-stop.sh prints', 
   assert.equal(flushErrorCode('{"ok":true,"pushed":3,"version":7}'), null);
   assert.equal(flushErrorCode('curl: (7) Failed to connect'), null);
   assert.equal(flushErrorCode('{"ok":false,"error":"<script>"}'), null);
+});
+
+test('workspace origins: the Instabox edge by default, https or loopback only, anything else stops boot', () => {
+  assert.deepEqual(parseSessionConfig(base)!.workspaceOrigins, ['https://*.instabox.tech']);
+  assert.deepEqual(parseWorkspaceOrigins('https://*.instabox.tech, http://127.0.0.1:3512'), ['https://*.instabox.tech', 'http://127.0.0.1:3512']);
+  for (const bad of ['*', 'http://evil.test', 'https://*', "https://a.test 'unsafe-inline'", 'https://a.test/path', 'data:', 'https://*.*.test']) {
+    assert.throws(() => parseWorkspaceOrigins(bad), /SESSION_WORKSPACE_ORIGINS/, bad);
+  }
 });

@@ -65,6 +65,7 @@ The status body (`StudentSessionStatus` in `@sef/shared`) has `steps[]`, each wi
 | `SESSION_AUTO_SUSPEND_SECONDS` | `1800` | Instabox's own idle suspend on the VM (0 or 120–86400). Teardown resumes a suspended box before the flush. |
 | `SESSION_CAPACITY_WAIT_SECONDS` | `600` | How long a spawn keeps retrying `no_capacity` or `quota_exceeded` before it fails. |
 | `SESSION_HEALTH_TIMEOUT_SECONDS` | `180` | How long to wait for public health to report ready (vault restore included). |
+| `SESSION_WORKSPACE_ORIGINS` | `https://*.instabox.tech` | Origins the portal page (`/app`) may read a workspace's public health from (CSP `connect-src`), so the browser sees the VM answer before it is handed there (PR-45). https, or http on loopback for tests; anything else stops boot. |
 | `UNI_PUBLIC_URL` | `http://localhost:4200` | Sent to the VM as `UNI_SERVER_URL`. It must be reachable from Instabox. |
 | `MODEL_GATEWAY_URL` | `https://gateway.invalid/v1` | The central model gateway (PR-43). |
 | `GATEWAY_TOKEN_SECRET` | (none) | At least 32 bytes. HMAC key for `MODEL_GATEWAY_TOKEN`. Required in production. |

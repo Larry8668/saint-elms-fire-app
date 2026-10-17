@@ -266,3 +266,22 @@ test('a traversal attempt through the portal mount cannot read outside the build
   }
   restore();
 });
+
+test('only the onboarding shell may read a workspace VM, and only the configured origins', async () => {
+  const dir = await builtPortal();
+  const previous = config.portalDir;
+  config.portalDir = dir;
+  const deps = { ...withAccount, sessions: { config: { workspaceOrigins: ['https://*.instabox.tech'] } } } as unknown as UniDeps;
+  const server = new Hono();
+  server.route('/', portalRoutes(deps));
+  const shell = (await server.request('/app/')).headers.get('content-security-policy') ?? '';
+  const device = (await server.request('/device')).headers.get('content-security-policy') ?? '';
+  config.portalDir = previous;
+  assert.ok(shell.includes("connect-src 'self' https://*.instabox.tech;"), shell);
+  assert.ok(device.includes("connect-src 'self';"), 'the device page talks to the uni only');
+
+  const { server: off, restore } = await app(dir);
+  const plain = (await off.request('/app/')).headers.get('content-security-policy') ?? '';
+  restore();
+  assert.ok(plain.includes("connect-src 'self';"), 'no orchestrator, no extra origin');
+});

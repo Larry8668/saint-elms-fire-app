@@ -1,8 +1,8 @@
 import { spawn, spawnSync, type ChildProcess } from 'node:child_process';
-import { mkdirSync, mkdtempSync, openSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, mkdtempSync, openSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
-import { ENGINE_PORT, UNI_PORT, UNI_URL } from './support';
+import { ENGINE_PORT, INSTABOX_PORT, UNI_PORT, UNI_URL, WORKSPACE_UI_DIR } from './support';
 
 /**
  * Starts the university server and the student engine for the run and stops them
@@ -30,6 +30,7 @@ const ENGINE_DATA = mkdtempSync(path.join(tmpdir(), 'sef-e2e-engine-'));
 const UNI_DATA = mkdtempSync(path.join(tmpdir(), 'sef-e2e-uni-'));
 
 let uni: ChildProcess | null = null;
+let instabox: ChildProcess | null = null;
 let engine: ChildProcess | null = null;
 const LOG = path.join(REPO, 'test-results/e2e-uni.log');
 const ENGINE_LOG = path.join(REPO, 'test-results/e2e-engine.log');
@@ -58,7 +59,7 @@ const reachable = async (url: string): Promise<boolean> => {
  * The drill spec also reads the engine address and data dir out of it.
  */
 const statusPath = path.join(REPO, 'test-results/e2e-status.json');
-const writeStatus = (value: { ok: boolean; reason?: string; engineUrl?: string; engineDataDir?: string; uniUrl?: string }) =>
+const writeStatus = (value: { ok: boolean; reason?: string; engineUrl?: string; engineDataDir?: string; uniUrl?: string; workspaceUi?: boolean }) =>
   writeFileSync(statusPath, JSON.stringify(value), 'utf8');
 
 const spawnService = (binDir: string, cwd: string, env: NodeJS.ProcessEnv, fd: number): ChildProcess =>
@@ -136,6 +137,17 @@ export default async function globalSetup(): Promise<(() => Promise<void>) | voi
     return;
   }
 
+  /**
+   * The in-repo fake Instabox stands in for the operator's account, so the uni runs its real
+   * session orchestrator. Every machine it publishes is the e2e engine, which plays the VM.
+   */
+  instabox = spawn(path.join(REPO, 'server/uni/node_modules/.bin/tsx'), ['../../e2e/fake-instabox.ts'], {
+    cwd: path.join(REPO, 'server/uni'),
+    env: { ...process.env, FAKE_INSTABOX_PORT: String(INSTABOX_PORT), FAKE_PUBLISHED_URL: ENGINE_URL },
+    stdio: ['ignore', logFd, logFd],
+    detached: true,
+  });
+
   uni = spawnService(
     path.join(REPO, 'server/uni'),
     path.join(REPO, 'server/uni'),
@@ -150,6 +162,10 @@ export default async function globalSetup(): Promise<(() => Promise<void>) | voi
       UNI_PORTAL_DIR: PORTAL_DIR,
       UNI_DATA_DIR: UNI_DATA,
       KEYS_DIR: path.join(UNI_DATA, 'keys'),
+      INSTABOX_API_KEY: 'ibk_fake_contract_key_0000',
+      INSTABOX_API_URL: `http://127.0.0.1:${INSTABOX_PORT}`,
+      SEF_GOLDEN_SNAPSHOT_ID: 'sn_e2efakesnapshot',
+      SESSION_WORKSPACE_ORIGINS: ENGINE_URL,
     },
     logFd,
   );
@@ -170,6 +186,8 @@ export default async function globalSetup(): Promise<(() => Promise<void>) | voi
       ENGINE_DATA_DIR: ENGINE_DATA,
       SEED_DEMO: 'false',
       UNI_SERVER_URL: UNI_URL,
+      // The workspace build (same-origin) lets the engine play a workspace VM for the browser.
+      ...(existsSync(path.join(WORKSPACE_UI_DIR, 'index.html')) ? { ENGINE_STATIC_DIR: WORKSPACE_UI_DIR } : {}),
       // Model roles stay overrideable so the drill can point at whatever is pulled.
       ...(process.env.E2E_TUTOR_MODEL ? { TUTOR_MODEL: process.env.E2E_TUTOR_MODEL } : {}),
       ...(process.env.E2E_BRAIN_MODEL ? { BRAIN_MODEL: process.env.E2E_BRAIN_MODEL } : {}),
@@ -187,7 +205,7 @@ export default async function globalSetup(): Promise<(() => Promise<void>) | voi
     return;
   }
 
-  writeStatus({ ok: true, engineUrl: ENGINE_URL, engineDataDir: ENGINE_DATA, uniUrl: UNI_URL });
+  writeStatus({ ok: true, engineUrl: ENGINE_URL, engineDataDir: ENGINE_DATA, uniUrl: UNI_URL, workspaceUi: existsSync(path.join(WORKSPACE_UI_DIR, 'index.html')) });
   // Playwright runs the function globalSetup returns as the run's teardown — exporting a
   // `globalTeardown` name alone wires nothing, and leaked servers poison the next run's
   // port guard.
@@ -221,5 +239,5 @@ const stop = async (proc: ChildProcess | null): Promise<void> => {
 };
 
 export async function globalTeardown(): Promise<void> {
-  await Promise.all([stop(uni), stop(engine)]);
+  await Promise.all([stop(uni), stop(engine), stop(instabox)]);
 }
