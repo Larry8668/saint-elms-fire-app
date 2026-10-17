@@ -32,9 +32,10 @@ export function authRoutes(deps: EngineDeps) {
   // proves anything, so the profile picker and the password-less offline unlock close.
   const hosted = edge.publicHost !== null;
 
-  // Guessing is limited per client; a sign-in that succeeds refunds its attempt. Device
-  // polls carry no secret, so they are only capped above the client's 2 s poll floor.
-  const signInLimit = () => rateLimit(new SlidingWindowLimiter({ limit: 5, windowMs: MINUTE }), edge, true);
+  // Guessing is limited per client across both sign-in routes (one shared budget); a
+  // sign-in that succeeds refunds its attempt. Device polls carry no secret, so they are
+  // only capped above the client's 2 s poll floor.
+  const signInLimit = rateLimit(new SlidingWindowLimiter({ limit: 5, windowMs: MINUTE }), edge, true);
   const pollLimit = rateLimit(new SlidingWindowLimiter({ limit: 30, windowMs: MINUTE }), edge, false);
 
   const failed = (c: Context<EngineEnv>, error: AuthError, fields: Record<string, unknown> = {}) => {
@@ -45,7 +46,7 @@ export function authRoutes(deps: EngineDeps) {
   /** Profiles on this device, for the sign-in picker. No secrets, works offline. */
   app.get('/profiles', async (c) => c.json(hosted ? [] : await deps.auth.profiles()));
 
-  app.post('/login', signInLimit(), async (c) => {
+  app.post('/login', signInLimit, async (c) => {
     const parsed = LoginRequestSchema.safeParse(await c.req.json().catch(() => null));
     if (!parsed.success) return c.json({ error: 'Enter an email and password', code: 'invalid_request' }, 400);
     try {
@@ -87,7 +88,7 @@ export function authRoutes(deps: EngineDeps) {
    * Offline entry for a device-sign-in profile: the stored uni-signed entitlement is
    * verified locally. First-time users have no entitlement and cannot get in offline.
    */
-  app.post('/offline-login', signInLimit(), async (c) => {
+  app.post('/offline-login', signInLimit, async (c) => {
     if (hosted) {
       return c.json({ error: 'Offline unlock is only available on the device itself. Sign in with your university account.', code: 'offline_unavailable' }, 403);
     }
