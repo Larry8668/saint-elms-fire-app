@@ -3,8 +3,8 @@
  * stay in this webview's storage and go nowhere else (never to the uni). The Instabox key is
  * not here; it lives in the OS keychain behind the Tauri shell.
  *
- * Minimal on purpose: the engine URL is read once at startup (lib/api.ts), so switching seats
- * reloads the window. A per-call seat store replaces this later.
+ * lib/api.ts reads `engineTarget()` on every call, so the address is never a build-time
+ * constant. Switching engines still reloads the window: a session token belongs to one engine.
  */
 export interface SeatRecord {
   engineUrl: string;
@@ -78,4 +78,47 @@ export function writeSeat(record: SeatRecord, store: Storage | null = storage())
 
 export function forgetSeat(store: Storage | null = storage()): void {
   store?.removeItem(KEY);
+  store?.removeItem(MODE_KEY);
+}
+
+const MODE_KEY = 'sef.engine-mode';
+const configuredEngineUrl = import.meta.env?.VITE_ENGINE_URL as string | undefined;
+
+/**
+ * Where engine calls go:
+ * - `served`: the UI an engine serves itself (`VITE_ENGINE_URL=same-origin`), so calls go to
+ *   the page's own origin; `remote` is false only when that origin is loopback.
+ * - `seat`: a claimed hosted seat.
+ * - `local`: this computer's engine, either because there is no seat or because the student
+ *   switched back to it (the seat is kept so they can switch again).
+ */
+export type EngineTarget =
+  | { kind: 'served'; base: ''; remote: boolean }
+  | { kind: 'seat'; base: string; seat: SeatRecord }
+  | { kind: 'local'; base: string; seat: SeatRecord | null };
+
+const pageIsLoopback = () => typeof location !== 'undefined' && LOOPBACK.has(location.hostname);
+
+export function engineTarget(store: Storage | null = storage(), configured = configuredEngineUrl): EngineTarget {
+  if (configured === 'same-origin') return { kind: 'served', base: '', remote: !pageIsLoopback() };
+  const seat = readSeat(store);
+  if (seat && !prefersLocalEngine(store)) return { kind: 'seat', base: seat.engineUrl, seat };
+  return { kind: 'local', base: configured ?? 'http://127.0.0.1:4100', seat };
+}
+
+/** True when engine calls go to a hosted seat, which may be asleep and need waking. */
+export const isRemoteTarget = (target: EngineTarget) => target.kind === 'seat' || (target.kind === 'served' && target.remote);
+
+function prefersLocalEngine(store: Storage | null): boolean {
+  try {
+    return store?.getItem(MODE_KEY) === 'local';
+  } catch {
+    return false;
+  }
+}
+
+/** The "local engine" toggle: route calls to this computer's engine without forgetting the seat. */
+export function setPreferLocalEngine(on: boolean, store: Storage | null = storage()): void {
+  if (on) store?.setItem(MODE_KEY, 'local');
+  else store?.removeItem(MODE_KEY);
 }

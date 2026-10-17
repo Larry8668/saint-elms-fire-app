@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
-import { forgetSeat, normalizeSeatUrl, readSeat, seatHost, writeSeat } from './seat';
+import { engineTarget, forgetSeat, isRemoteTarget, normalizeSeatUrl, readSeat, seatHost, setPreferLocalEngine, writeSeat } from './seat';
 
 const memory = (): Storage => {
   const map = new Map<string, string>();
@@ -54,4 +54,51 @@ test('the displayed host never throws', () => {
   assert.equal(seatHost('https://4100-abc.instabox.tech'), '4100-abc.instabox.tech');
   assert.equal(seatHost('not a url'), null);
   assert.equal(seatHost(''), null);
+});
+
+test('engine calls follow the stored seat, and the local toggle keeps the seat for later', () => {
+  const store = memory();
+  assert.deepEqual(engineTarget(store, undefined), { kind: 'local', base: 'http://127.0.0.1:4100', seat: null });
+  assert.equal(engineTarget(store, 'http://127.0.0.1:4910').base, 'http://127.0.0.1:4910', 'the build-time local address still applies');
+
+  writeSeat({ engineUrl: 'https://4100-abc.instabox.tech', machineId: 'm_abc' }, store);
+  const seat = engineTarget(store, undefined);
+  assert.equal(seat.kind, 'seat');
+  assert.equal(seat.base, 'https://4100-abc.instabox.tech');
+  assert.equal(isRemoteTarget(seat), true);
+
+  setPreferLocalEngine(true, store);
+  const local = engineTarget(store, undefined);
+  assert.equal(local.kind, 'local');
+  assert.equal(local.base, 'http://127.0.0.1:4100');
+  assert.deepEqual(local.kind === 'local' && local.seat, { engineUrl: 'https://4100-abc.instabox.tech', machineId: 'm_abc' }, 'switching back is one click');
+  assert.equal(isRemoteTarget(local), false);
+
+  setPreferLocalEngine(false, store);
+  assert.equal(engineTarget(store, undefined).kind, 'seat');
+
+  setPreferLocalEngine(true, store);
+  forgetSeat(store);
+  assert.equal(engineTarget(store, undefined).kind, 'local');
+  assert.equal(store.length, 0, 'forgetting the seat clears the toggle too');
+});
+
+test('the seat and the toggle survive a restart: every read goes back to storage', () => {
+  const store = memory();
+  writeSeat({ engineUrl: 'https://seat.tail1.ts.net' }, store);
+  setPreferLocalEngine(true, store);
+  const restored = memory();
+  for (let i = 0; i < store.length; i += 1) restored.setItem(store.key(i)!, store.getItem(store.key(i)!)!);
+  assert.equal(engineTarget(restored, undefined).kind, 'local');
+  setPreferLocalEngine(false, restored);
+  assert.equal(engineTarget(restored, undefined).base, 'https://seat.tail1.ts.net', 'any https host, not only instabox.tech');
+});
+
+test('the UI an engine serves itself calls its own origin, whatever is stored', () => {
+  const store = memory();
+  writeSeat({ engineUrl: 'https://4100-abc.instabox.tech' }, store);
+  const served = engineTarget(store, 'same-origin');
+  assert.equal(served.kind, 'served');
+  assert.equal(served.base, '');
+  assert.equal(isRemoteTarget(served), true, 'outside loopback a served page is a seat');
 });

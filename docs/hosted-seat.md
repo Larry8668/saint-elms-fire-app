@@ -125,7 +125,24 @@ Instabox's own errors are shown with what to do about them: `quota_exceeded` (de
 
 **Why no Vault.** Instabox can copy the account's Vault items into machines it creates, and code running on a box that holds a `machines:write` key could read them. A seat needs none of them, so it is created with `vault: false`. A student who wants Vault items on the seat can turn that on later in Instabox.
 
-**Switching back.** Under the sign-in card, "Use this computer's engine instead" forgets the seat on this device. The machine itself is not touched.
+**Switching back.** Under the sign-in card, "Use this computer's engine instead" routes the app to the local engine (`127.0.0.1:4100`, or `VITE_ENGINE_URL`). The seat stays remembered, so "Use your seat" switches back. Each switch reloads the window, because a session belongs to one engine. The machine itself is not touched.
+
+## Using a seat: waking and pausing
+
+The app reads the engine address on every call (`apps/desktop/src/lib/seat.ts`), so it is never fixed at build time. The UI that an engine serves itself (`VITE_ENGINE_URL=same-origin`) calls its own origin.
+
+A seat may be asleep, and the Instabox edge reports its state in ways the app can tell apart:
+
+| The edge answers | Meaning | What the app does |
+| --- | --- | --- |
+| Normal answer after about 1 s | The box was idle-suspended, and the request woke it | Nothing visible |
+| No answer (connection failure or timeout) | The network is down or the box is waking | Shows "Waking your seat…" and polls public `/api/health` with backoff (0.5 s rising to 5 s) for up to about 60 s, then sends the call again |
+| `502`, plain text | The box is up, but the engine is not listening yet | Same as above, with "the engine is still starting" |
+| `503` "Sandbox offline", plain text | The box was stopped or paused by hand. A request alone never wakes it. | Shows "Your seat is paused". The desktop app offers **Resume seat**, which starts or resumes the machine with the key in the keychain. A browser explains how to resume it from the desktop app or the Instabox dashboard. |
+
+The engine's own `502` and `503` responses are JSON, for example when the university is unreachable. They are passed through as ordinary errors and never trigger a wake. After a dropped connection, only reads are sent again, because a write might already have landed. A write fails with "ready now, try that again" instead.
+
+Chat streams over the edge. If the answer ever arrives in one piece (the first frames arrive together with the end, more than 2 s after sending), the turn is labelled as delivered all at once instead of streamed.
 
 ## Known limitations (measured on a real seat)
 

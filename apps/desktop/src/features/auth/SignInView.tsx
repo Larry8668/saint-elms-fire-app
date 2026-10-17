@@ -12,6 +12,8 @@ import { useHealth } from '@/lib/queries';
 import { useSession } from '@/lib/session';
 import { UNI_URL } from '@/lib/uni-url';
 import { SeatEntry } from '@/features/seat/SeatEntry';
+import { SeatWakeNotice, useSeatWake } from '@/features/seat/SeatWakeNotice';
+import { engineTarget, isRemoteTarget } from '@/lib/seat';
 import { DeviceSignInCard } from './DeviceSignInCard';
 import { uniOfflineFrom } from './uni-offline';
 
@@ -34,6 +36,9 @@ const PROMISES = [
 export function SignInView() {
   const health = useHealth();
   const engineDown = health.isError;
+  // A hosted seat may be asleep or paused: it gets its own notice, never the local "pnpm dev" one.
+  const remote = isRemoteTarget(engineTarget());
+  const wake = useSeatWake();
   // Signed out, public health still carries the bare uni boolean; that drives the banner and Continue.
   const uniOffline = uniOfflineFrom(health.data);
 
@@ -43,7 +48,9 @@ export function SignInView() {
       <div className="relative grid w-full max-w-5xl gap-12 lg:grid-cols-[1fr_420px] lg:items-center">
         <Pitch />
         <section className="glass-strong rounded-3xl p-7 animate-rise [animation-delay:80ms]">
-          {engineDown ? (
+          {remote && (engineDown || wake.phase !== 'idle') ? (
+            <SeatWakeNotice failed={engineDown} />
+          ) : engineDown ? (
             <EmptyState
               icon={<ServerCrash />}
               title="The engine isn't running"

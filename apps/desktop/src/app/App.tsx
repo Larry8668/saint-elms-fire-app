@@ -6,6 +6,7 @@ import { BrainView } from '@/features/brain/BrainView';
 import { ContributeView } from '@/features/contribute/ContributeView';
 import { LibraryView } from '@/features/library/LibraryView';
 import { LogisticsView } from '@/features/logistics/LogisticsView';
+import { SeatWakeNotice } from '@/features/seat/SeatWakeNotice';
 import { PeersView } from '@/features/peers/PeersView';
 import { SettingsView } from '@/features/settings/SettingsView';
 import { SkyView } from '@/features/sky/SkyView';
@@ -33,6 +34,7 @@ export function App() {
     <div className="flex h-screen overflow-hidden bg-night-950 text-night-100">
       <Sidebar onOpenAttention={() => setRailOpen(true)} />
       <main className="relative flex min-w-0 flex-1 flex-col">
+        <SeatWakeNotice className="mx-6 mt-4" />
         <AttentionBanner onOpenRail={() => setRailOpen(true)} />
         <AnimatePresence mode="wait">
           <motion.div key={view} className="min-h-0 flex-1" initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }} transition={{ duration: 0.18 }}>
