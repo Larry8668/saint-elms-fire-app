@@ -4,7 +4,7 @@ import { createOpenAICompatible } from '@ai-sdk/openai-compatible';
 import type { ModelRole, ProviderConfig } from '@sef/shared';
 import { envInt } from '@sef/shared/node';
 import { createOllama } from 'ollama-ai-provider-v2';
-import type { StoredSettings } from '../settings/store';
+import { isGatewayProvider, type StoredSettings } from '../settings/store';
 
 /** The AI SDK v5 model object every Mastra agent accepts. */
 export type ChatModel = ReturnType<ReturnType<typeof createOllama>>;
@@ -27,12 +27,24 @@ type ProviderFactory = (provider: ProviderConfig, modelId: string) => ChatModel;
 const trimSlash = (url: string) => url.replace(/\/+$/, '');
 
 /**
+ * Headers for every native Ollama call (chat, structured, embeddings, the model list). A key
+ * on an `ollama` provider is sent as a bearer: on a hosted session that is the gateway token,
+ * which lives only in the environment-derived read view of the settings.
+ */
+export function ollamaHeaders(provider: Pick<ProviderConfig, 'apiKey'>): Record<string, string> {
+  return provider.apiKey ? { authorization: `Bearer ${provider.apiKey}` } : {};
+}
+
+/** A model running on this machine: Ollama, but not the operator's gateway (which is Ollama-native too). */
+export const isOnDevice = (provider: ProviderConfig): boolean => provider.kind === 'ollama' && !isGatewayProvider(provider);
+
+/**
  * One factory per provider kind. Adding a provider means adding one entry here
  * and one option in settings — nothing else in the engine changes.
  */
 const FACTORIES: Record<ProviderConfig['kind'], ProviderFactory> = {
   ollama: (provider, modelId) =>
-    createOllama({ baseURL: `${trimSlash(provider.baseUrl ?? 'http://localhost:11434')}/api` })(modelId),
+    createOllama({ baseURL: `${trimSlash(provider.baseUrl ?? 'http://localhost:11434')}/api`, headers: ollamaHeaders(provider) })(modelId),
   'openai-compatible': (provider, modelId) => {
     if (!provider.baseUrl) throw new ModelConfigError(`Provider "${provider.id}" needs a base URL`);
     return createOpenAICompatible({

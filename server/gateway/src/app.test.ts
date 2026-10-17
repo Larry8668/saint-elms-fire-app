@@ -125,6 +125,19 @@ test('only allowlisted endpoints and models pass; the worker never sees the call
   assert.deepEqual(up.seen, ['POST /api/embed auth=Bearer worker-key', 'GET /api/tags auth=Bearer worker-key']);
 });
 
+test('a share screen reaches the worker with its logprobs and options untouched', async () => {
+  let forwarded = '';
+  const up = await fakeUpstream((req, res, body) => {
+    forwarded = body;
+    ok(req, res);
+  });
+  const gw = await gateway([up.url], { models: ['shieldgemma:2b'] });
+  // The engine's ShieldGemma call (engine/src/shares/screen.ts): one token, scored by P(Yes).
+  const screen = { model: 'shieldgemma:2b', messages: [{ role: 'user', content: 'q' }], stream: false, logprobs: true, top_logprobs: 10, options: { temperature: 0, num_predict: 1 } };
+  assert.equal((await gw.call('/api/chat', { json: screen })).status, 200);
+  assert.deepEqual(JSON.parse(forwarded), screen, 'the gateway allowlists routes and models, never body fields');
+});
+
 test('fails over from a down worker and a 5xx worker, tripping their circuits', async () => {
   const dead = 'http://127.0.0.1:9'; // discard port: connection refused
   const broken = await fakeUpstream((_req, res) => {

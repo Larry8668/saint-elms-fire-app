@@ -1,6 +1,6 @@
 import type { DeviceCapability, EngineSettings, ModelRole, ModelRoleConfig, TieredRole } from '@sef/shared';
 
-export const TIERED_ROLES: readonly TieredRole[] = ['tutor', 'brain', 'vision'];
+export const TIERED_ROLES: readonly TieredRole[] = ['tutor', 'brain', 'vision', 'safety'];
 export const DISMISS_KEY = 'sef.capability-card.dismissed';
 
 type KeyValueStore = Pick<Storage, 'getItem' | 'setItem'>;

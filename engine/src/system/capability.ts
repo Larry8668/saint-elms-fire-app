@@ -9,6 +9,7 @@ const PROBE_TIMEOUT_MS = 5_000;
 const REPORTED_RAM_SLACK = 0.95;
 
 export const GEMMA4 = { e2b: 'gemma4:e2b', e4b: 'gemma4:e4b', b26: 'gemma4:26b', b31: 'gemma4:31b' } as const;
+export const SHIELDGEMMA = { b2: 'shieldgemma:2b', b9: 'shieldgemma:9b' } as const;
 
 interface Tier {
   minRamGb: number;
@@ -18,14 +19,16 @@ interface Tier {
 /**
  * Highest first. The brain (batch keeper/reviewer) climbs first; the tutor stays on e4b for
  * chat latency until there is room for two large models; vision stays on an E-model because
- * only those carry the audio encoder that source transcription depends on.
+ * only those carry the audio encoder that source transcription depends on. Share screening
+ * moves to ShieldGemma 9B from 32 GB: the 2B misses harassment and hate in practice and
+ * mislabels what it does catch.
  */
 export const TIERS: readonly Tier[] = [
-  { minRamGb: 64, suggested: { tutor: GEMMA4.b26, brain: GEMMA4.b31, vision: GEMMA4.e4b } },
-  { minRamGb: 48, suggested: { tutor: GEMMA4.e4b, brain: GEMMA4.b31, vision: GEMMA4.e4b } },
-  { minRamGb: 32, suggested: { tutor: GEMMA4.e4b, brain: GEMMA4.b26, vision: GEMMA4.e4b } },
-  { minRamGb: 12, suggested: { tutor: GEMMA4.e4b, brain: GEMMA4.e4b, vision: GEMMA4.e4b } },
-  { minRamGb: 0, suggested: { tutor: GEMMA4.e2b, brain: GEMMA4.e2b, vision: GEMMA4.e2b } },
+  { minRamGb: 64, suggested: { tutor: GEMMA4.b26, brain: GEMMA4.b31, vision: GEMMA4.e4b, safety: SHIELDGEMMA.b9 } },
+  { minRamGb: 48, suggested: { tutor: GEMMA4.e4b, brain: GEMMA4.b31, vision: GEMMA4.e4b, safety: SHIELDGEMMA.b9 } },
+  { minRamGb: 32, suggested: { tutor: GEMMA4.e4b, brain: GEMMA4.b26, vision: GEMMA4.e4b, safety: SHIELDGEMMA.b9 } },
+  { minRamGb: 12, suggested: { tutor: GEMMA4.e4b, brain: GEMMA4.e4b, vision: GEMMA4.e4b, safety: SHIELDGEMMA.b2 } },
+  { minRamGb: 0, suggested: { tutor: GEMMA4.e2b, brain: GEMMA4.e2b, vision: GEMMA4.e2b, safety: SHIELDGEMMA.b2 } },
 ];
 
 /** The OS seams detection reads through; tests replace them with fixed machines. */
@@ -39,7 +42,7 @@ const systemProbe: CapabilityProbe = { platform: process.platform, totalMemBytes
 
 const configuredDefaults = (): Record<TieredRole, string> => {
   const d = config.defaults;
-  return { tutor: d.tutorModel, brain: d.brainModel, vision: d.visionModel };
+  return { tutor: d.tutorModel, brain: d.brainModel, vision: d.visionModel, safety: d.safetyModel };
 };
 
 export function suggestFor(ramGb: number | null): Record<TieredRole, string> {
@@ -92,7 +95,9 @@ export async function probeGpu(probe: CapabilityProbe): Promise<string | undefin
   return undefined;
 }
 
-export async function detectCapability(probe: CapabilityProbe = systemProbe): Promise<DeviceCapability> {
+export async function detectCapability(probe: CapabilityProbe = systemProbe, gateway = config.modelGateway): Promise<DeviceCapability> {
+  // A hosted session's models run behind the gateway, not on this VM: its RAM sizes nothing.
+  if (gateway) return { ramGb: null, suggested: configuredDefaults() };
   const ramGb = readRamGb(probe);
   const gpu = await probeGpu(probe);
   const capability: DeviceCapability = { ramGb, ...(gpu ? { gpu } : {}), suggested: suggestFor(ramGb) };

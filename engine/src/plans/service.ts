@@ -13,7 +13,7 @@ const MAX_CLOSED_PLANS = 20;
 const STATUS_ORDER: Record<StudyPlan['status'], number> = { active: 0, proposed: 1, completed: 2, abandoned: 3 };
 
 type Failure<C extends string> = { ok: false; code: C; message: string; notes?: string[] };
-export type ProposeResult = { ok: true; plan: StudyPlan } | Failure<'planner_unavailable' | 'no_valid_steps' | 'too_many_proposals'>;
+export type ProposeResult = { ok: true; plan: StudyPlan } | Failure<'planner_unavailable' | 'no_valid_steps' | 'goal_declined' | 'too_many_proposals'>;
 export type PlanActionResult = { ok: true; plan: StudyPlan } | Failure<'not_found' | 'not_proposed' | 'not_open' | 'too_many_active' | 'nothing_left'>;
 
 export interface PendingPlanStep {
@@ -72,6 +72,11 @@ export class PlanService {
         return { ok: false, code: 'planner_unavailable', message: 'The planning model is not reachable right now. Check Models in Settings and try again.' };
       }
       const { steps, notes } = validateDraft(draft, world);
+      const declined = draft.declined?.replace(/\s+/g, ' ').trim().slice(0, 200);
+      if (!steps.length && declined) {
+        log.info('plan_declined', { proposed: draft.steps.length });
+        return { ok: false, code: 'goal_declined', message: `That goal could not be turned into a study plan: ${declined}`, notes };
+      }
       if (!steps.length) {
         log.info('plan_rejected', { proposed: draft.steps.length });
         return { ok: false, code: 'no_valid_steps', message: 'None of the proposed steps pointed at something in your workspace, so there is no plan to show.', notes };
