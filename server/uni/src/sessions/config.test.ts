@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
 import { parseSessionConfig } from './config';
-import { healthVerdict } from './orchestrator';
+import { flushErrorCode, healthVerdict } from './orchestrator';
 
 const base = { INSTABOX_API_KEY: 'ibk_x', SEF_GOLDEN_SNAPSHOT_ID: 'sn_agquvqu6h2bc33n7w2bfctcxni' };
 
@@ -37,4 +37,12 @@ test('ready = ok health with sync ready, or an engine that predates sync', () =>
   assert.equal(healthVerdict({ status: 200, body: { ok: false } }), 'waiting');
   assert.equal(healthVerdict({ status: 502, body: null }), 'waiting');
   assert.equal(healthVerdict({ status: 200, body: 'Nothing is listening' }), 'waiting');
+});
+
+test('the flush answer is read from the last JSON line session-stop.sh prints', () => {
+  assert.equal(flushErrorCode('{"ok":false,"error":"conflict"}\n'), 'conflict');
+  assert.equal(flushErrorCode('some log\n{"ok":false,"error":"push_failed"}'), 'push_failed');
+  assert.equal(flushErrorCode('{"ok":true,"pushed":3,"version":7}'), null);
+  assert.equal(flushErrorCode('curl: (7) Failed to connect'), null);
+  assert.equal(flushErrorCode('{"ok":false,"error":"<script>"}'), null);
 });

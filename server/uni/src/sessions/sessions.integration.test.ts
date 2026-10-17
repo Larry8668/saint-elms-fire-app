@@ -220,7 +220,9 @@ test('spawn: create → start → publish → session-start → health, with per
     assert.equal(envs.MODEL_GATEWAY_URL, 'https://gateway.example.test/v1');
     assert.equal(envs.OBJECT_STORE_BUCKET, 'sef-vaults');
     assert.equal(envs.SYNC_FLUSH_TOKEN, session.flush_token);
-    assert.match(envs.SYNC_FLUSH_TOKEN!, /^[A-Za-z0-9_-]{43}$/);
+    assert.match(envs.SYNC_FLUSH_TOKEN!, /^[A-Za-z0-9_-]{43}$/, '32 random bytes, base64url: over the engine\'s 24-character minimum');
+    // With sync on, the engine refuses to boot unless VAULT_SYNC_ACCOUNT is among the seat owners.
+    assert.ok(envs.ENGINE_SEAT_OWNER!.split(',').includes(envs.VAULT_SYNC_ACCOUNT!));
     assert.match(envs.MODEL_GATEWAY_TOKEN!, /^sefgw1\.[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+$/);
     const verified = verifyGatewayToken(`Bearer ${envs.MODEL_GATEWAY_TOKEN}`, { secret: GATEWAY_SECRET, devTokens: [] });
     assert.ok(verified.ok, 'the gateway (PR-43a) accepts the minted token');
@@ -412,6 +414,27 @@ test('logout: DELETE flushes, then deletes the machine, then ends the row', test
     const next = await json(await call(h, 'POST', '/v1/session', cookie));
     assert.notEqual(next.id, id);
   });
+});
+
+test('flush answers from the engine: only push_failed and timeout are retried; every outcome still deletes', testOptions, async () => {
+  for (const [answer, attempts] of [['push_failed', 2], ['timeout', 2], ['conflict', 1], ['not_restored', 1]] as const) {
+    await withSessions(async (h) => {
+      h.fake.onExec = (_m, body) => String(body.cmd).includes('session-stop.sh')
+        ? { stdout: JSON.stringify({ ok: false, error: answer }), stderr: '', exitCode: 1 }
+        : { stdout: '', stderr: '', exitCode: 0 };
+      const { cookie } = await approvedStudent(h, `flush-${answer.replace('_', '-')}`);
+      const { id } = await json(await call(h, 'POST', '/v1/session', cookie));
+      await h.orchestrator.idle();
+      const mid = (await row(h, id)).machine_id!;
+      await call(h, 'DELETE', '/v1/session', cookie);
+      await h.orchestrator.idle();
+      const final = await row(h, id);
+      assert.equal(stopExecs(h).length, attempts, `${answer}: attempts`);
+      assert.equal(final.state, 'ended', `${answer}: still ends`);
+      assert.match(final.last_error ?? '', new RegExp(`engine refused the flush: ${answer}`));
+      assert.equal(h.fake.machines.has(mid), false, `${answer}: machine deleted`);
+    });
+  }
 });
 
 test('logout during a spawn stops the spawn and deletes what it made', testOptions, async () => {
