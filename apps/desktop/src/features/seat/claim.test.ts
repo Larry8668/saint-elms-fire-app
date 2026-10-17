@@ -21,6 +21,8 @@ class FakeAccount {
   activated = true;
   savedKey: string | null = 'ibk_already_saved_key';
   opPolls = 1;
+  /** A create operation that fails after the 202 (Instabox ran out of capacity mid-create). */
+  failCreateOperation: string | null = null;
   /** One-shot failures by method name. */
   failNext = new Map<string, Fault>();
   createFault: Fault | null = null;
@@ -81,6 +83,12 @@ class FakeAccount {
         return op;
       },
       operation: async (opId) => {
+        if (this.failCreateOperation) {
+          const code = this.failCreateOperation;
+          this.failCreateOperation = null;
+          this.machines = this.machines.filter((m) => m.id !== `m_${opId.slice(3)}`);
+          return { id: opId, type: 'create', state: 'failed', error: { code, message: `fake ${code}`, retryable: true } };
+        }
         const left = this.pending.get(opId) ?? 0;
         this.pending.set(opId, left - 1);
         if (left > 0) return { id: opId, type: 'create', state: 'running', phase: 'booting' };
@@ -355,4 +363,21 @@ test('a corrected key re-runs the key step even after later steps finished', asy
   view = await r.run({ ...CONFIG, key: 'ibk_the_new_one_123' });
   assert.equal(account.savedKey, 'ibk_the_new_one_123');
   assert.notEqual(view.failure?.code, 'api_key_revoked');
+});
+
+test('a create operation that fails with no_capacity resumes, in a new window, from the create', async () => {
+  const account = new FakeAccount();
+  account.failCreateOperation = 'no_capacity';
+  const store = memoryStore();
+  const first = await runner(account, store).r.run(CONFIG);
+  assert.equal(first.failure?.code, 'no_capacity');
+  assert.equal(first.failure?.retryFrom, 'machine');
+  assert.equal(account.machines.length, 0, 'Instabox removes a failed create');
+
+  const second = runner(account, store);
+  assert.equal(second.r.state.steps.machine, 'pending', 'no machine, so the machine step is not shown as done');
+  const view = await second.r.run(CONFIG);
+  assert.equal(view.complete, true, JSON.stringify(view.failure));
+  assert.equal(account.machines.length, 1);
+  assert.notEqual(account.creates[0]!.key, account.creates[1]!.key);
 });

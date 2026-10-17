@@ -156,7 +156,9 @@ export class ClaimRunner {
     this.now = deps.now ?? Date.now;
     this.newKey = deps.newKey ?? (() => crypto.randomUUID());
     this.timing = { ...DEFAULT_TIMING, ...deps.timing };
-    const through = this.progress.doneThrough ? CLAIM_STEPS.indexOf(this.progress.doneThrough) : -1;
+    // Past the key step, progress is only as good as the machine it points at.
+    const recorded = this.progress.doneThrough ? CLAIM_STEPS.indexOf(this.progress.doneThrough) : -1;
+    const through = this.progress.machineId ? recorded : Math.min(recorded, 0);
     this.view = {
       steps: Object.fromEntries(CLAIM_STEPS.map((s, i) => [s, i <= through ? 'done' : 'pending'])) as Record<ClaimStepId, StepStatus>,
       current: null,
@@ -257,7 +259,7 @@ export class ClaimRunner {
         } catch (error) {
           if (!(error instanceof SeatError && error.code === 'not_found')) throw error;
         }
-        this.update({ machineId: undefined, createOperationId: undefined, createKey: undefined, doneThrough: undefined });
+        this.update({ machineId: undefined, createOperationId: undefined, createKey: undefined, doneThrough: 'key' });
       }
       // The precheck: an existing labelled seat is adopted, never duplicated.
       const seats = (await client.listSeats()).filter((m) => !GONE.has(m.state));
@@ -292,7 +294,7 @@ export class ClaimRunner {
           if (op.state === 'failed') {
             const code = op.error?.code ?? 'operation_failed';
             // A failed create leaves no machine; the next attempt starts from the precheck.
-            if (op.type === 'create') this.update({ machineId: undefined, createKey: undefined, createOperationId: undefined });
+            if (op.type === 'create') this.update({ machineId: undefined, createKey: undefined, createOperationId: undefined, doneThrough: 'key' });
             throw new StepFailure(code, describeFailure(code, op.error?.message ?? 'Creating the machine failed.'), op.type === 'create' ? 'machine' : 'ready');
           }
           if (poll >= this.timing.maxOperationPolls) throw new StepFailure('operation_timeout', 'Instabox is still working on your machine. Retry to keep waiting.');
@@ -309,7 +311,7 @@ export class ClaimRunner {
           return;
         }
         if (GONE.has(machine.state)) {
-          this.update({ machineId: undefined, doneThrough: undefined });
+          this.update({ machineId: undefined, doneThrough: 'key' });
           throw new StepFailure('machine_gone', 'Your seat machine was deleted or failed. Retry creates a new one.', 'machine');
         }
         if (machine.state === 'stopped' || machine.state === 'suspended') {
