@@ -237,7 +237,7 @@ test('a device grant can only be polled by the client that started it, when the 
     await settings.update({ uniServerUrl: `http://127.0.0.1:${port}` });
     const credentials = new MemoryCredentialStore();
     const auth = new AuthService(settings, new ProfileRegistry(credentials), new AuthSessions(), credentials);
-    const grant = await auth.startDeviceSignIn();
+    const grant = await auth.startDeviceSignIn({ allowKeyless: true });
     assert.ok(grant.flowKey && grant.flowKey.length >= 32);
 
     const noFlow = (e: unknown) => e instanceof AuthError && e.code === 'no_device_flow';
@@ -246,6 +246,108 @@ test('a device grant can only be polled by the client that started it, when the 
     await assert.rejects(auth.pollDeviceSignIn({ flowKey: 'guessed' }), noFlow, 'a wrong key is refused even when optional');
     assert.equal((await auth.pollDeviceSignIn({ flowKey: grant.flowKey, requireFlowKey: true })).status, 'pending');
     assert.equal((await auth.pollDeviceSignIn()).status, 'pending', 'a loopback engine keeps keyless polls working');
+  } finally {
+    uni.close();
+  }
+});
+
+/** A uni whose device grants are numbered dc-1, dc-2…; it records which device_code each poll named, and denies any in `deny`. */
+async function deviceUni(expiresIn = 600) {
+  let issued = 0;
+  const polled: string[] = [];
+  const deny = new Set<string>();
+  const server = createServer((req, res) => {
+    let raw = '';
+    req.on('data', (chunk) => (raw += chunk));
+    req.on('end', () => {
+      res.setHeader('content-type', 'application/json');
+      if (req.method === 'POST' && req.url === '/v1/auth/device/code') {
+        issued += 1;
+        res.end(JSON.stringify({ device_code: `dc-${issued}`, user_code: `CODE-${issued}`, verification_uri: 'https://uni.test/device', expires_in: expiresIn, interval: 5 }));
+        return;
+      }
+      if (req.method === 'POST' && req.url === '/v1/auth/device/token') {
+        const code = (JSON.parse(raw) as { device_code: string }).device_code;
+        polled.push(code);
+        res.writeHead(400).end(JSON.stringify({ error: deny.has(code) ? 'access_denied' : 'authorization_pending' }));
+        return;
+      }
+      res.writeHead(404).end('{}');
+    });
+  });
+  await new Promise<void>((resolve) => server.listen(0, '127.0.0.1', resolve));
+  const address = server.address();
+  const port = typeof address === 'object' && address ? address.port : 0;
+  const settings = new SettingsStore(path.join(dataDir, `settings-device-${port}.json`));
+  await settings.update({ uniServerUrl: `http://127.0.0.1:${port}` });
+  return { settings, polled, deny, issued: () => issued, close: () => server.close() };
+}
+
+const noFlow = (e: unknown) => e instanceof AuthError && e.code === 'no_device_flow';
+
+function deviceAuth(settings: InstanceType<typeof SettingsStore>, options: { maxPendingFlows?: number; now?: () => number } = {}) {
+  const credentials = new MemoryCredentialStore();
+  return new AuthService(settings, new ProfileRegistry(credentials), new AuthSessions(), credentials, () => Promise.resolve('dev-test'), options);
+}
+
+test('concurrent device sign-ins each poll their own grant; a stranger starting one cancels nobody', async () => {
+  const uni = await deviceUni();
+  try {
+    const auth = deviceAuth(uni.settings);
+    const victim = await auth.startDeviceSignIn();
+    const attacker = await auth.startDeviceSignIn();
+    assert.notEqual(victim.flowKey, attacker.flowKey);
+    assert.equal((await auth.pollDeviceSignIn({ flowKey: victim.flowKey, requireFlowKey: true })).status, 'pending', 'the victim still has their flow');
+    assert.equal((await auth.pollDeviceSignIn({ flowKey: attacker.flowKey, requireFlowKey: true })).status, 'pending');
+    assert.deepEqual(uni.polled, ['dc-1', 'dc-2'], 'each key polls its own device code');
+
+    // One grant ending (denied) leaves the other in flight.
+    uni.deny.add('dc-2');
+    assert.equal((await auth.pollDeviceSignIn({ flowKey: attacker.flowKey, requireFlowKey: true })).status, 'denied');
+    await assert.rejects(auth.pollDeviceSignIn({ flowKey: attacker.flowKey, requireFlowKey: true }), noFlow, 'a finished grant is gone');
+    assert.equal((await auth.pollDeviceSignIn({ flowKey: victim.flowKey, requireFlowKey: true })).status, 'pending');
+    assert.equal(auth.pendingDeviceFlows, 1);
+  } finally {
+    uni.close();
+  }
+});
+
+test('pending device grants are bounded: the oldest is dropped past the cap, and expired ones by TTL', async () => {
+  const uni = await deviceUni(600);
+  try {
+    let now = 1_000_000;
+    const auth = deviceAuth(uni.settings, { maxPendingFlows: 3, now: () => now });
+    const grants = [];
+    for (let i = 0; i < 5; i += 1) grants.push(await auth.startDeviceSignIn());
+    assert.equal(auth.pendingDeviceFlows, 3);
+    for (const dropped of grants.slice(0, 2)) await assert.rejects(auth.pollDeviceSignIn({ flowKey: dropped.flowKey }), noFlow);
+    for (const kept of grants.slice(2)) assert.equal((await auth.pollDeviceSignIn({ flowKey: kept.flowKey })).status, 'pending');
+
+    now += 601_000; // past the uni's 600 s expiry
+    assert.equal((await auth.pollDeviceSignIn({ flowKey: grants[2]!.flowKey })).status, 'expired', 'the starting client hears expired');
+    assert.equal(auth.pendingDeviceFlows, 2);
+    now += 10 * 60_000; // well past the grace period
+    await auth.startDeviceSignIn();
+    assert.equal(auth.pendingDeviceFlows, 1, 'the next start evicted every expired grant');
+  } finally {
+    uni.close();
+  }
+});
+
+test('keyless polls are for the device itself: they find the latest grant started there, never a remote one', async () => {
+  const uni = await deviceUni();
+  try {
+    const auth = deviceAuth(uni.settings);
+    await assert.rejects(auth.pollDeviceSignIn(), noFlow, 'nothing started yet');
+    await auth.startDeviceSignIn({ allowKeyless: true }); // dc-1, the app on this device
+    const remote = await auth.startDeviceSignIn(); // dc-2, a visitor through the edge
+    assert.equal((await auth.pollDeviceSignIn()).status, 'pending');
+    assert.deepEqual(uni.polled, ['dc-1'], 'the keyless poll skipped the remote grant');
+    await assert.rejects(auth.pollDeviceSignIn({ requireFlowKey: true }), noFlow, 'a remote caller must bring a key');
+    await auth.startDeviceSignIn({ allowKeyless: true }); // dc-3
+    await auth.pollDeviceSignIn();
+    assert.equal(uni.polled.at(-1), 'dc-3', 'the most recent local grant');
+    assert.equal((await auth.pollDeviceSignIn({ flowKey: remote.flowKey, requireFlowKey: true })).status, 'pending', 'the visitor is undisturbed');
   } finally {
     uni.close();
   }

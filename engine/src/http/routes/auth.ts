@@ -22,6 +22,9 @@ const MINUTE = 60_000;
 /** Bad sign-ins are logged for the operator; never with the password, token or email. */
 const AUTH_FAILURES = new Set<AuthError['code']>(['invalid_credentials', 'offline_unknown_profile', 'offline_locked']);
 
+/** One shared bucket for the whole engine. */
+const ENGINE_WIDE = { client: () => 'engine' };
+
 const PollBodySchema = z.object({ flowKey: z.string().min(1).max(128).optional() }).nullable();
 const OfflineBodySchema = z.object({ profileId: z.string().min(1).max(128) });
 
@@ -38,6 +41,10 @@ export function authRoutes(deps: EngineDeps) {
   // only capped above the client's 2 s poll floor.
   const signInLimit = rateLimit(new SlidingWindowLimiter({ limit: 5, windowMs: MINUTE }), edge, true);
   const pollLimit = rateLimit(new SlidingWindowLimiter({ limit: 30, windowMs: MINUTE }), edge, false);
+  // Every device start is an upstream /v1/auth/device/code call: a few per client, and a
+  // small cap for the whole engine so many addresses cannot amplify into the uni either.
+  const startLimit = rateLimit(new SlidingWindowLimiter({ limit: 5, windowMs: MINUTE }), edge, false);
+  const startGlobalLimit = rateLimit(new SlidingWindowLimiter({ limit: 20, windowMs: MINUTE }), ENGINE_WIDE, false);
 
   const failed = (c: Context<EngineEnv>, error: AuthError, fields: Record<string, unknown> = {}) => {
     if (AUTH_FAILURES.has(error.code)) log.warn('auth_failed', { route: c.req.path, code: error.code, address: edge.client(c), ...fields });
@@ -59,9 +66,9 @@ export function authRoutes(deps: EngineDeps) {
   });
 
   /** First-party sign-in: start an RFC 8628 device grant against the uni. */
-  app.post('/device/start', async (c) => {
+  app.post('/device/start', startLimit, startGlobalLimit, async (c) => {
     try {
-      return c.json(await deps.auth.startDeviceSignIn());
+      return c.json(await deps.auth.startDeviceSignIn({ allowKeyless: !remote(c) }));
     } catch (error) {
       if (error instanceof UniUnreachableError) {
         return c.json({ error: 'The university server is unreachable. Device sign-in needs a connection.', code: 'uni_unreachable' }, 503);

@@ -37,13 +37,32 @@ interface PendingDeviceFlow {
   expiresAtMs: number;
   /** SHA-256 of the key handed to the client that started the grant. */
   flowKeyHash: Buffer;
+  /** Started by a caller at the device itself, so a keyless poll there may pick it up. */
+  allowKeyless: boolean;
+}
+
+export interface DeviceStartOptions {
+  /** The starting caller is the device itself (not remote): keyless polls may find this flow. */
+  allowKeyless?: boolean;
 }
 
 export interface DevicePollOptions {
   flowKey?: string;
-  /** A hosted engine refuses polls without the starting client's key; loopback keeps it optional. */
+  /** A remote caller must present the starting client's key; at the device itself it stays optional. */
   requireFlowKey?: boolean;
 }
+
+export interface AuthServiceOptions {
+  /** Most device grants held at once; the oldest is dropped first. */
+  maxPendingFlows?: number;
+  now?: () => number;
+}
+
+/** Pending grants outlive the uni's expiry by at most this, however long the uni says. */
+const MAX_FLOW_TTL_MS = 30 * 60_000;
+const DEFAULT_MAX_PENDING_FLOWS = 32;
+/** An expired grant lingers this long so the starting client's next poll still reads `expired`. */
+const EXPIRED_GRACE_MS = 2 * 60_000;
 
 const sha256 = (value: string) => createHash('sha256').update(value).digest();
 
@@ -72,7 +91,14 @@ const accessFor = (reason: LimitedAccessReason | null): SessionAccess => (reason
  *    (device profiles) unlocks local study. A guessed or tampered credential cannot.
  */
 export class AuthService {
-  private pendingFlow: PendingDeviceFlow | null = null;
+  /**
+   * In-flight device grants, keyed by the hex SHA-256 of their flow key, in start order.
+   * One per starting client, so concurrent visitors cannot cancel each other; bounded by
+   * count (oldest out) and by each grant's expiry.
+   */
+  private readonly pendingFlows = new Map<string, PendingDeviceFlow>();
+  private readonly maxPendingFlows: number;
+  private readonly now: () => number;
 
   constructor(
     private readonly settings: SettingsStore,
@@ -80,7 +106,16 @@ export class AuthService {
     private readonly sessions: AuthSessions,
     private readonly credentials: CredentialStore,
     private readonly deviceId: () => Promise<string> = () => defaultDeviceId(),
-  ) {}
+    options: AuthServiceOptions = {},
+  ) {
+    this.maxPendingFlows = Math.max(1, options.maxPendingFlows ?? DEFAULT_MAX_PENDING_FLOWS);
+    this.now = options.now ?? Date.now;
+  }
+
+  /** Grants currently held — for tests and diagnostics. */
+  get pendingDeviceFlows(): number {
+    return this.pendingFlows.size;
+  }
 
   async login(email: string, password: string): Promise<EngineLoginResponse> {
     const { uniServerUrl } = await this.settings.get();
@@ -117,17 +152,25 @@ export class AuthService {
   }
 
   /** Begins an RFC 8628 device grant with the uni. Online only — errors propagate as unreachable. */
-  async startDeviceSignIn(): Promise<DeviceSignInStart> {
+  async startDeviceSignIn(options: DeviceStartOptions = {}): Promise<DeviceSignInStart> {
     const { uniServerUrl } = await this.settings.get();
     const grant = await requestDeviceGrant(uniServerUrl);
     const flowKey = randomBytes(24).toString('base64url');
-    this.pendingFlow = {
+    const flowKeyHash = sha256(flowKey);
+    const now = this.now();
+    this.evictExpiredFlows(now);
+    this.pendingFlows.set(flowKeyHash.toString('hex'), {
       deviceCode: grant.deviceCode,
       intervalSeconds: grant.intervalSeconds,
-      expiresAtMs: Date.now() + grant.expiresInSeconds * 1000,
-      flowKeyHash: sha256(flowKey),
-    };
-    log.info('device_signin_started', { expiresInSeconds: grant.expiresInSeconds });
+      expiresAtMs: now + Math.min(grant.expiresInSeconds * 1000, MAX_FLOW_TTL_MS),
+      flowKeyHash,
+      allowKeyless: options.allowKeyless === true,
+    });
+    for (const key of this.pendingFlows.keys()) {
+      if (this.pendingFlows.size <= this.maxPendingFlows) break;
+      this.pendingFlows.delete(key);
+    }
+    log.info('device_signin_started', { expiresInSeconds: grant.expiresInSeconds, pending: this.pendingFlows.size });
     return {
       userCode: grant.userCode,
       verificationUri: grant.verificationUri,
@@ -143,14 +186,13 @@ export class AuthService {
    * from the uni comes back as an increased `intervalSeconds` hint.
    */
   async pollDeviceSignIn(options: DevicePollOptions = {}): Promise<DevicePollResult> {
-    const pending = this.pendingFlow;
-    if (!pending) throw new AuthError('no_device_flow', 'No device sign-in is in progress.');
+    const found = this.findFlow(options);
     // A wrong key is indistinguishable from no flow, so a stranger polling learns nothing.
-    if (options.flowKey !== undefined ? !timingSafeEqual(sha256(options.flowKey), pending.flowKeyHash) : options.requireFlowKey) {
-      throw new AuthError('no_device_flow', 'No device sign-in is in progress.');
-    }
-    if (Date.now() > pending.expiresAtMs) {
-      this.pendingFlow = null;
+    if (!found) throw new AuthError('no_device_flow', 'No device sign-in is in progress.');
+    const [id, pending] = found;
+    const done = () => this.pendingFlows.delete(id);
+    if (this.now() > pending.expiresAtMs) {
+      done();
       return { status: 'expired' };
     }
     const { uniServerUrl } = await this.settings.get();
@@ -160,13 +202,13 @@ export class AuthService {
         if (poll.slowDown) pending.intervalSeconds += 5;
         return { status: 'pending', intervalSeconds: pending.intervalSeconds };
       case 'denied':
-        this.pendingFlow = null;
+        done();
         return { status: 'denied' };
       case 'expired':
-        this.pendingFlow = null;
+        done();
         return { status: 'expired' };
     }
-    this.pendingFlow = null;
+    done();
 
     const sessionToken = poll.sessionToken;
     const sessionExpiresAt = new Date(Date.now() + poll.expiresInSeconds * 1000).toISOString();
@@ -187,6 +229,28 @@ export class AuthService {
     if (access.mode === 'limited') log.info('device_signin_limited', { profileId: profile.id, reason: access.reason });
     const token = await this.sessions.create(profile.id, 'online', access);
     return { status: 'approved', role: 'student', profile, mode: 'online', access, token };
+  }
+
+  /**
+   * The flow a poll names. With a key: the grant whose key hash matches (confirmed with a
+   * timing-safe compare). Without one, only when the caller is the device itself: the most
+   * recent grant that was also started there.
+   */
+  private findFlow(options: DevicePollOptions): [string, PendingDeviceFlow] | null {
+    if (options.flowKey !== undefined) {
+      const hash = sha256(options.flowKey);
+      const id = hash.toString('hex');
+      const pending = this.pendingFlows.get(id);
+      return pending && timingSafeEqual(hash, pending.flowKeyHash) ? [id, pending] : null;
+    }
+    if (options.requireFlowKey) return null;
+    const keyless = [...this.pendingFlows].filter(([, flow]) => flow.allowKeyless);
+    return keyless.at(-1) ?? null;
+  }
+
+  /** TTL eviction: drops grants a grace period past their expiry. */
+  private evictExpiredFlows(now: number): void {
+    for (const [id, flow] of this.pendingFlows) if (now > flow.expiresAtMs + EXPIRED_GRACE_MS) this.pendingFlows.delete(id);
   }
 
   /** Fetches and stores a fresh device-bound entitlement; failure leaves the profile online-only. */

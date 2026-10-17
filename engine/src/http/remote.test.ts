@@ -2,6 +2,7 @@ import assert from 'node:assert/strict';
 import { mkdtemp } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
+import { createServer } from 'node:http';
 import { test } from 'node:test';
 import type { DeviceProfile } from '@sef/shared';
 
@@ -42,7 +43,7 @@ async function harness(env: Record<string, string> = {}) {
     };
     const app = createApp({ settings, auth, workspaces, anonymousData: {} } as never);
     const call = (url: string, init: RequestInit = {}, socket?: object) => app.request(url, { ...init, headers: { ...LOCAL, ...(init.headers as Record<string, string>) } }, socket);
-    return { app, call, registry, sessions };
+    return { app, call, registry, sessions, settings };
   } finally {
     for (const [k, v] of Object.entries(saved)) {
       if (v === undefined) delete process.env[k];
@@ -199,4 +200,47 @@ test('ENGINE_DEVICE_PEERS lets a container count its bridge gateway as the devic
   assert.ok(listed.some((p) => p.id === 'peer-user'));
   assert.deepEqual(await (await call('/api/auth/profiles', {}, stranger)).json(), []);
   assert.deepEqual(await (await call('/api/auth/profiles', { headers: { 'x-forwarded-for': '6.6.6.6' } }, gateway)).json(), []);
+});
+
+const start = (call: Awaited<ReturnType<typeof harness>>['call'], client: string) => call('/api/auth/device/start', { method: 'POST', headers: viaEdge(client) }, edgeSocket);
+
+test('device starts are limited per client and across the whole engine', async () => {
+  const { call } = await harness({ ENGINE_PUBLIC_HOST: SEAT, ENGINE_TRUST_PROXY: '1' });
+  // The uni is down, so each start 503s — but each one still cost an upstream call and counts.
+  for (let i = 0; i < 5; i += 1) assert.equal((await start(call, '198.51.100.20')).status, 503);
+  const limited = await start(call, '198.51.100.20');
+  assert.equal(limited.status, 429);
+  assert.ok(Number(limited.headers.get('retry-after')) > 0);
+  // 15 more starts from other clients fill the engine-wide budget of 20 a minute.
+  for (let i = 0; i < 15; i += 1) assert.equal((await start(call, `198.51.100.${30 + i}`)).status, 503);
+  assert.equal((await start(call, '198.51.100.99')).status, 429, 'a fresh address is still capped engine-wide');
+});
+
+test('over HTTP, a stranger starting a device sign-in does not clobber the student polling theirs', async () => {
+  const uni = createServer((req, res) => {
+    res.setHeader('content-type', 'application/json');
+    if (req.url === '/v1/auth/device/code') {
+      res.end(JSON.stringify({ device_code: `dc-${Math.random()}`, user_code: 'ABCD-EFGH', verification_uri: 'https://uni.test/device', expires_in: 600, interval: 5 }));
+      return;
+    }
+    res.writeHead(400).end(JSON.stringify({ error: 'authorization_pending' }));
+  });
+  await new Promise<void>((resolve) => uni.listen(0, '127.0.0.1', resolve));
+  try {
+    const address = uni.address();
+    const port = typeof address === 'object' && address ? address.port : 0;
+    const { call, settings } = await harness({ ENGINE_PUBLIC_HOST: SEAT, ENGINE_TRUST_PROXY: '1' });
+    await settings.update({ uniServerUrl: `http://127.0.0.1:${port}` });
+    const poll = (client: string, body?: object) =>
+      call('/api/auth/device/poll', { method: 'POST', headers: { ...viaEdge(client), 'content-type': 'application/json' }, body: JSON.stringify(body ?? {}) }, edgeSocket);
+
+    const victim = (await (await start(call, '203.0.113.1')).json()) as { flowKey: string };
+    for (let i = 0; i < 3; i += 1) assert.equal((await start(call, '203.0.113.66')).status, 200, 'the attacker starts their own grants');
+    const after = await poll('203.0.113.1', { flowKey: victim.flowKey });
+    assert.equal(after.status, 200);
+    assert.equal(((await after.json()) as { status: string }).status, 'pending', 'the victim keeps their flow');
+    assert.equal((await poll('203.0.113.66')).status, 400, 'a keyless remote poll finds nothing');
+  } finally {
+    uni.close();
+  }
 });
