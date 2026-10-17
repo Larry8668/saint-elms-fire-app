@@ -114,3 +114,22 @@ Connect → Outbound), and pull `gemma4:e2b gemma4:e4b embeddinggemma shieldgemm
 
 Services were created on the `infra/render` branch. Point them at `main`:
 `render services update <id> --branch main --confirm -o json` for `sef-uni` and `sef-gateway`.
+
+## Current state (2026-10-18): free tier until billing is added
+
+The workspace has no payment method, so Render refused Starter, disks and paid Postgres
+(`render blueprints validate render.yaml` reports `need_payment_info`). The services run on
+**free** plans meanwhile: they sleep after 15 idle minutes (the uni's reaper sleeps with it), have
+no disks, and the free database expires after 30 days. A sleeping MinIO comes back **empty**
+(bucket and engine key gone), so re-run the one-time init after any MinIO restart until it has a disk.
+
+To reach the `render.yaml` target:
+
+1. Dashboard → Workspace settings → Billing → add a card.
+2. `render services update <id> --plan starter --confirm -o json` for `sef-uni`, `sef-gateway`, `sef-minio`.
+3. Dashboard → `sef-uni-db` → Info → Update → Basic-256mb (upgrades in place).
+4. Dashboard → `sef-minio` → Disks → Add disk: mount path `/data`, 5 GB. Same for `sef-uni`, 1 GB.
+   Both disks start empty: re-run the MinIO init, and the uni re-seeds its demo accounts on the
+   next boot (same `DEMO_PASSWORD`). The MinIO image runs as uid 65532; if it logs a permission
+   error on `/data`, mount the disk at `/data` and set the start command to
+   `/usr/bin/minio server /data/minio --address :9000`.
