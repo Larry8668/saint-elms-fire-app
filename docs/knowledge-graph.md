@@ -337,8 +337,12 @@ code-built proposal for it.
 The compiled wiki is the first place a question is looked up, not the last
 (`engine/src/brain/query.ts → WikiQuery`):
 
-- **Search** is the same weighted keyword scorer the lesson pool uses, pointed at page
-  titles, summaries, claims and bodies. The Guide and Philosopher get the top hits in a
+- **Search** is hybrid: the same weighted keyword scorer the lesson pool uses, union-merged
+  with a cosine lane over the local vector index (`engine/src/embed/`, keyed
+  `pageId@revision` so an edit re-embeds), pointed at page
+  titles, summaries, claims and bodies. Hits are labelled `keyword`, `semantic` or `both`;
+  when the embed model is absent the result is the honest keyword set, marked
+  `keyword_only`. The Guide and Philosopher get the top hits in a
   `WIKI PAGES` block before the model runs, and can call `search_wiki` / `read_wiki_page`
   for more — so a repeated question reuses the saved synthesis instead of being
   re-derived from raw sources.
