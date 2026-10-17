@@ -40,6 +40,10 @@ export function authRoutes(deps: EngineDeps) {
   // sign-in that succeeds refunds its attempt. Device polls carry no secret, so they are
   // only capped above the client's 2 s poll floor.
   const signInLimit = rateLimit(new SlidingWindowLimiter({ limit: 5, windowMs: MINUTE }), edge, true);
+  // Password sign-ins are forwarded to the uni, whose own limiter (10/min) keys on this
+  // engine's egress address: an engine-wide cap below it keeps a handful of attacker
+  // addresses from exhausting the uni's budget for every student here. Successes refund.
+  const loginGlobalLimit = rateLimit(new SlidingWindowLimiter({ limit: 8, windowMs: MINUTE }), ENGINE_WIDE, true);
   const pollLimit = rateLimit(new SlidingWindowLimiter({ limit: 30, windowMs: MINUTE }), edge, false);
   // Every device start is an upstream /v1/auth/device/code call: a few per client, and a
   // small cap for the whole engine so many addresses cannot amplify into the uni either.
@@ -54,7 +58,7 @@ export function authRoutes(deps: EngineDeps) {
   /** Profiles on this device, for the sign-in picker. No secrets, works offline. */
   app.get('/profiles', async (c) => c.json(remote(c) ? [] : await deps.auth.profiles()));
 
-  app.post('/login', signInLimit, async (c) => {
+  app.post('/login', signInLimit, loginGlobalLimit, async (c) => {
     const parsed = LoginRequestSchema.safeParse(await c.req.json().catch(() => null));
     if (!parsed.success) return c.json({ error: 'Enter an email and password', code: 'invalid_request' }, 400);
     try {

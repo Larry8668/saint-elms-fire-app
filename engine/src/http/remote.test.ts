@@ -244,3 +244,32 @@ test('over HTTP, a stranger starting a device sign-in does not clobber the stude
     uni.close();
   }
 });
+
+test('password sign-ins forwarded to the uni have an engine-wide cap; successes refund it', async () => {
+  const { call, registry } = await harness({ ENGINE_PUBLIC_HOST: SEAT, ENGINE_TRUST_PROXY: '1' });
+  await registry.ensure({ id: 'global-user', name: 'G', email: 'global@example.test', cohortId: 'c' }, 'right-password');
+  const from = (client: string, password: string) => login(call, 'global@example.test', password, viaEdge(client), edgeSocket);
+  await captureWarnings(async () => {
+    // Two attacker addresses, well inside their own per-client budgets.
+    for (let i = 0; i < 4; i += 1) assert.equal((await from('198.51.100.1', 'guess')).status, 503);
+    for (let i = 0; i < 3; i += 1) assert.equal((await from('198.51.100.2', 'guess')).status, 503);
+  });
+  // Students signing in successfully never use up the engine-wide budget.
+  for (let i = 0; i < 10; i += 1) assert.equal((await from(`203.0.113.${i + 1}`, 'right-password')).status, 200);
+  await captureWarnings(async () => {
+    assert.equal((await from('198.51.100.2', 'guess')).status, 503, 'the eighth failure in the minute still reaches the handler');
+  });
+  const capped = await from('203.0.113.50', 'right-password');
+  assert.equal(capped.status, 429, 'a fresh address waits once eight attempts are in flight or failed');
+  assert.ok(Number(capped.headers.get('retry-after')) > 0);
+  assert.equal(((await capped.json()) as { code: string }).code, 'rate_limited');
+});
+
+test('IPv6 clients behind the edge are limited per /64, not per address', async () => {
+  const { call } = await harness({ ENGINE_PUBLIC_HOST: SEAT, ENGINE_TRUST_PROXY: '1' });
+  await captureWarnings(async () => {
+    for (let i = 1; i <= 5; i += 1) await login(call, 'nobody@example.test', 'guess', viaEdge(`2001:db8:5:6::${i.toString(16)}`), edgeSocket);
+  });
+  assert.equal((await login(call, 'nobody@example.test', 'guess', viaEdge('2001:db8:5:6:ffff::1'), edgeSocket)).status, 429, 'a fresh address in the same /64');
+  assert.notEqual((await login(call, 'nobody@example.test', 'guess', viaEdge('2001:db8:5:7::1'), edgeSocket)).status, 429, 'the next /64 is someone else');
+});
