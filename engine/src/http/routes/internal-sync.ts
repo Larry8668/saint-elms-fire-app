@@ -42,13 +42,14 @@ export function internalSyncRoutes(handle: VaultSyncHandle, timeoutMs = FLUSH_TI
       return c.json({ ok: false, error: 'unauthorized' }, 401);
     }
     const { sync } = handle;
-    if (!sync.restored) return c.json({ ok: false, error: 'not_restored', version: null }, 409);
+    if (!sync.restored) return c.json({ ok: false, error: 'not_restored' }, 409);
     let timer: NodeJS.Timeout | undefined;
     const timeout = new Promise<'timeout'>((resolve) => {
       timer = setTimeout(() => resolve('timeout'), timeoutMs);
     });
     try {
       const result = await Promise.race([sync.flush(), timeout]);
+      // The push itself is not abandoned: it finishes, and a retried flush queues behind it.
       if (result === 'timeout') {
         log.error('sync_flush_timeout', { ms: timeoutMs });
         return c.json({ ok: false, error: 'timeout', version: sync.status().version }, 504);

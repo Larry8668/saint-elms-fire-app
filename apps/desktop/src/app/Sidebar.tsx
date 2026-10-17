@@ -53,7 +53,10 @@ export function Sidebar({ onOpenAttention }: { onOpenAttention: () => void }) {
               {health.data?.models?.map((m) => <Row key={m.role} label={`${m.role} · ${m.model}`} ok={m.reachable} />)}
               <Row label="Web search" ok={health.data?.web?.reachable} />
               {sync && (
-                <Row label={sync.state === 'error' ? 'Sync error' : sync.savedAt ? `Saved · ${timeAgo(sync.savedAt)}` : 'Saving…'} ok={sync.state === 'error' ? false : sync.pending ? undefined : true} />
+                <Row
+                  label={sync.state === 'error' ? 'Sync error' : sync.state === 'restoring' ? 'Restoring…' : sync.savedAt ? `Saved · ${timeAgo(sync.savedAt)}` : 'Saving…'}
+                  ok={sync.state === 'error' ? false : sync.state === 'restoring' || sync.pending ? undefined : true}
+                />
               )}
             </div>
           }

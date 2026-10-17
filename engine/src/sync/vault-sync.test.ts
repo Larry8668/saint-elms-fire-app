@@ -159,12 +159,16 @@ test('deletes travel as tombstones: the remote object goes, and a stale machine 
   await a.push();
 
   // A second engine on another data dir restores v1, then goes quiet.
+  await put(rootA, 'brain/concepts/edited.md', 'v1');
+  await a.push();
   const rootB = await profileRoot();
   await new VaultSync({ store, account: ACCOUNT, root: rootB }).restore();
+  await put(rootB, 'brain/concepts/edited.md', 'v2, edited on B and never pushed');
 
   await rm(path.join(rootA, 'brain/concepts/old.md'));
+  await rm(path.join(rootA, 'brain/concepts/edited.md'));
   const result = await a.push();
-  assert.equal(result.deleted, 1);
+  assert.equal(result.deleted, 2);
   const manifest = await remoteManifest(store);
   assert.ok(manifest.tombstones['brain/concepts/old.md']);
   assert.equal(await store.get(vaultKey(ACCOUNT, 'brain/concepts/old.md')), null);
@@ -173,6 +177,7 @@ test('deletes travel as tombstones: the remote object goes, and a stale machine 
   const report = await new VaultSync({ store, account: ACCOUNT, root: rootB }).restore();
   assert.equal(report.removed, 1);
   assert.equal(await exists(path.join(rootB, 'brain/concepts/old.md')), false);
+  assert.equal(await read(rootB, 'brain/concepts/edited.md'), 'v2, edited on B and never pushed', 'a delete elsewhere never eats an unpushed edit');
   assert.equal(await read(rootB, 'brain/concepts/keep.md'), 'keep');
 });
 

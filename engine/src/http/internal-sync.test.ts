@@ -123,4 +123,6 @@ test('sync config: off without the account or the store, strict once on', () => 
   assert.equal(parseVaultSyncConfig({ VAULT_SYNC_ACCOUNT: 'stu_1', SYNC_FLUSH_TOKEN: 'short' }, store).config?.flushToken, null);
   assert.throws(() => parseVaultSyncConfig({ VAULT_SYNC_ACCOUNT: '../x' }, store));
   assert.throws(() => parseVaultSyncConfig({ VAULT_SYNC_ACCOUNT: 'stu_1', ENGINE_SEAT_OWNER: 'stu_2' }, store), /seat owner/);
+  assert.throws(() => parseVaultSyncConfig({ VAULT_SYNC_ACCOUNT: 'stu_1', ENGINE_PUBLIC_HOST: 'seat.example.test' }, store), /ENGINE_SEAT_OWNER/);
+  assert.ok(parseVaultSyncConfig({ VAULT_SYNC_ACCOUNT: 'stu_1', ENGINE_PUBLIC_HOST: 'seat.example.test', ENGINE_SEAT_OWNER: 'stu_1' }, store).config);
 });

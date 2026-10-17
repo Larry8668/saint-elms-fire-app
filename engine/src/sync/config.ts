@@ -29,8 +29,12 @@ export function parseVaultSyncConfig(environment: NodeJS.ProcessEnv, objectStore
     throw new Error('Vault sync config: VAULT_SYNC_ACCOUNT must be 1–128 characters of [A-Za-z0-9_-]');
   }
   const owners = (environment.ENGINE_SEAT_OWNER ?? '').split(',').map((id) => id.trim()).filter(Boolean);
+  // A hosted seat restores one student's vault onto a public URL: it must be pinned to that
+  // student up front, never left to whoever signs in first.
+  if (environment.ENGINE_PUBLIC_HOST?.trim() && owners.length === 0) {
+    throw new Error('Vault sync config: a hosted seat (ENGINE_PUBLIC_HOST) needs ENGINE_SEAT_OWNER set to VAULT_SYNC_ACCOUNT');
+  }
   if (owners.length > 0 && !owners.includes(account)) {
-    // Syncing a profile nobody may sign in to would restore one student's vault onto another's seat.
     throw new Error('Vault sync config: VAULT_SYNC_ACCOUNT must be the seat owner (ENGINE_SEAT_OWNER)');
   }
   let flushToken = environment.SYNC_FLUSH_TOKEN?.trim() || null;
