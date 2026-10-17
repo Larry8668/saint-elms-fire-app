@@ -72,7 +72,7 @@ services:
     # ENGINE_TRUSTED_PROXIES expects (docs/hosted-seat.md, "Running the engine in Docker").
     network_mode: host
     working_dir: /seat/src/engine
-    # session.env is the per-session half (host, owner, uni, model gateway, object store),
+    # session.env is the per-session half (host, owner, uni, model gateway, object store, vault sync),
     # written by session-start.sh; a seat bootstrapped with its values in seat.env has none.
     env_file:
       - seat.env

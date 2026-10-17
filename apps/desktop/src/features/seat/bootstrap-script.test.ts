@@ -236,6 +236,8 @@ const SESSION = {
   UNI_SERVER_URL: 'https://uni.example.test/',
   MODEL_GATEWAY_URL: 'https://gateway.example.test/v1',
   MODEL_GATEWAY_TOKEN: 'tok.abc-123',
+  VAULT_SYNC_ACCOUNT: 'acct_123',
+  SYNC_FLUSH_TOKEN: 'flush-0123456789abcdef0123',
 };
 
 test('session-start writes the per-session env privately and never prints a value', () => {
@@ -248,6 +250,20 @@ test('session-start writes the per-session env privately and never prints a valu
   assert.match(run.read('session.state'), /^ready /);
   assert.match(run.output, /up -d --pull never --force-recreate engine/);
   for (const value of Object.values(SESSION)) assert.ok(!run.output.includes(value), 'no value in the exec output');
+  assert.match(run.output, /wrote session\.env: .*VAULT_SYNC_ACCOUNT SYNC_FLUSH_TOKEN/);
+});
+
+test('session-start takes the sync account from a multi-owner seat, and sync stays optional', () => {
+  const home = freshHome();
+  assert.equal(bootstrap(home, GOLDEN).code, 0);
+  const multi = bootstrap(home, { ...SESSION, ENGINE_SEAT_OWNER: 'acct_9,acct_123' }, SESSION_START);
+  assert.equal(multi.code, 0, multi.output);
+  assert.equal(envOf(multi.read('session.env')).VAULT_SYNC_ACCOUNT, 'acct_123');
+  const { VAULT_SYNC_ACCOUNT: _a, SYNC_FLUSH_TOKEN: _t, ...noSync } = SESSION;
+  const plain = bootstrap(home, noSync, SESSION_START);
+  assert.equal(plain.code, 0, plain.output);
+  const written = envOf(plain.read('session.env'));
+  assert.ok(!('VAULT_SYNC_ACCOUNT' in written) && !('SYNC_FLUSH_TOKEN' in written), 'a re-run without sync drops the old values');
 });
 
 for (const [label, override] of [
@@ -255,6 +271,10 @@ for (const [label, override] of [
   ['a missing gateway on a central image', { MODEL_GATEWAY_URL: '' }],
   ['a token with a quote', { MODEL_GATEWAY_TOKEN: "tok'$(id)" }],
   ['a host with a newline', { ENGINE_PUBLIC_HOST: '4100-x.instabox.tech\nUNI_SERVER_URL=http://evil' }],
+  ['a VAULT_SYNC_ACCOUNT not in ENGINE_SEAT_OWNER', { VAULT_SYNC_ACCOUNT: 'acct_999' }],
+  ['a VAULT_SYNC_ACCOUNT that only prefixes an owner', { ENGINE_SEAT_OWNER: 'acct_1234', VAULT_SYNC_ACCOUNT: 'acct_123' }],
+  ['a SYNC_FLUSH_TOKEN under 24 characters', { SYNC_FLUSH_TOKEN: 'short-flush-token-12345' }],
+  ['a SYNC_FLUSH_TOKEN with a quote', { SYNC_FLUSH_TOKEN: "flush-0123456789abcdef'$(id)" }],
 ] as const) {
   test(`session-start refuses ${label}`, () => {
     const home = freshHome();
@@ -262,6 +282,7 @@ for (const [label, override] of [
     const run = bootstrap(home, { ...SESSION, ...override }, SESSION_START);
     assert.equal(run.code, 1, run.output);
     assert.throws(() => run.read('session.env'), /ENOENT/);
+    assert.throws(() => run.read('session.env.tmp'), /ENOENT/, 'no half-written env file is left behind');
     assert.match(run.read('session.state'), /^failed /);
   });
 }

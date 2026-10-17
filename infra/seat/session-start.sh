@@ -13,6 +13,10 @@
 #   MODEL_GATEWAY_TOKEN  the session's gateway token (optional)
 #   OBJECT_STORE_*       vault sync store (PR-41): ENDPOINT, BUCKET, ACCESS_KEY, SECRET_KEY,
 #                        REGION, FORCE_PATH_STYLE; all optional, passed through when set
+#   VAULT_SYNC_ACCOUNT   the uni account whose vault syncs (PR-41b); must be one of
+#                        ENGINE_SEAT_OWNER, or the engine refuses to boot with sync on (optional)
+#   SYNC_FLUSH_TOKEN     the bearer for the engine's flush endpoint (session-stop.sh), at least
+#                        24 characters; shorter keeps the endpoint shut (optional)
 #   SESSION_WAIT_SECONDS how long to wait for health (default 45)
 #   SEAT_HOME, SEAT_DRY_RUN as in bootstrap.sh
 #
@@ -28,6 +32,8 @@ cd "$SEAT_HOME"
 log() { printf '%s session-start: %s\n' "$(date -u +%Y-%m-%dT%H:%M:%SZ)" "$*"; }
 die() {
   log "error: $*"
+  # A half-written env file may already hold a token.
+  rm -f "$SEAT_HOME/session.env.tmp"
   printf 'failed %s\n' "$*" >"$SEAT_HOME/session.state"
   exit 1
 }
@@ -67,6 +73,16 @@ check OBJECT_STORE_ACCESS_KEY "$TOKEN_RE" 0
 check OBJECT_STORE_SECRET_KEY "$TOKEN_RE" 0
 check OBJECT_STORE_REGION '^[a-z0-9-]{1,40}$' 0
 check OBJECT_STORE_FORCE_PATH_STYLE '^(true|false)$' 0
+# Sync values are checked here, not left to the engine: a value it would ignore or refuse
+# makes sync silently stay off, or the engine fail to boot after the exec has returned.
+VAULT_SYNC_ACCOUNT=${VAULT_SYNC_ACCOUNT:-}
+if [[ -n $VAULT_SYNC_ACCOUNT ]]; then
+  [[ ,$ENGINE_SEAT_OWNER, == *",$VAULT_SYNC_ACCOUNT,"* ]] || die "VAULT_SYNC_ACCOUNT is not in ENGINE_SEAT_OWNER"
+fi
+check VAULT_SYNC_ACCOUNT '^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$' 0
+flush=${SYNC_FLUSH_TOKEN:-}
+[[ -z $flush || ${#flush} -ge 24 ]] || die "SYNC_FLUSH_TOKEN is shorter than 24 characters"
+check SYNC_FLUSH_TOKEN "$TOKEN_RE" 0
 mv -f "$SEAT_HOME/session.env.tmp" "$SEAT_HOME/session.env"
 log "wrote session.env: $(cut -d= -f1 session.env | tr '\n' ' ')"
 
