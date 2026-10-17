@@ -48,3 +48,15 @@ test('the daily token budget blocks until UTC midnight, then resets', () => {
   assert.ok(limits.admit('s1').ok);
   assert.equal(limits.snapshot()[0].tokensToday, 0);
 });
+
+test('idle subjects from earlier days are forgotten at the day rollover', () => {
+  const t = clock(Date.UTC(2026, 9, 17, 12));
+  const limits = new SubjectLimits({ ratePerMinute: 100, maxConcurrent: 10, dailyTokenBudget: 1e9, now: t.now });
+  const idle = limits.admit('idle');
+  assert.ok(idle.ok);
+  idle.release();
+  assert.ok(limits.admit('streaming').ok, 'held open across midnight');
+  t.advance(24 * 3600_000);
+  limits.admit('today');
+  assert.deepEqual(limits.snapshot().map((s) => s.sub).sort(), ['streaming', 'today']);
+});

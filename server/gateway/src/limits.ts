@@ -34,8 +34,16 @@ export class SubjectLimits {
     this.now = opts.now ?? Date.now;
   }
 
+  private sweptDay = '';
+
   private state(sub: string): SubjectState {
     const now = this.now();
+    const today = utcDay(now);
+    if (today !== this.sweptDay) {
+      // Once a day, forget idle subjects from earlier days: their budgets have reset anyway.
+      this.sweptDay = today;
+      for (const [key, s] of this.subjects) if (s.day !== today && s.concurrent === 0) this.subjects.delete(key);
+    }
     let s = this.subjects.get(sub);
     if (!s) {
       s = { windowStart: now, windowCount: 0, concurrent: 0, day: utcDay(now), tokens: 0, requests: 0, rejected: 0 };
