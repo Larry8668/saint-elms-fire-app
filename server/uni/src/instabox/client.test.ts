@@ -85,7 +85,6 @@ test('no_capacity: a failed create operation and a synchronous 503 both map to r
   const sync = await rejectsWith(client.createMachine(input('sef-s-5'), 'key-cap-http'), 'no_capacity');
   assert.equal(sync.status, 503);
   assert.equal(sync.retryable, true);
-  assert.equal(sync.definiteRefusal, true);
   fake.noCapacityMode = 'op';
   // The replay of a refused key returns the refusal again: a retry needs a fresh key.
   fake.noCapacity = 0;
@@ -116,7 +115,6 @@ test('error mapping: machine_not_running, operation_conflict, no body, and a dro
   const dropped = await rejectsWith(client.getMachine(id), 'network');
   assert.equal(dropped.status, 0);
   assert.equal(dropped.retryable, true);
-  assert.equal(dropped.definiteRefusal, false);
 });
 
 test('exec and publish carry no Idempotency-Key; exec values travel in envs and the timeout is capped', async () => {
@@ -128,6 +126,8 @@ test('exec and publish carry no Idempotency-Key; exec values travel in envs and 
   const [exec] = fake.requests('POST', `/v1/machines/${op.machineId}/exec`);
   assert.equal(exec!.headers['idempotency-key'], undefined);
   assert.deepEqual(exec!.body, { cmd: 'bash run.sh', envs: { TOKEN: 'secret' }, timeoutSeconds: 58 });
+  await client.exec(op.machineId!, { cmd: 'true', timeoutSeconds: 0 });
+  assert.equal(fake.requests('POST', `/v1/machines/${op.machineId}/exec`)[1]!.body.timeoutSeconds, 1, 'the lower bound is clamped too');
   const port = await client.createPort(op.machineId!, 4100, 'engine');
   assert.match(port.url, /\/engine\/m_/);
   assert.equal(fake.requests('POST', `/v1/machines/${op.machineId}/ports`)[0]!.headers['idempotency-key'], undefined);

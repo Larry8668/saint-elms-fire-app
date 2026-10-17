@@ -46,8 +46,8 @@ const LIVE = [...LIVE_SESSION_STATES];
 
 export const newIdempotencyKey = (sessionId: string, purpose: string) => `sef-${purpose}-${sessionId}-${randomBytes(6).toString('hex')}`;
 
-/** Instabox names are unique per account and at most 63 chars; the session id makes them unique here. */
-const machineName = (id: string) => `sef-session-${id.replaceAll('-', '').slice(0, 20)}`;
+/** Instabox names are unique per account and at most 63 chars: the whole session id (12 + 32) fits. */
+const machineName = (id: string) => `sef-session-${id.replaceAll('-', '')}`;
 
 const minutesFromNow = (minutes: number) => new Date(Date.now() + minutes * 60_000);
 

@@ -73,17 +73,16 @@ export class InstaboxError extends Error {
     message: string,
     /** HTTP status, 0 when no response arrived. */
     readonly status = 0,
-    /** True when the same request may succeed later. */
+    /**
+     * True when the SAME request may succeed later. For a create that means the same
+     * Idempotency-Key: an unknown outcome (network, timeout, a 5xx without a body) must be
+     * replayed with its key, never retried under a new one.
+     */
     readonly retryable = false,
     readonly operationId: string | null = null,
   ) {
     super(message);
     this.name = 'InstaboxError';
-  }
-
-  /** Instabox definitely refused (the call did nothing): a create may use a fresh key next time. */
-  get definiteRefusal(): boolean {
-    return this.status >= 400 && this.status < 600 && this.code !== 'network' && this.code !== 'host_unavailable';
   }
 }
 
@@ -244,7 +243,7 @@ export class InstaboxClient {
    */
   async exec(id: string, input: { cmd: string; envs?: Record<string, string>; timeoutSeconds?: number }): Promise<ExecResult> {
     check(isMachineId(id), 'machine id');
-    const timeoutSeconds = Math.min(input.timeoutSeconds ?? 50, EXEC_PRACTICAL_CAP_SECONDS);
+    const timeoutSeconds = Math.max(1, Math.min(Math.floor(input.timeoutSeconds ?? 50), EXEC_PRACTICAL_CAP_SECONDS));
     return this.send('POST', `/v1/machines/${id}/exec`, {
       body: { cmd: input.cmd, envs: input.envs ?? {}, timeoutSeconds },
       timeoutMs: (timeoutSeconds + 15) * 1000,
