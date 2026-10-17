@@ -62,6 +62,8 @@ import type {
   SyncStatus,
   SuggestionsResponse,
   TeacherId,
+  Feed,
+  FeedsResponse,
   VaultExport,
   VaultImportPreview,
   VaultImportResult,
@@ -186,6 +188,10 @@ export const api = {
   dismissAttention: (key: string) => post<{ ok: true }>(`/api/attention/${encodeURIComponent(key)}/dismiss`),
   snoozeAttention: (key: string, hours: number) => post<{ ok: true }>(`/api/attention/${encodeURIComponent(key)}/snooze`, { hours }),
   suggestions: (teacher: TeacherId) => request<SuggestionsResponse>(`/api/teachers/${teacher}/suggestions`),
+  feeds: () => request<FeedsResponse>('/api/feeds'),
+  addFeed: (body: { url: string; title?: string }) => post<Feed>('/api/feeds', body),
+  setFeedConsent: (id: string, enabled: boolean) => post<Feed>(`/api/feeds/${encodeURIComponent(id)}/consent`, { enabled }),
+  removeFeed: (id: string) => request<{ ok: true }>(`/api/feeds/${encodeURIComponent(id)}`, { method: 'DELETE' }),
 
   syncStatus: () => request<SyncStatus>('/api/sync/status'),
   /** The full published curriculum for an approved student; refusals arrive as typed errors. */

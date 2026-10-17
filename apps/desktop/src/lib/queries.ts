@@ -42,6 +42,7 @@ export const keys = {
     logistics: (p: string) => ['profile', p, 'logistics'] as const,
     attention: (p: string) => ['profile', p, 'attention'] as const,
     suggestionsAll: (p: string) => ['profile', p, 'suggestions'] as const,
+    feeds: (p: string) => ['profile', p, 'feeds'] as const,
     suggestions: (p: string, teacher: string) => ['profile', p, 'suggestions', teacher] as const,
   },
 };
@@ -342,6 +343,26 @@ export function useInstallCourses() {
  */
 export const useSuggestions = (teacher: TeacherId) =>
   useQuery({ queryKey: keys.scoped.suggestions(profile(), teacher), queryFn: () => api.suggestions(teacher), staleTime: 60_000, refetchInterval: 5 * 60_000 });
+
+/** Subject feeds and their latest headlines; polling happens engine-side on its own tick. */
+export const useFeeds = () => useQuery({ queryKey: keys.scoped.feeds(profile()), queryFn: api.feeds, refetchInterval: 5 * 60_000 });
+
+/** Feed changes apply at once and can change attention items and Philosopher suggestions. */
+export function useFeedActions() {
+  const client = useQueryClient();
+  const p = profile();
+  const refresh = () => {
+    void client.invalidateQueries({ queryKey: keys.scoped.feeds(p) });
+    void client.invalidateQueries({ queryKey: keys.scoped.attention(p) });
+    void client.invalidateQueries({ queryKey: keys.scoped.suggestionsAll(p) });
+  };
+  const onError = (error: unknown) => toast.error((error as Error).message);
+  return {
+    add: useMutation({ mutationFn: api.addFeed, onSuccess: refresh, onError }),
+    consent: useMutation({ mutationFn: ({ id, enabled }: { id: string; enabled: boolean }) => api.setFeedConsent(id, enabled), onSuccess: refresh, onError }),
+    remove: useMutation({ mutationFn: api.removeFeed, onSuccess: refresh, onError }),
+  };
+}
 
 /** Attention items. A minute's polling is enough: the engine re-evaluates on its own when stale. */
 export const useAttention = () => useQuery({ queryKey: keys.scoped.attention(profile()), queryFn: api.attention, refetchInterval: 60_000 });
