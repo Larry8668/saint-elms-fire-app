@@ -102,7 +102,8 @@ export function parseSessionConfig(env: NodeJS.ProcessEnv = process.env, uniPubl
     snapshotId,
     // Quota is 5 machines on the account and the operator's own box takes one: 3 leaves a spare.
     maxConcurrent: envInt('SESSION_MAX_CONCURRENT', 3, { min: 1, max: 1000 }, env),
-    idleMinutes: envInt('SESSION_IDLE_MINUTES', 15, { min: 1, max: 24 * 60 }, env),
+    // Up to a week: persistent demo workspaces (a long idle window, Instabox suspends them meanwhile).
+    idleMinutes: envInt('SESSION_IDLE_MINUTES', 15, { min: 1, max: 7 * 24 * 60 }, env),
     reaperIntervalMs: envInt('SESSION_REAPER_INTERVAL_SECONDS', 30, { min: 1, max: 3600 }, env) * 1000,
     autoSuspendSeconds,
     uniPublicUrl: uniPublicUrl.replace(/\/+$/, ''),

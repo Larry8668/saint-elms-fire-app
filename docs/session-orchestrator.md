@@ -60,7 +60,7 @@ The status body (`StudentSessionStatus` in `@sef/shared`) has `steps[]`, each wi
 | `SEF_GOLDEN_SNAPSHOT_ID` | (unset = off) | The golden snapshot new sessions boot from (currently `sn_agquvqu6h2bc33n7w2bfctcxni`). |
 | `INSTABOX_API_URL` | `https://api.instabox.sh` | Tests point it at the fake. |
 | `SESSION_MAX_CONCURRENT` | `3` | Machines the orchestrator may hold at once. The account quota is 5 machines in total and the operator's own box takes one, so 3 leaves one spare. Logins beyond this wait as `queued`. |
-| `SESSION_IDLE_MINUTES` | `15` | No heartbeat for this long ends the session. Each heartbeat sets the lease to now + this. |
+| `SESSION_IDLE_MINUTES` | `15` | No heartbeat for this long ends the session. Each heartbeat sets the lease to now + this. Up to 10080 (a week), for persistent demo workspaces that Instabox suspends meanwhile. |
 | `SESSION_REAPER_INTERVAL_SECONDS` | `30` | How often the reaper runs. |
 | `SESSION_AUTO_SUSPEND_SECONDS` | `1800` | Instabox's own idle suspend on the VM (0 or 120–86400). Teardown resumes a suspended box before the flush. |
 | `SESSION_CAPACITY_WAIT_SECONDS` | `600` | How long a spawn keeps retrying `no_capacity` or `quota_exceeded` before it fails. |
