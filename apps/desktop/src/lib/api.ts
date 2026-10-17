@@ -60,6 +60,7 @@ import type {
   SourceReadResult,
   SourceReceipt,
   SyncStatus,
+  SuggestionsResponse,
   TeacherId,
   VaultExport,
   VaultImportPreview,
@@ -184,6 +185,7 @@ export const api = {
   markAttentionSeen: (keys: string[]) => post<{ updated: number }>('/api/attention/seen', { keys }),
   dismissAttention: (key: string) => post<{ ok: true }>(`/api/attention/${encodeURIComponent(key)}/dismiss`),
   snoozeAttention: (key: string, hours: number) => post<{ ok: true }>(`/api/attention/${encodeURIComponent(key)}/snooze`, { hours }),
+  suggestions: (teacher: TeacherId) => request<SuggestionsResponse>(`/api/teachers/${teacher}/suggestions`),
 
   syncStatus: () => request<SyncStatus>('/api/sync/status'),
   /** The full published curriculum for an approved student; refusals arrive as typed errors. */
