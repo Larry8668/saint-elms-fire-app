@@ -21,11 +21,19 @@ import { fetchEntitlement, verifyEntitlement, verifyEntitlementOffline } from '.
 import { trustedUniKey } from '../uni/trust';
 import { deviceId as defaultDeviceId } from './device';
 import type { ProfileRegistry } from './registry';
+import { SeatOwner } from './seat-owner';
 import type { AuthSessions } from './sessions';
 
 export class AuthError extends Error {
   constructor(
-    readonly code: 'invalid_credentials' | 'offline_unknown_profile' | 'account_disabled' | 'no_device_flow' | 'offline_locked' | 'staff_use_portal',
+    readonly code:
+      | 'invalid_credentials'
+      | 'offline_unknown_profile'
+      | 'account_disabled'
+      | 'no_device_flow'
+      | 'offline_locked'
+      | 'staff_use_portal'
+      | 'seat_not_yours',
     message: string,
   ) {
     super(message);
@@ -58,6 +66,8 @@ export interface AuthServiceOptions {
   /** Most device grants held at once; the oldest is dropped first. */
   maxPendingFlows?: number;
   now?: () => number;
+  /** Who a hosted seat belongs to. Defaults to a local engine: no owner, no check. */
+  seat?: SeatOwner;
 }
 
 /** Pending grants outlive the uni's expiry by at most this, however long the uni says. */
@@ -81,6 +91,8 @@ const limitedReason = (profile: DeviceProfile, entitlementExpired: boolean): Lim
   return entitlementExpired ? 'entitlement_expired' : null;
 };
 
+const seatNotYours = () => new AuthError('seat_not_yours', 'This seat belongs to another student.');
+
 const accessFor = (reason: LimitedAccessReason | null): SessionAccess => (reason ? { mode: 'limited', reason } : FULL);
 
 /**
@@ -101,6 +113,7 @@ export class AuthService {
   private readonly pendingFlows = new Map<string, PendingDeviceFlow>();
   private readonly maxPendingFlows: number;
   private readonly now: () => number;
+  private readonly seat: SeatOwner;
 
   constructor(
     private readonly settings: SettingsStore,
@@ -112,6 +125,22 @@ export class AuthService {
   ) {
     this.maxPendingFlows = Math.max(1, options.maxPendingFlows ?? DEFAULT_MAX_PENDING_FLOWS);
     this.now = options.now ?? Date.now;
+    this.seat = options.seat ?? new SeatOwner({ hosted: false });
+  }
+
+  /**
+   * Refuses an account that does not own this hosted seat, before any profile, verifier or
+   * credential of theirs is written. `verified`: the uni just vouched for the id, so an
+   * unpinned seat pins it. Offline paths never pin; on an unpinned seat they stay closed.
+   */
+  private async admitToSeat(accountId: string, verified: boolean): Promise<void> {
+    if (verified ? await this.seat.claim(accountId) : await this.seat.allows(accountId)) return;
+    const state = await this.seat.load();
+    log.warn('seat_signin_refused', { accountId, seat: state.kind });
+    if (state.kind === 'unpinned') {
+      throw new AuthError('offline_unknown_profile', 'This seat has no owner yet. Sign in once while the university is reachable.');
+    }
+    throw seatNotYours();
   }
 
   /** Grants currently held — for tests and diagnostics. */
@@ -132,6 +161,7 @@ export class AuthService {
         log.info('staff_login_refused', { accountId: res.account.id });
         throw new AuthError('staff_use_portal', 'Staff accounts sign in at the university’s /admin portal, not in the study app.');
       }
+      await this.admitToSeat(res.account.id, true);
       const profile = await this.registry.recordOnline(res.account, password, res.token, res.expiresAt);
       return { role: 'student', profile, mode: 'online', access: FULL, token: await this.sessions.create(profile.id, 'online', FULL, deviceLabel) };
     } catch (error) {
@@ -149,6 +179,7 @@ export class AuthService {
         'The university server is unreachable and this device has no offline sign-in for that account. Sign in once while online.',
       );
     }
+    await this.admitToSeat(profile.id, false);
     log.info('offline_login', { profileId: profile.id });
     return { role: 'student', profile, mode: 'offline', access: FULL, token: await this.sessions.create(profile.id, 'offline', FULL, deviceLabel) };
   }
@@ -215,6 +246,7 @@ export class AuthService {
     const sessionToken = poll.sessionToken;
     const sessionExpiresAt = new Date(Date.now() + poll.expiresInSeconds * 1000).toISOString();
     const me = await uniFetch<AdmissionMe>(uniServerUrl, '/v1/me', { token: sessionToken });
+    await this.admitToSeat(me.user.id, true);
     const admission: NonNullable<DeviceProfile['admission']> = me.enrolment?.status ?? 'none';
     const cohortId = me.enrolment?.cohortId ?? '';
     let profile = await this.registry.recordDeviceSignIn(me.user, sessionToken, sessionExpiresAt, admission, cohortId, me.enrolment?.programmeId);
@@ -285,6 +317,7 @@ export class AuthService {
   async unlockOffline(profileId: string, deviceLabel?: string): Promise<EngineLoginResponse | null> {
     const profile = await this.registry.get(profileId);
     if (!profile) return null;
+    await this.admitToSeat(profile.id, false);
     const token = await this.registry.entitlement(profileId);
     if (!token) {
       throw new AuthError('offline_locked', 'This device has no offline entitlement for that profile. Sign in while online first.');
@@ -303,7 +336,7 @@ export class AuthService {
 
   async resolve(token: string): Promise<EngineMe | null> {
     const session = await this.sessions.resolve(token);
-    if (!session) return null;
+    if (!session || !(await this.seat.allowsSession(session.profileId))) return null;
     const profile = await this.registry.get(session.profileId);
     return profile ? { profile, mode: session.mode, access: session.access ?? FULL } : null;
   }

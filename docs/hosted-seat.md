@@ -34,6 +34,7 @@ What the Instabox edge sends to the box, measured on a real machine:
 | `ENGINE_TRUSTED_PROXIES` | `127.0.0.0/8,::1` | the default with host networking; add the bridge gateway (for example `172.17.0.1`) with a `-p` mapping | Comma-separated IPs or CIDRs whose forwarded headers count. A prefix must be 1–3 digits within the family's range (`/0`–`/32`, `/0`–`/128`): `172.17.0.1/`, `::1/`, `x/abc`, `x/33` are dropped, never read as `/0`, and each dropped entry is named in an `edge_config_warning` at startup. |
 | `ENGINE_ALLOWED_ORIGINS` | none | usually nothing | Extra browser origins, comma-separated. The Vite dev origins and Tauri schemes are always allowed, and the public origin is derived from `ENGINE_PUBLIC_HOST`, so you don't need to repeat it here. `*` and `null` are ignored. A non-loopback `https://` origin here without `ENGINE_PUBLIC_HOST` refuses to start. |
 | `ENGINE_DEVICE_PEERS` | unset (loopback only) | leave unset | Not for seats. CIDRs whose *direct* connections count as "this device" (picker, offline unlock, keyless polls), for a local container whose port is published on host loopback only; `docker-compose.yml` sets it to the bridge ranges. A forwarded request is never the device, and on a seat (`ENGINE_PUBLIC_HOST` set) nothing is. |
+| `ENGINE_SEAT_OWNER` | unset | the owner's uni user id, set by whatever provisions the box | The uni account id allowed to sign in to this seat (several may be comma-separated). Unset, the first uni-verified sign-in pins itself (see [Seat owner](#seat-owner)). Ignored without `ENGINE_PUBLIC_HOST`. |
 | `ENGINE_STATIC_DIR` | unset | the absolute path of the built `apps/desktop/dist` | Serves the student UI from the engine's own origin (see below). The engine's loopback origin is then allowed as well. |
 | `UNI_SERVER_URL` | `http://localhost:4200` | the university's HTTPS URL | First-run default for the uni server. Settings can change it later. |
 | `OLLAMA_URL` | `http://localhost:11434` | `http://ollama:11434` (compose) or loopback | Model runtime on the box. |
@@ -90,6 +91,18 @@ The client is identified by the socket peer. Through a trusted proxy, it is the 
 - Device-grant polls must carry the `flowKey` that `device/start` returned, so another visitor cannot collect the session the student approves.
 
 **Device grants are per flow.** Each `device/start` gets its own pending grant, keyed by the SHA-256 of its `flowKey` (matched with a timing-safe compare), so a visitor starting a grant cannot cancel a student's. The engine holds at most 32 at once (the oldest is dropped first), and each is evicted two minutes after the uni's expiry (capped at 30 minutes), so a poll just after expiry still reads `expired`. A keyless poll is allowed only from the device itself, and finds the most recent grant that was also started there.
+
+### Seat owner
+
+A seat belongs to one student. Without this, any account the uni recognises could sign in to someone else's seat: their profile would be separate, but it would run on the owner's compute and its files would land on the owner's disk.
+
+- **Who owns it.** `ENGINE_SEAT_OWNER`, when set, names the owner by uni account id: the `account.id` a password sign-in returns, or the `user.id` from `/v1/me` after a device sign-in. These are the same ids the engine uses as profile ids. Emails are not used, since they can change. When it is unset, the first sign-in the uni verifies (password or device) pins its account id to `seat-owner.json` in the engine data dir (written once, never overwritten) and logs `seat_owner_pinned`.
+- **What is refused.** Every other account gets `403 { code: 'seat_not_yours' }` ("This seat belongs to another student.") on password sign-in and on device-grant completion. The check runs right after the uni answers, before any profile, password verifier, uni credential or workspace of theirs is written. The offline paths (cached-verifier password sign-in, entitlement unlock) never pin: on a seat nobody has claimed yet they are refused until a sign-in reaches the uni.
+- **Existing sessions.** At startup, with an owner known, sessions held by any other profile are revoked (`seat_owner_enforced` logs how many). Once a pin exists, session lookup also refuses any other profile's session.
+- **Fail closed.** A `seat-owner.json` that cannot be read or has no `accountId` is logged as `seat_owner_unreadable` and `seat_owner_fail_closed`. Every sign-in is then refused and no session is honoured until the file is fixed. It is never overwritten automatically.
+- **Local engines** (no `ENGINE_PUBLIC_HOST`) have no owner: several profiles share the device as before.
+
+**Resetting the owner.** On the box, stop the engine, then either delete `seat-owner.json` from the engine data dir (`ENGINE_DATA_DIR`, `/data` in the compose container), so the next uni-verified sign-in pins again, or set `ENGINE_SEAT_OWNER` to the right id, which takes precedence over the file. Start the engine again. The pin is only read at startup.
 
 A seat student whose box cannot reach the uni signs in with a password, which uses the cached verifier. Device-profile students wait until the uni is reachable again.
 

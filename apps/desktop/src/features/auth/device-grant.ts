@@ -20,8 +20,13 @@ export const nextPollIntervalSeconds = (current: number, result: DevicePollResul
 /** Remaining lifetime of the user code as m:ss; the input is already seconds. */
 export const formatCountdown = (secondsLeft: number): string => `${Math.floor(secondsLeft / 60)}:${String(secondsLeft % 60).padStart(2, '0')}`;
 
-/** Terminal outcomes the card stays mounted for, so the student actually sees them. */
-export type GrantOutcome = Extract<DevicePollResult, { status: 'denied' | 'expired' }>['status'];
+/** Terminal outcomes the card stays mounted for, so the student actually sees them. `seat_not_yours` is the engine refusing a hosted seat's non-owner. */
+export type GrantOutcome = Extract<DevicePollResult, { status: 'denied' | 'expired' }>['status'] | 'seat_not_yours';
 
-export const outcomeMessage = (outcome: GrantOutcome): string =>
-  outcome === 'denied' ? 'That request was denied. You can start again.' : 'That code expired. Start again to get a new one.';
+const OUTCOME_COPY: Record<GrantOutcome, string> = {
+  denied: 'That request was denied. You can start again.',
+  expired: 'That code expired. Start again to get a new one.',
+  seat_not_yours: 'This seat belongs to another student. Sign in on your own seat instead.',
+};
+
+export const outcomeMessage = (outcome: GrantOutcome): string => OUTCOME_COPY[outcome];

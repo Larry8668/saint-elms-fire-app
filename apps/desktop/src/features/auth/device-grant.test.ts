@@ -48,3 +48,7 @@ test('denied and expired outcomes carry start-again copy', () => {
   assert.match(outcomeMessage('expired'), /expired/i);
   assert.match(outcomeMessage('expired'), /start again/i);
 });
+
+test('a hosted seat refusing a non-owner says whose seat it is', () => {
+  assert.match(outcomeMessage('seat_not_yours'), /belongs to another student/i);
+});

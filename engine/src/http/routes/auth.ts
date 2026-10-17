@@ -16,12 +16,13 @@ const STATUS: Record<AuthError['code'], 400 | 401 | 403 | 503> = {
   no_device_flow: 400,
   offline_locked: 401,
   staff_use_portal: 403,
+  seat_not_yours: 403,
 };
 
 const MINUTE = 60_000;
 
 /** Bad sign-ins are logged for the operator; never with the password, token or email. */
-const AUTH_FAILURES = new Set<AuthError['code']>(['invalid_credentials', 'offline_unknown_profile', 'offline_locked']);
+const AUTH_FAILURES = new Set<AuthError['code']>(['invalid_credentials', 'offline_unknown_profile', 'offline_locked', 'seat_not_yours']);
 
 /** One shared bucket for the whole engine. */
 const ENGINE_WIDE = { client: () => 'engine' };
