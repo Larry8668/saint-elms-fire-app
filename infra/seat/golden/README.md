@@ -1,6 +1,6 @@
 # Golden snapshot: the image session VMs start from
 
-Operator-hosted sessions (the PR-41 to PR-45 series) give every signed-in student a fresh Instabox VM. The operator owns every VM, so one owner-private snapshot serves them all. That snapshot holds the engine and the built UI with **no** per-session data. A session then needs only a create, a start and one exec.
+Operator-hosted sessions (the PR-41 to PR-45 series) give every signed-in student a fresh Instabox VM. The operator owns every VM, so one owner-private snapshot serves them all. That snapshot holds the engine and the built UI with **no** per-session data. A session then needs only a create, a start (when the box comes back stopped) and one exec.
 
 ```
 build-snapshot:  builder box ─ bootstrap.sh SEAT_MODE=golden ─ verify ─ scrub ─ stop ─ snapshot ─ delete builder ─ rotate
@@ -60,4 +60,27 @@ It creates a VM from the snapshot (`metadata app:sef-session-smoke`), starts it,
 
 ## Measured (2026-10-17, 4 vCPU / 8 GiB `universal`)
 
-MEASUREMENTS
+First build: snapshot `sn_agquvoffdwntsavcwjqifjtzuy` (`sef-golden-9946999-202610171636`, engine commit `9946999`), 1.2 GB used on `/data`.
+
+| Build phase | Seconds |
+| --- | --- |
+| create the builder, ready for exec | 4 |
+| bootstrap, golden mode (preflight 2, checkout 1, build 13; the rest is exec round trips) | 24 |
+| verify, then scrub | 1 + 1 |
+| stop | 3 |
+| snapshot (stopped box: `201`, ready at once) | 4 |
+| delete the builder, rotate | 1 + 1 |
+| **total** | **39** |
+
+| Session from the snapshot | Seconds |
+| --- | --- |
+| create from snapshot (the operation restores the disk; the box came back `running`) | 13 |
+| ready for exec (`/start` when the box is `stopped`) | 2 |
+| publish 4100 | 1 |
+| `session-start.sh` (engine healthy 2 s after `compose up`) | 3 |
+| public `/api/health` | 0 |
+| **login-to-ready** | **19** |
+
+Compared with a fresh seat bootstrap (98 s, 91 of it Ollama and the models), the session path is 19 s, and most of that is Instabox restoring the disk. After a stop/start of that session VM, the engine answered publicly 6 s after the start began, with no exec needed. The session VM used 713 MiB of RAM with no Ollama. On disk, the `uni` provider held the gateway URL and no key.
+
+**Exec and detaching.** `cd X && setsid nohup job > log 2>&1 < /dev/null &` backgrounds the whole `&&` list, and that subshell keeps the exec's output open, so the exec waits for the job to end. `cd X || exit 1; setsid nohup job ... &` returns at once. Measured: 21 s against 1 s for a 20 s job.

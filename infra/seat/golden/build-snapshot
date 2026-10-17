@@ -65,7 +65,7 @@ if [[ -z $(state $FILE SNAPSHOT) ]]; then
   if [[ $remote != "done"*"SEAT_REF=$COMMIT"* ]]; then
     box_exec "$MID" "mkdir -p $SEAT_HOME && cat > $SEAT_HOME/bootstrap.sh.new && mv -f $SEAT_HOME/bootstrap.sh.new $SEAT_HOME/bootstrap.sh" \
       "$(cat "$here/../bootstrap.sh")" >/dev/null
-    box_exec "$MID" "cd $SEAT_HOME && setsid nohup bash bootstrap.sh >> bootstrap.log 2>&1 < /dev/null & echo launched" "" \
+    box_exec "$MID" "cd $SEAT_HOME || exit 1; setsid nohup bash bootstrap.sh >> bootstrap.log 2>&1 < /dev/null & echo launched" "" \
       "$(jq -nc --arg ref "$COMMIT" '{SEAT_MODE: "golden", SEAT_MODEL_MODE: "central", SEAT_REF: $ref}')" >/dev/null
     log "bootstrap launched"
     sleep 3
