@@ -3,7 +3,9 @@
 # The `uni` target additionally carries the hosted portal/admin builds into the
 # university image; compose builds it with `target: uni`.
 FROM node:24-slim AS base
-ENV PNPM_HOME=/pnpm PATH=/pnpm:$PATH CI=true
+# youtube-dl-exec's preinstall refuses without Python, which the slim image lacks; the
+# engine's video lane already degrades without yt-dlp (same fix as infra/seat/bootstrap.sh).
+ENV PNPM_HOME=/pnpm PATH=/pnpm:$PATH CI=true YOUTUBE_DL_SKIP_PYTHON_CHECK=1
 RUN corepack enable
 WORKDIR /app
 
