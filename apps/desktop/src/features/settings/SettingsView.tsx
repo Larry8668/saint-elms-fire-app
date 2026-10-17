@@ -8,6 +8,7 @@ import { Badge, Eyebrow, Input, Label, PageHeader, Panel } from '@/components/ui
 import { FormSkeleton } from '@/components/ui/skeletons';
 import { api, type StoredSettings } from '@/lib/api';
 import { useCapability, useHealth, useSaveSettings, useSettings } from '@/lib/queries';
+import { ProactivityPanel } from './ProactivityPanel';
 import { ProfilePanel } from './ProfilePanel';
 import { RecommendationCard } from './RecommendationCard';
 import { applySuggestions, suggestionFor } from './recommendation';
@@ -100,6 +101,8 @@ export function SettingsView() {
               <Switch checked={form.thinking} onCheckedChange={(v) => set('thinking', v)} />
             </Panel>
           </section>
+
+          <ProactivityPanel value={form.proactivity} onChange={(proactivity) => set('proactivity', proactivity)} />
 
           <section>
             <div className="mb-3 flex items-center justify-between">

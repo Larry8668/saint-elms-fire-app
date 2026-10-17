@@ -40,6 +40,7 @@ export const keys = {
     proposals: (p: string) => ['profile', p, 'proposals'] as const,
     proposal: (p: string, id: string) => ['profile', p, 'proposal', id] as const,
     logistics: (p: string) => ['profile', p, 'logistics'] as const,
+    attention: (p: string) => ['profile', p, 'attention'] as const,
   },
 };
 
@@ -231,6 +232,8 @@ export function useSaveSettings() {
     onSuccess: (settings) => {
       client.setQueryData(settingsKey, settings);
       void client.invalidateQueries({ queryKey: keys.health });
+      // Proactivity settings change which attention items are shown.
+      void client.invalidateQueries({ queryKey: keys.scoped.attention(profile()) });
       toast.success('Settings saved');
     },
     onError: (error) => toast.error((error as Error).message),
@@ -328,4 +331,21 @@ export function useInstallCourses() {
     },
     onError: (error) => toast.error((error as Error).message),
   });
+}
+
+/** Attention items. A minute's polling is enough: the engine re-evaluates on its own when stale. */
+export const useAttention = () => useQuery({ queryKey: keys.scoped.attention(profile()), queryFn: api.attention, refetchInterval: 60_000 });
+
+/** Dismiss, snooze, seen and re-check all answer with the new ledger state; each refreshes the list. */
+export function useAttentionActions() {
+  const client = useQueryClient();
+  const p = profile();
+  const refresh = () => void client.invalidateQueries({ queryKey: keys.scoped.attention(p) });
+  const onError = (error: unknown) => toast.error((error as Error).message);
+  return {
+    dismiss: useMutation({ mutationFn: api.dismissAttention, onSuccess: refresh, onError }),
+    snooze: useMutation({ mutationFn: ({ key, hours }: { key: string; hours: number }) => api.snoozeAttention(key, hours), onSuccess: refresh, onError }),
+    seen: useMutation({ mutationFn: api.markAttentionSeen, onSuccess: refresh }),
+    evaluate: useMutation({ mutationFn: api.evaluateAttention, onSuccess: (data) => client.setQueryData(keys.scoped.attention(p), data), onError }),
+  };
 }

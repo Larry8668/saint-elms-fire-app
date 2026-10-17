@@ -1,10 +1,10 @@
-import { Brain, CalendarClock, FilePlus2, Library, MessagesSquare, Settings, Sparkles, Users, type LucideIcon } from 'lucide-react';
+import { Bell, Brain, CalendarClock, FilePlus2, Library, MessagesSquare, Settings, Sparkles, Users, type LucideIcon } from 'lucide-react';
 import { motion } from 'motion/react';
 import { Tooltip } from '@/components/ui/overlays';
 import { StatusDot } from '@/components/ui/primitives';
 import { cn } from '@/lib/cn';
 import { useNav, type View } from '@/lib/nav';
-import { useHealth, useLint } from '@/lib/queries';
+import { useAttention, useHealth, useLint } from '@/lib/queries';
 import { ProfileMenu } from './ProfileMenu';
 
 const ITEMS: Array<{ view: View; label: string; Icon: LucideIcon }> = [
@@ -17,10 +17,12 @@ const ITEMS: Array<{ view: View; label: string; Icon: LucideIcon }> = [
   { view: 'library', label: 'Library', Icon: Library },
 ];
 
-export function Sidebar() {
+export function Sidebar({ onOpenAttention }: { onOpenAttention: () => void }) {
   const { view, go } = useNav();
   const health = useHealth();
   const lint = useLint();
+  const attention = useAttention();
+  const newItems = attention.data?.items.filter((item) => item.state === 'new').length ?? 0;
   const openQuestions = lint.data?.filter((f) => f.kind === 'misconception').length ?? 0;
   const modelsOk = health.data ? health.data.models.every((m) => m.reachable) : undefined;
 
@@ -35,6 +37,9 @@ export function Sidebar() {
         ))}
       </nav>
       <div className="flex flex-col items-center gap-3">
+        <NavButton label={newItems ? `Needs your attention (${newItems} new)` : 'Needs your attention'} active={false} onClick={onOpenAttention} badge={newItems}>
+          <Bell className="size-[19px]" />
+        </NavButton>
         <Tooltip
           side="right"
           content={
