@@ -50,6 +50,9 @@ services:
       <<: *node-env
       VITE_ENGINE_URL: same-origin
       VITE_DEMO_MODE: "false"
+      # The image has no Python, so youtube-dl-exec's install check would fail the build. The
+      # engine treats a missing yt-dlp as an unavailable fallback, not an error.
+      YOUTUBE_DL_SKIP_PYTHON_CHECK: "1"
     command:
       - bash
       - -euc

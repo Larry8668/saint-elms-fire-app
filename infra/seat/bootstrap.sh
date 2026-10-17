@@ -199,7 +199,7 @@ wait_http() {
 compose() { run docker compose --project-directory "$SEAT_HOME" -f "$SEAT_HOME/docker-compose.yml" "$@"; }
 
 start_ollama() {
-  compose up -d ollama
+  compose up -d --quiet-pull ollama
   wait_http ollama http://127.0.0.1:11434/api/version 180
 }
 
@@ -225,7 +225,7 @@ build_app() {
 
 start_engine() {
   # Recreate on every run: the env file or the checked-out code may have changed.
-  compose up -d --force-recreate engine
+  compose up -d --quiet-pull --force-recreate engine
   wait_http engine http://127.0.0.1:4100/api/health 240
 }
 
