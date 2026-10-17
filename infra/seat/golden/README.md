@@ -60,7 +60,7 @@ It creates a VM from the snapshot (`metadata app:sef-session-smoke`), starts it,
 
 ## Measured (2026-10-17, 4 vCPU / 8 GiB `universal`)
 
-First build: snapshot `sn_agquvoffdwntsavcwjqifjtzuy` (`sef-golden-9946999-202610171636`, engine commit `9946999`), 1.2 GB used on `/data`.
+These numbers are from the first build (`sef-golden-9946999-…`, smoke-tested, then superseded). The current snapshot is `sn_agquvqu6h2bc33n7w2bfctcxni` (`sef-golden-942573f-202610171647`). It was built in 45 s by the same pipeline (bootstrap 29 s, build 17 s), and uses 1.2 GB on `/data`.
 
 | Build phase | Seconds |
 | --- | --- |
