@@ -39,10 +39,10 @@ the repo); `INSTABOX_API_KEY` comes from `~/.config/sef/instabox.env`.
 | uni | `SEED_DEMO`, `DEMO_PASSWORD` | password: yes | `true`; production refuses the public `harbor-lantern`, so a private one is generated |
 | uni | `INSTABOX_API_KEY` | yes | operator key |
 | uni | `SEF_GOLDEN_SNAPSHOT_ID` | | `sn_agquw3rpykrsqophbvuy3hnlpy` |
-| uni | `SESSION_MAX_CONCURRENT` | | `3` |
+| uni | `SESSION_MAX_CONCURRENT`, `SESSION_IDLE_MINUTES` | | `4`, `5` (an idle VM is ended 5 min after its last heartbeat, while the uni is awake) |
 | uni | `MODEL_GATEWAY_URL` | | `https://sef-gateway.onrender.com/v1` |
 | uni + gateway | `GATEWAY_TOKEN_SECRET` | yes | one value, shared (the uni mints, the gateway verifies) |
-| uni | `OBJECT_STORE_ENDPOINT`, `_BUCKET`, `_REGION`, `_FORCE_PATH_STYLE`, `_ACCESS_KEY` | | `https://sef-minio.onrender.com`, `sef-vaults`, `us-east-1`, `true`, `sef-engine` |
+| uni | `OBJECT_STORE_ENDPOINT`, `_BUCKET`, `_REGION`, `_FORCE_PATH_STYLE`, `_ACCESS_KEY` | | the laptop MinIO's tunnel URL (see Vault store), `sef-vaults`, `us-east-1`, `true`, `sef-engine` |
 | uni | `OBJECT_STORE_SECRET_KEY` | yes | the engine key's secret (bucket-scoped, created by the init below) |
 | uni | `APP_PUBLIC_ORIGIN` | | not set yet (lands with the client PR) |
 | gateway | `GATEWAY_HOST`, `PORT`/`GATEWAY_PORT` | | `0.0.0.0`, `4300` |
@@ -75,6 +75,38 @@ the repo); `INSTABOX_API_KEY` comes from `~/.config/sef/instabox.env`.
      node --test --import tsx src/store/s3-store.integration.test.ts
    ```
 
+## Vault store: the laptop's MinIO today, DO Spaces tomorrow
+
+The free `sef-minio` service has no disk and comes back empty after every spin-down, so it is
+**suspended** (kept as a fallback) and the uni points at the laptop's MinIO through a cloudflared
+quick tunnel. Start it with the operator secrets so the tunnel never exposes the dev defaults; the
+named volume `minio-data` keeps vaults across restarts:
+
+```bash
+set -a; . ~/.config/sef/render.env; set +a
+docker compose --profile store up -d --build minio minio-init   # = pnpm store:up, with the real keys
+cloudflared tunnel --no-autoupdate --url http://127.0.0.1:9000   # no --http-host-header: S3 signs the Host
+```
+
+Switching the store (a new tunnel URL, DO Spaces, back to `sef-minio`) is one command, in order:
+
+1. **Run the store contract test first** against the new endpoint (the command under First deploy,
+   step 3, with `OBJECT_STORE_TEST_ENDPOINT=<new>`; for Spaces add `OBJECT_STORE_TEST_REGION` and
+   `OBJECT_STORE_TEST_FORCE_PATH_STYLE=false`). It must pass, `If-Match` included.
+2. **Mirror the vaults** if the old store has any (versions are not carried over, current objects are):
+   `mc mirror --preserve old/sef-vaults new/sef-vaults` with root (or Spaces) aliases for both.
+3. Point the uni at it and redeploy:
+
+   ```bash
+   OBJECT_STORE_SECRET_KEY=<secret> scripts/store-target.sh <endpoint> [access-key] [bucket] [region] [path-style]
+   scripts/store-target.sh   # prints the uni's current OBJECT_STORE_* (secret masked)
+   ```
+
+   DO Spaces: `scripts/store-target.sh https://sgp1.digitaloceanspaces.com <spaces-key> <bucket> sgp1 false`.
+   Turn on bucket versioning there, and use a key limited to that bucket.
+
+Running sessions keep the endpoint they started with; end them before switching.
+
 ## Model workers: the tunnel today, a GPU box tomorrow
 
 `GATEWAY_UPSTREAMS` is the only thing that changes. Today it is a cloudflared quick tunnel to a
@@ -84,15 +116,20 @@ laptop's Ollama. Ollama refuses a non-local `Host` header, so the tunnel rewrite
 cloudflared tunnel --no-autoupdate --http-host-header localhost:11434 --url http://127.0.0.1:11434
 ```
 
-A quick tunnel gets a new `*.trycloudflare.com` URL every time it starts. To rotate:
+A quick tunnel gets a new `*.trycloudflare.com` URL every time it starts. To restart and rotate:
 
 ```bash
-render services   # find the gateway's id (srv-…)
-# Dashboard → sef-gateway → Environment → GATEWAY_UPSTREAMS = https://<new>.trycloudflare.com → Save (redeploys)
+cloudflared tunnel --no-autoupdate --http-host-header localhost:11434 --url http://127.0.0.1:11434
+# note the https://<new>.trycloudflare.com it prints, then (the CLI cannot edit env vars; the REST API can):
+T=$(awk '/^ *key:/ {print $2; exit}' ~/.render/cli.yaml); GW=$(DO_NOT_TRACK=1 render services -o json | python3 -c 'import json,sys; print([s["service"]["id"] for s in json.load(sys.stdin) if s.get("service",{}).get("name")=="sef-gateway"][0])')
+curl -fsS -X PUT -H "Authorization: Bearer $T" -H 'Content-Type: application/json' \
+  https://api.render.com/v1/services/$GW/env-vars/GATEWAY_UPSTREAMS -d '{"value":"https://<new>.trycloudflare.com"}'
+curl -fsS -X POST -H "Authorization: Bearer $T" -H 'Content-Type: application/json' \
+  https://api.render.com/v1/services/$GW/deploys -d "{\"commitId\":\"$(git ls-remote origin refs/heads/main | cut -f1)\"}"
 ```
 
-(The CLI cannot edit env vars; the REST API can: `PUT /v1/services/<id>/env-vars/GATEWAY_UPSTREAMS`
-with `{"value": "…"}`.) Sessions need nothing else: VMs only know the gateway's URL.
+(A deploy request without `commitId` gets a 500 from the API.) Sessions need nothing else: VMs
+only know the gateway's URL.
 
 **DigitalOcean GPU box:** set `GATEWAY_UPSTREAMS=http://<droplet-ip>:11434` (or several,
 comma-separated, `#max=N` for per-worker concurrency; `vllm:https://…` for a vLLM worker, plus

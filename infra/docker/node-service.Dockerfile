@@ -25,6 +25,9 @@ RUN --mount=type=cache,id=pnpm,target=/pnpm/store \
 # apps/desktop's portal config) and the staff portal (/admin, from apps/admin).
 # Built here so the image does not depend on host build output that .dockerignore drops.
 FROM base AS web-assets
+# The portal's hand-off target when the web app is hosted apart from the VM (docs/deploy-vercel.md).
+# Render passes service env vars as build args; unset, the hand-off goes to the VM.
+ARG VITE_APP_URL
 COPY pnpm-lock.yaml pnpm-workspace.yaml package.json tsconfig.base.json ./
 COPY packages/shared/package.json packages/shared/
 COPY apps/desktop/package.json apps/desktop/

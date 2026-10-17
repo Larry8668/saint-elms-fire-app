@@ -19,11 +19,13 @@ test('defaults: 3 concurrent (quota 5, the operator box takes one), 15 idle minu
   assert.deepEqual(config.objectStore, { OBJECT_STORE_BUCKET: 'sef-vaults' });
   assert.equal(config.gatewaySecret, null);
   assert.equal(parseSessionConfig({ ...base, SESSION_MAX_CONCURRENT: '1', SESSION_IDLE_MINUTES: '5' })!.maxConcurrent, 1);
+  assert.equal(parseSessionConfig({ ...base, SESSION_IDLE_MINUTES: '10080' })!.idleMinutes, 10080);
 });
 
 test('bad values stop boot', () => {
   assert.throws(() => parseSessionConfig({ ...base, SEF_GOLDEN_SNAPSHOT_ID: 'box-c0ab84' }), /snapshot id/);
   assert.throws(() => parseSessionConfig({ ...base, SESSION_MAX_CONCURRENT: '0' }), /SESSION_MAX_CONCURRENT/);
+  assert.throws(() => parseSessionConfig({ ...base, SESSION_IDLE_MINUTES: '10081' }), /SESSION_IDLE_MINUTES/);
   assert.throws(() => parseSessionConfig({ ...base, SESSION_AUTO_SUSPEND_SECONDS: '60' }), /SESSION_AUTO_SUSPEND_SECONDS/);
   assert.throws(() => parseSessionConfig({ ...base, GATEWAY_TOKEN_SECRET: 'short' }), /32 bytes/);
   assert.throws(() => parseSessionConfig({ ...base, NODE_ENV: 'production' }), /GATEWAY_TOKEN_SECRET is required/);
