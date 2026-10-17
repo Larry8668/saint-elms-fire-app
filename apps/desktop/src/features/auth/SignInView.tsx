@@ -3,6 +3,7 @@ import { ChevronDown, Cloud, Database, GraduationCap, HardDrive, ServerCrash, Sh
 import { AnimatePresence, motion } from 'motion/react';
 import { useRef, useState } from 'react';
 import { Button } from '@/components/ui/button';
+import { ConnectingScene } from '@/components/ui/connecting-scene';
 import { EmptyState } from '@/components/ui/primitives';
 import { TEACHER_LOOK } from '@/features/teachers/teacher-meta';
 import { EngineError } from '@/lib/api';
@@ -37,6 +38,7 @@ export function SignInView() {
   const wake = useWorkspaceWake();
   // Signed out, public health still carries the bare uni boolean; that drives the banner and Continue.
   const uniOffline = uniOfflineFrom(health.data);
+  const [openedAt] = useState(() => Date.now());
 
   return (
     <div className="sky-backdrop relative flex min-h-screen items-center justify-center overflow-y-auto px-6 py-12">
@@ -47,6 +49,9 @@ export function SignInView() {
           {mode === 'hosted' && <WorkspaceHost />}
           {mode === 'hosted' && (engineDown || wake.phase !== 'idle') ? (
             <WorkspaceWakeNotice failed={engineDown} />
+          ) : mode === 'hosted' && health.isPending ? (
+            // The first answer from the workspace has not come back yet.
+            <ConnectingScene startedAt={openedAt} className="animate-rise py-6 [animation-delay:250ms]" />
           ) : engineDown ? (
             <EmptyState
               icon={<ServerCrash />}

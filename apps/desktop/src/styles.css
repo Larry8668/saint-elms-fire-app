@@ -68,6 +68,20 @@
     0%, 60% { background-color: oklch(0.6 0.19 258 / 0.22); }
     100% { background-color: transparent; }
   }
+  @keyframes link-pulse {
+    0% { stroke-dashoffset: 0.16; opacity: 0; }
+    15% { opacity: 0.9; }
+    70% { opacity: 0.9; }
+    100% { stroke-dashoffset: -1; opacity: 0; }
+  }
+  @keyframes halo {
+    0%, 100% { opacity: 0.25; transform: scale(0.85); }
+    50% { opacity: 0.7; transform: scale(1.15); }
+  }
+  @keyframes copy-in {
+    from { opacity: 0; transform: translateY(5px); }
+    to { opacity: 1; transform: translateY(0); }
+  }
   @keyframes caret {
     0%, 45% { opacity: 1; }
     55%, 100% { opacity: 0; }
@@ -143,6 +157,30 @@
     border-radius: 0.5rem;
     box-shadow: -10px 0 0 0 oklch(0.6 0.19 258 / 0.22), 10px 0 0 0 oklch(0.6 0.19 258 / 0.22);
     animation: section-flash 2.2s ease-out both;
+  }
+  /* ConnectingScene: a short dash travels each link toward the centre node. */
+  .connecting-pulse {
+    stroke-dasharray: 0.16 1.2;
+    stroke-dashoffset: 0.16;
+    opacity: 0;
+    animation: link-pulse 2.7s cubic-bezier(0.45, 0, 0.3, 1) infinite;
+  }
+  .connecting-halo {
+    transform-box: fill-box;
+    transform-origin: center;
+    animation: halo 2.7s ease-in-out infinite;
+  }
+  .connecting-copy {
+    animation: copy-in 0.45s cubic-bezier(0.2, 0.8, 0.2, 1) both;
+  }
+  @media (prefers-reduced-motion: reduce) {
+    .connecting-scene *,
+    .connecting-copy {
+      animation: none !important;
+    }
+    .connecting-halo {
+      opacity: 0.4;
+    }
   }
   .sky-backdrop {
     background:
