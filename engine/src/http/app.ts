@@ -10,6 +10,7 @@ import { errorStatus, friendlyError } from './errors';
 import { anchorRoutes } from './routes/anchors';
 import { attentionRoutes } from './routes/attention';
 import { feedRoutes } from './routes/feeds';
+import { metricsRoutes } from './routes/metrics';
 import { planRoutes } from './routes/plans';
 import { suggestRoutes } from './routes/suggest';
 import { authRoutes } from './routes/auth';
@@ -138,6 +139,7 @@ export function createApp(deps: EngineDeps) {
   app.route('/api', suggestRoutes(deps));
   app.route('/api', feedRoutes(deps));
   app.route('/api', planRoutes(deps));
+  app.route('/api', metricsRoutes(deps));
 
   return app;
 }
