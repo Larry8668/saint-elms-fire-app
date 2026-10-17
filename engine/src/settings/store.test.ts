@@ -9,6 +9,7 @@ process.env.ENGINE_DATA_DIR = await mkdtemp(path.join(tmpdir(), 'sef-private-set
 const { config, profilePaths } = await import('../config');
 const { writeJson } = await import('../lib/fs');
 const { ProfileSettingsStore, SettingsStore } = await import('./store');
+const { SettingsPatchSchema } = await import('./schema');
 
 const provider = (id: string, apiKey?: string) => ({
   id,
@@ -69,4 +70,32 @@ test('a settings file from before the embed role existed gains it on read, and p
   const after = await carol.get();
   assert.equal(after.roles.tutor.model, 'custom-tutor');
   assert.equal(after.roles.embed.model, config.defaults.embedModel, 'an update naming only one role keeps the others');
+});
+
+test('proactivity defaults are private, backfilled for older files, and merged per field', async () => {
+  const device = new SettingsStore();
+  const dave = new ProfileSettingsStore(device, profilePaths('dave').privateSettings);
+  const fresh = await dave.get();
+  assert.equal(fresh.proactivity.nudges, true);
+  assert.equal(fresh.proactivity.draftedAdvice, false, 'the only scheduled model call defaults off');
+  assert.equal(fresh.proactivity.kinds.deadline, true);
+
+  // A file from before a signal kind existed gains it on read.
+  await writeJson(profilePaths('erin').privateSettings, { proactivity: { nudges: false, quietHours: { enabled: true }, kinds: { deadline: false } } });
+  const erin = await new ProfileSettingsStore(device, profilePaths('erin').privateSettings).get();
+  assert.equal(erin.proactivity.nudges, false);
+  assert.deepEqual(erin.proactivity.quietHours, { enabled: true, start: '22:00', end: '07:00' });
+  assert.equal(erin.proactivity.kinds.deadline, false);
+  assert.equal(erin.proactivity.kinds.connectivity, true);
+
+  await dave.update({ proactivity: { quietHours: { enabled: true, start: '23:00' }, kinds: { notice: false } } });
+  await dave.update({ proactivity: { nudges: false } });
+  const patched = (await dave.get()).proactivity;
+  assert.equal(patched.nudges, false);
+  assert.deepEqual(patched.quietHours, { enabled: true, start: '23:00', end: '07:00' }, 'a partial patch keeps what it did not name');
+  assert.equal(patched.kinds.notice, false);
+  assert.equal(patched.kinds.deadline, true);
+  assert.equal(SettingsPatchSchema.safeParse({ proactivity: { kinds: { deadline: false } } }).success, true, 'a single kind toggle is a valid PUT');
+  assert.equal(SettingsPatchSchema.safeParse({ proactivity: { kinds: { bogus: true } } }).success, false);
+  assert.equal((await new ProfileSettingsStore(device, profilePaths('frank').privateSettings).get()).proactivity.nudges, true, 'one student’s choice never leaks to another');
 });

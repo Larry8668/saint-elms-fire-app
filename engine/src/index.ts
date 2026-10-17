@@ -10,6 +10,7 @@ import { ProfileRegistry } from './profiles/registry';
 import { AuthSessions } from './profiles/sessions';
 import { WorkspaceManager } from './profiles/workspace';
 import { SettingsStore } from './settings/store';
+import { startSignalScheduler } from './signals/scheduler';
 
 async function main() {
   await mkdir(config.paths.trust, { recursive: true });
@@ -26,6 +27,7 @@ async function main() {
   serve({ fetch: app.fetch, port: config.port, hostname: config.host }, (info) => {
     log.info('engine_listening', { url: `http://${config.host}:${info.port}`, data: config.paths.data, seedDemo: config.seedDemo });
   });
+  startSignalScheduler(() => workspaces.opened());
 }
 
 main().catch((error) => {

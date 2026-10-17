@@ -23,6 +23,10 @@ import { SessionStore } from '../sessions/store';
 import { PeerShareService } from '../shares/service';
 import { ShareScreener } from '../shares/screen';
 import { PeerShareStore } from '../shares/store';
+import { gatherSignalInputs } from '../signals/inputs';
+import { SignalService } from '../signals/service';
+import { SignalStore } from '../signals/store';
+import { probeHealth } from '../system/health';
 import type { SettingsStore } from '../settings/store';
 import type { ProfileRegistry } from './registry';
 
@@ -49,6 +53,8 @@ export interface Workspace {
   logistics: LogisticsStore;
   /** Consent-gated YouTube preview/fetch — the only egress beside SearXNG. */
   youtube: YouTube;
+  /** Derived attention signals over the stores above — no model calls, no new egress. */
+  signals: SignalService;
 }
 
 export class WorkspaceManager {
@@ -71,6 +77,12 @@ export class WorkspaceManager {
       this.cache.set(context.id, cached);
     }
     return cached.then((workspace) => ({ ...workspace, profile: { ...context } }));
+  }
+
+  /** Workspaces a signed-in session currently holds open; a dropped (logged-out) profile is never listed. */
+  async opened(): Promise<Workspace[]> {
+    const settled = await Promise.allSettled(this.cache.values());
+    return settled.flatMap((result) => (result.status === 'fulfilled' ? [result.value] : []));
   }
 
   /** Drops the cached workspace so logout leaves no profile state held in memory. */
@@ -113,6 +125,21 @@ export class WorkspaceManager {
       index: new EmbeddingIndex(vaultPath(paths.brain, META_DIRECTORY, META_EMBEDDINGS_DIRECTORY)),
       settings,
     });
+    const maintenance = new MaintenanceService({ wiki, content, settings, identity, similarPages: embeddings.pairsFor('pages') });
+    const logistics = new LogisticsStore(path.join(paths.root, 'logistics.json'));
+    const signals = new SignalService({
+      store: new SignalStore(path.join(paths.root, 'signals.json')),
+      proactivity: async () => (await settings.get()).proactivity,
+      inputs: () =>
+        gatherSignalInputs({
+          logistics: () => logistics.list(),
+          jobs: async () => (await sources.list()).jobs,
+          pages: () => wiki.listPages(),
+          events: () => wiki.listEvents(),
+          maintenance: () => maintenance.report(),
+          health: async () => probeHealth(await settings.get()),
+        }),
+    });
     const workspace: Workspace = {
       profile: { ...profile },
       paths,
@@ -122,7 +149,7 @@ export class WorkspaceManager {
       wiki,
       sources,
       compiler,
-      maintenance: new MaintenanceService({ wiki, content, settings, identity, similarPages: embeddings.pairsFor('pages') }),
+      maintenance,
       // Identity for export provenance tolerates an unlinked profile: portability cannot wait
       // on enrolment state, so the fallback only names who held the vault.
       portable: new VaultPortabilityService(wiki, {
@@ -144,7 +171,8 @@ export class WorkspaceManager {
           uniToken: await this.registry.uniToken(profileId),
         };
       }),
-      logistics: new LogisticsStore(path.join(paths.root, 'logistics.json')),
+      logistics,
+      signals,
       youtube: new YouTube(),
       peerShares: new PeerShareService({
         wiki,

@@ -1,16 +1,19 @@
-import type { EngineSettings, ProviderConfig } from '@sef/shared';
+import { defaultProactivity, mergeProactivity, type EngineSettings, type ProactivityPatch, type ProviderConfig } from '@sef/shared';
 import { config, log } from '../config';
 import { readJson, writeJson } from '../lib/fs';
 
 export type StoredSettings = EngineSettings;
-export type PrivateStoredSettings = Pick<StoredSettings, 'providers' | 'roles' | 'thinking'>;
+export type PrivateStoredSettings = Pick<StoredSettings, 'providers' | 'roles' | 'thinking' | 'proactivity'>;
 
 export interface SettingsReader {
   get(): Promise<StoredSettings>;
 }
 
 /** A PUT body after validation: a role patch may name only some roles; unspecified ones keep their config. */
-export type SettingsPatch = Omit<Partial<StoredSettings>, 'roles'> & { roles?: Partial<StoredSettings['roles']> };
+export type SettingsPatch = Omit<Partial<StoredSettings>, 'roles' | 'proactivity'> & {
+  roles?: Partial<StoredSettings['roles']>;
+  proactivity?: ProactivityPatch;
+};
 
 export interface SettingsSource extends SettingsReader {
   update(patch: SettingsPatch): Promise<StoredSettings>;
@@ -33,6 +36,7 @@ function defaultSettings(): StoredSettings {
       embed: { provider: 'ollama', model: d.embedModel },
       safety: { provider: 'ollama', model: d.safetyModel },
     },
+    proactivity: defaultProactivity(),
   };
 }
 
@@ -47,8 +51,13 @@ export class SettingsStore implements SettingsSource {
       const stored = await readJson<Partial<StoredSettings> | null>(this.filePath, null);
       const { studentName: _n, cohortId: _c, ...rest } = (stored ?? {}) as Partial<StoredSettings> & { studentName?: string; cohortId?: string };
       const defaults = defaultSettings();
-      // Roles merge over defaults so a settings file from before a role existed still gains it.
-      this.current = { ...defaults, ...rest, roles: { ...defaults.roles, ...(rest.roles ?? {}) } };
+      // Roles and proactivity merge over defaults so a file from before a field existed still gains it.
+      this.current = {
+        ...defaults,
+        ...rest,
+        roles: { ...defaults.roles, ...(rest.roles ?? {}) },
+        proactivity: mergeProactivity(defaults.proactivity, rest.proactivity),
+      };
       if (!stored) {
         await writeJson(this.filePath, this.current);
         log.info('settings_created', { file: this.filePath });
@@ -60,7 +69,13 @@ export class SettingsStore implements SettingsSource {
   async update(patch: SettingsPatch): Promise<StoredSettings> {
     const existing = await this.get();
     const providers = patch.providers ? mergeProviders(existing.providers, patch.providers) : existing.providers;
-    this.current = { ...existing, ...patch, providers, roles: { ...existing.roles, ...(patch.roles ?? {}) } };
+    this.current = {
+      ...existing,
+      ...patch,
+      providers,
+      roles: { ...existing.roles, ...(patch.roles ?? {}) },
+      proactivity: mergeProactivity(existing.proactivity, patch.proactivity),
+    };
     await writeJson(this.filePath, this.current);
     log.info('settings_updated', { fields: Object.keys(patch) });
     return this.current;
@@ -95,6 +110,7 @@ export class ProfileSettingsStore implements SettingsSource {
         providers: stored?.providers ?? defaults.providers,
         roles: { ...defaults.roles, ...(stored?.roles ?? {}) },
         thinking: stored?.thinking ?? defaults.thinking,
+        proactivity: mergeProactivity(defaults.proactivity, stored?.proactivity),
       };
     }
     return this.current;
@@ -116,6 +132,7 @@ export class ProfileSettingsStore implements SettingsSource {
       providers: patch.providers ? mergeProviders(existing.providers, patch.providers) : existing.providers,
       roles: { ...existing.roles, ...(patch.roles ?? {}) },
       thinking: patch.thinking ?? existing.thinking,
+      proactivity: mergeProactivity(existing.proactivity, patch.proactivity),
     };
     await writeJson(this.filePath, this.current);
     log.info('profile_settings_updated', { fields: Object.keys(patch).filter((field) => !['uniServerUrl', 'searxngUrl'].includes(field)) });

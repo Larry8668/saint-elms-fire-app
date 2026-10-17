@@ -3,12 +3,12 @@ import { bodyLimit } from 'hono/body-limit';
 import { cors } from 'hono/cors';
 import type { HealthResponse } from '@sef/shared';
 import { config, errorFields, log } from '../config';
-import { checkRoles } from '../models/health';
-import { uniFetch } from '../uni/client';
+import { probeHealth } from '../system/health';
 import { webReachable } from '../web/searxng';
 import type { EngineDeps, EngineEnv } from './context';
 import { errorStatus, friendlyError } from './errors';
 import { anchorRoutes } from './routes/anchors';
+import { attentionRoutes } from './routes/attention';
 import { authRoutes } from './routes/auth';
 import { logisticsRoutes } from './routes/logistics';
 import { settingsRoutes } from './routes/settings';
@@ -46,15 +46,6 @@ const hostName = (host: string | undefined): string => {
   const bracketed = host.match(/^\[(.+)\]/)?.[1];
   return (bracketed ?? host.split(':')[0]!).toLowerCase();
 };
-
-async function uniReachable(url: string): Promise<boolean> {
-  try {
-    await uniFetch(url, '/health', { timeoutMs: 2500 });
-    return true;
-  } catch {
-    return false;
-  }
-}
 
 export function createApp(deps: EngineDeps) {
   const app = new Hono<EngineEnv>();
@@ -102,6 +93,15 @@ export function createApp(deps: EngineDeps) {
     if (c.req.path !== '/api/health') log.info('request', { method: c.req.method, path: c.req.path, status: c.res.status, ms: Date.now() - started });
   });
 
+  // Write triggers: any successful profile mutation may change what a detector sees.
+  // Attention's own bookkeeping is excluded so dismissing never re-evaluates.
+  app.use('/api/*', async (c, next) => {
+    await next();
+    if (c.req.method === 'GET' || c.req.method === 'HEAD' || c.req.method === 'OPTIONS') return;
+    if (!c.res.ok || c.req.path.startsWith('/api/attention')) return;
+    c.get('ws')?.signals?.touch();
+  });
+
   app.onError((error, c) => {
     log.error('request_failed', { path: c.req.path, ...errorFields(error) });
     return c.json({ error: friendlyError(error) }, errorStatus(error));
@@ -110,7 +110,7 @@ export function createApp(deps: EngineDeps) {
   /** Public: the sign-in screen uses this to show whether we are online. */
   app.get('/api/health', async (c) => {
     const settings = await deps.settings.get();
-    const [uni, models, web] = await Promise.all([uniReachable(settings.uniServerUrl), checkRoles(settings), webReachable(settings.searxngUrl)]);
+    const [{ uni, models }, web] = await Promise.all([probeHealth(settings), webReachable(settings.searxngUrl)]);
     const body: HealthResponse = {
       ok: true,
       engine: config.version,
@@ -131,6 +131,7 @@ export function createApp(deps: EngineDeps) {
   app.route('/api', wikiRoutes(deps));
   app.route('/api', shareRoutes(deps));
   app.route('/api', logisticsRoutes(deps));
+  app.route('/api', attentionRoutes(deps));
 
   return app;
 }

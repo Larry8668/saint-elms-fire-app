@@ -1,3 +1,4 @@
+import { ProactivityPatchSchema } from '@sef/shared';
 import { z } from 'zod';
 
 const RoleSchema = z.object({ provider: z.string().min(1), model: z.string().min(1) });
@@ -19,5 +20,6 @@ export const SettingsPatchSchema = z
     providers: z.array(ProviderSchema).max(20),
     roles: z.object({ tutor: RoleSchema.optional(), brain: RoleSchema.optional(), vision: RoleSchema.optional(), embed: RoleSchema.optional(), safety: RoleSchema.optional() }),
     thinking: z.boolean(),
+    proactivity: ProactivityPatchSchema,
   })
   .partial();

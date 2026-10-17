@@ -1,6 +1,7 @@
 import { z } from 'zod';
 import type { BrainDiffEntry, ConceptStatus, EdgeOrigin, EdgeType, IngestResult, SkyNodeKind } from './brain';
 import { ContractVersionSchema, HttpUrlSchema } from './contracts';
+import type { ProactivitySettings } from './signals';
 import type { AnchorCandidate } from './teacher-policy';
 import type { TeacherId } from './teachers';
 import type { CourseConceptRef, ProposalReport, WikiClaim, WikiLink, WikiProposalRecord } from './wiki';
@@ -244,6 +245,7 @@ export interface EngineSettings {
   providers: ProviderConfig[];
   roles: Record<ModelRole, ModelRoleConfig>;
   thinking: boolean;
+  proactivity: ProactivitySettings;
 }
 
 export interface SyncStatus {

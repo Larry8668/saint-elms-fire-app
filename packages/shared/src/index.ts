@@ -16,3 +16,4 @@ export * from './sharing';
 export * from './teacher-policy';
 export * from './logistics';
 export * from './portability';
+export * from './signals';

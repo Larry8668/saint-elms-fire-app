@@ -2,6 +2,7 @@ import { Hono } from 'hono';
 import type { ContentfulStatusCode } from 'hono/utils/http-status';
 import { PublishShareRequestSchema, ShareDraftRequestSchema } from '@sef/shared';
 import { z } from 'zod';
+import { errorFields, log } from '../../config';
 import { PeerShareError } from '../../shares/service';
 import { requireProfile, type EngineDeps, type EngineEnv } from '../context';
 import { friendlyError } from '../errors';
@@ -51,10 +52,14 @@ export function shareRoutes(deps: EngineDeps) {
 
   /** The student's own cohort feed — one page, cursor-paginated. */
   app.get('/shares/feed', guard, async (c) => {
-    const feed = await c.get('ws').peerShares.feed({
-      cursor: c.req.query('cursor'),
+    const ws = c.get('ws');
+    const cursor = c.req.query('cursor');
+    const feed = await ws.peerShares.feed({
+      cursor,
       limit: c.req.query('limit') ? Number(c.req.query('limit')) : undefined,
     });
+    // Only the first page is a whole-feed snapshot; later pages would undercount.
+    if (!cursor) ws.signals?.observeFeed(feed).catch((error) => log.warn('signal_observe_failed', { source: 'feed', ...errorFields(error) }));
     return c.json(feed);
   });
 

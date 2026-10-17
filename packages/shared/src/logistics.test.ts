@@ -2,6 +2,7 @@ import assert from 'node:assert/strict';
 import { test } from 'node:test';
 import {
   compareLogistics,
+  dueInstant,
   formatDue,
   LogisticsExtractionSchema,
   LogisticsRecordSchema,
@@ -75,4 +76,21 @@ test('compareLogistics puts dated records first, nearest out front', () => {
   const undated = { ...record, id: 'c', dueAt: null };
   const sorted = [undated, later, sooner].sort(compareLogistics).map((r) => r.id);
   assert.deepEqual(sorted, ['a', 'b', 'c']);
+});
+
+test('dueInstant reads wall clocks in the recorded zone and bare dates as end of day', () => {
+  assert.equal(dueInstant({ dueAt: '2026-03-14T17:00', allDay: false, timeZone: 'Asia/Kolkata' }), Date.parse('2026-03-14T11:30:00Z'));
+  assert.equal(dueInstant({ dueAt: '2026-03-14T17:00', allDay: false, timeZone: 'UTC' }), Date.parse('2026-03-14T17:00:00Z'));
+  assert.equal(dueInstant({ dueAt: '2026-03-14', allDay: true, timeZone: 'Asia/Kolkata' }), Date.parse('2026-03-14T18:29:59Z'));
+  assert.equal(dueInstant({ dueAt: '2026-03-14T17:00:00Z', allDay: false, timeZone: 'Asia/Kolkata' }), Date.parse('2026-03-14T17:00:00Z'), 'an explicit offset wins');
+  assert.equal(dueInstant({ dueAt: null, allDay: false, timeZone: null }), null);
+  assert.equal(dueInstant({ dueAt: '2026-03-14T17:00', allDay: false, timeZone: 'Not/AZone' }), null, 'an unusable zone is not guessed');
+});
+
+test('dueInstant uses the offset in force at the due moment across a DST change', () => {
+  // New York springs forward at 02:00 on 2026-03-08: 01:30 is EST (-5), 03:30 is EDT (-4).
+  assert.equal(dueInstant({ dueAt: '2026-03-08T01:30', allDay: false, timeZone: 'America/New_York' }), Date.parse('2026-03-08T06:30:00Z'));
+  assert.equal(dueInstant({ dueAt: '2026-03-08T03:30', allDay: false, timeZone: 'America/New_York' }), Date.parse('2026-03-08T07:30:00Z'));
+  // London falls back at 02:00 BST on 2026-10-25; 23:59 that day is GMT.
+  assert.equal(dueInstant({ dueAt: '2026-10-25', allDay: true, timeZone: 'Europe/London' }), Date.parse('2026-10-25T23:59:59Z'));
 });
