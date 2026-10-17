@@ -1,10 +1,12 @@
 import { Bell, Brain, CalendarClock, FilePlus2, Library, MessagesSquare, Settings, Sparkles, Users, type LucideIcon } from 'lucide-react';
 import { motion } from 'motion/react';
+import type { HealthResponse } from '@sef/shared';
 import { Tooltip } from '@/components/ui/overlays';
 import { StatusDot } from '@/components/ui/primitives';
 import { cn } from '@/lib/cn';
 import { useNav, type View } from '@/lib/nav';
 import { useAttention, useHealth, useLint } from '@/lib/queries';
+import { timeAgo } from '@/lib/time';
 import { ProfileMenu } from './ProfileMenu';
 
 const ITEMS: Array<{ view: View; label: string; Icon: LucideIcon }> = [
@@ -25,6 +27,8 @@ export function Sidebar({ onOpenAttention }: { onOpenAttention: () => void }) {
   const newItems = attention.data?.items.filter((item) => item.state === 'new').length ?? 0;
   const openQuestions = lint.data?.filter((f) => f.kind === 'misconception').length ?? 0;
   const modelsOk = health.data?.models ? health.data.models.every((m) => m.reachable) : undefined;
+  // Session VMs only (vault sync on): the detail report adds when the vault was last saved.
+  const sync = health.data?.sync as Partial<NonNullable<HealthResponse['sync']>> | undefined;
 
   return (
     <aside className="relative z-30 flex h-full w-[76px] shrink-0 flex-col items-center border-r border-white/[0.06] bg-night-950/70 py-4 backdrop-blur-xl">
@@ -48,6 +52,12 @@ export function Sidebar({ onOpenAttention }: { onOpenAttention: () => void }) {
               <Row label="University" ok={health.data?.uni?.reachable} />
               {health.data?.models?.map((m) => <Row key={m.role} label={`${m.role} · ${m.model}`} ok={m.reachable} />)}
               <Row label="Web search" ok={health.data?.web?.reachable} />
+              {sync && (
+                <Row
+                  label={sync.state === 'error' ? 'Sync error' : sync.state === 'restoring' ? 'Restoring…' : sync.savedAt ? `Saved · ${timeAgo(sync.savedAt)}` : 'Saving…'}
+                  ok={sync.state === 'error' ? false : sync.state === 'restoring' || sync.pending ? undefined : true}
+                />
+              )}
             </div>
           }
         >

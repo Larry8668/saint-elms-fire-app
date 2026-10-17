@@ -16,6 +16,11 @@ import { DispersalStore } from './store/dispersal';
 import { ReleaseStore } from './store/releases';
 import { ShareStore } from './store/shares';
 import type { Pool } from 'pg';
+import { InstaboxClient } from './instabox/client';
+import { parseSessionConfig } from './sessions/config';
+import { SessionOrchestrator } from './sessions/orchestrator';
+import { SessionReaper } from './sessions/reaper';
+import { sessionsTableReady } from './sessions/store';
 
 async function main() {
   const releases = new ReleaseStore();
@@ -51,8 +56,32 @@ async function main() {
     log.warn('account_auth_disabled', { reason: 'UNI_DATABASE_URL is not set' });
   }
 
+  let sessions: SessionOrchestrator | null = null;
+  let reaper: SessionReaper | null = null;
+  const sessionConfig = parseSessionConfig(process.env, config.publicUrl);
+  if (sessionConfig && !pool) {
+    log.warn('session_orchestrator_disabled', { reason: 'UNI_DATABASE_URL is not set' });
+  } else if (sessionConfig && pool) {
+    if (!(await sessionsTableReady(pool))) {
+      log.error('session_orchestrator_disabled', { reason: 'student_sessions is missing: run db:migrate' });
+    } else {
+      const client = new InstaboxClient({ apiKey: sessionConfig.apiKey, baseUrl: sessionConfig.apiBaseUrl });
+      sessions = new SessionOrchestrator({ pool, client, config: sessionConfig });
+      reaper = new SessionReaper(sessions, pool, client);
+      await sessions.recover();
+      reaper.start();
+      log.info('session_orchestrator_enabled', {
+        snapshot: sessionConfig.snapshotId,
+        maxConcurrent: sessionConfig.maxConcurrent,
+        idleMinutes: sessionConfig.idleMinutes,
+        gatewayToken: Boolean(sessionConfig.gatewaySecret),
+        objectStore: Object.keys(sessionConfig.objectStore).length > 0,
+      });
+    }
+  }
+
   const availability = programme ? await programmeAvailability(programme) : undefined;
-  const deps: UniDeps = { courseware, programme, availability, keys, releases, shares, accounts, audit, dispersal, accountAuth, pool };
+  const deps: UniDeps = { courseware, programme, availability, keys, releases, shares, accounts, audit, dispersal, accountAuth, pool, sessions };
   const firstBoot = await accounts.load();
   if (firstBoot && config.seedDemo) await seedUniDemo(deps);
 
@@ -62,7 +91,10 @@ async function main() {
   });
 
   const shutdown = () => {
-    void (pool ? closeDatabasePool(pool) : Promise.resolve()).finally(() => process.exit(0));
+    // In-flight spawns and teardowns resume from their rows on the next boot.
+    void (reaper ? reaper.stop() : Promise.resolve())
+      .then(() => (pool ? closeDatabasePool(pool) : undefined))
+      .finally(() => process.exit(0));
   };
   process.once('SIGTERM', shutdown);
   process.once('SIGINT', shutdown);

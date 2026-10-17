@@ -14,6 +14,7 @@
     "dev:uni": "pnpm --filter @sef/uni-server dev",
     "dev:engine": "pnpm --filter @sef/engine dev",
     "dev:app": "pnpm --filter @sef/desktop dev",
+    "dev:gateway": "pnpm --filter @sef/gateway dev",
     "desktop": "pnpm --filter @sef/desktop tauri dev",
     "desktop:build": "pnpm --filter @sef/desktop tauri build",
     "build": "pnpm -r build",

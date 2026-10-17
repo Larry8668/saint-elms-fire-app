@@ -5,6 +5,8 @@ import * as shared from './index';
 test('root export stays browser-safe: no node-only helpers leak', () => {
   for (const name of [
     'hashPassword',
+    'mintGatewayToken',
+    'verifyGatewayToken',
     'verifyPassword',
     'signToken',
     'verifyToken',
