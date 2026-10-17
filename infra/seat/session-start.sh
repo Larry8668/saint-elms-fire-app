@@ -17,6 +17,8 @@
 #                        ENGINE_SEAT_OWNER, or the engine refuses to boot with sync on (optional)
 #   SYNC_FLUSH_TOKEN     the bearer for the engine's flush endpoint (session-stop.sh), at least
 #                        24 characters; shorter keeps the endpoint shut (optional)
+#   ENGINE_ALLOWED_ORIGINS  the web app's origin when it is hosted apart from the VM (the uni's
+#                        APP_PUBLIC_ORIGIN): comma-separated https origins, at most 8 (optional)
 #   SESSION_WAIT_SECONDS how long to wait for health (default 45)
 #   SEAT_HOME, SEAT_DRY_RUN as in bootstrap.sh
 #
@@ -44,6 +46,8 @@ HOST_RE='^[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?(\.[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])
 URL_RE='^https?://[A-Za-z0-9.-]+(:[0-9]{1,5})?(/[A-Za-z0-9._~/-]*)?$'
 ID_RE='^[A-Za-z0-9][A-Za-z0-9._-]{0,127}(,[A-Za-z0-9][A-Za-z0-9._-]{0,127}){0,7}$'
 TOKEN_RE='^[A-Za-z0-9._~+/=-]+$'
+ORIGIN='https://[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?(\.[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?)+(:[0-9]{1,5})?'
+ORIGINS_RE="^${ORIGIN}(,${ORIGIN}){0,7}\$"
 
 # name, pattern, required. Values go to an env file compose reads, so the patterns also keep
 # out quotes, `$`, spaces and newlines.
@@ -83,6 +87,7 @@ check VAULT_SYNC_ACCOUNT '^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$' 0
 flush=${SYNC_FLUSH_TOKEN:-}
 [[ -z $flush || ${#flush} -ge 24 ]] || die "SYNC_FLUSH_TOKEN is shorter than 24 characters"
 check SYNC_FLUSH_TOKEN "$TOKEN_RE" 0
+check ENGINE_ALLOWED_ORIGINS "$ORIGINS_RE" 0
 mv -f "$SEAT_HOME/session.env.tmp" "$SEAT_HOME/session.env"
 log "wrote session.env: $(cut -d= -f1 session.env | tr '\n' ' ')"
 
