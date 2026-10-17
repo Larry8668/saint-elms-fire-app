@@ -107,6 +107,18 @@ pnpm dev                 # uni :4200, engine :4100, UI :5173
 pnpm preflight           # green/red checklist before a demo
 ```
 
+**Model size per device (PR-31):** `GET /api/system/capability` reads RAM (plus a best-effort GPU name) once per engine process, and Settings shows a dismissible "Recommended for this device" card plus a per-role hint. Suggestions are advisory: "Use these" only fills the form, nothing is written until the student saves, and a role on a non-Ollama provider gets no suggestion. If memory can't be read, the configured defaults apply quietly. `pnpm preflight` warns (never fails) when a configured model is too large for the machine. `ollama:pull` is unchanged — pull a bigger tag yourself before switching to it.
+
+| Installed RAM | Teachers (`tutor`) | Brain keeper (`brain`) | Vision (`vision`) |
+|---|---|---|---|
+| < 12 GB (e.g. 8 GB) | `gemma4:e2b` | `gemma4:e2b` | `gemma4:e2b` |
+| 12–31 GB | `gemma4:e4b` | `gemma4:e4b` | `gemma4:e4b` |
+| 32–47 GB | `gemma4:e4b` | `gemma4:26b` | `gemma4:e4b` |
+| 48–63 GB | `gemma4:e4b` | `gemma4:31b` | `gemma4:e4b` |
+| ≥ 64 GB | `gemma4:26b` | `gemma4:31b` | `gemma4:e4b` |
+
+Thresholds allow 5% slack, because the OS reports a little under the installed size. Vision stays on an E-model because only those carry the audio encoder that source transcription uses. Caveat: on `26b`/`31b`, keeper and reviewer passes (proposals, quizzes, maintenance) take noticeably longer. That's why the brain moves up a size first and the chat-facing tutor moves last.
+
 **Self-hosted stack:** `pnpm docker:up` runs the uni server, SearXNG and the engine. Add the Ollama container with `docker compose --profile ollama up -d`. The `uni` image target also bakes the hosted surfaces in: the Dockerfile's `web-assets` stage runs `build:portal` and the admin build, and the compose service sets `UNI_PORTAL_DIR`/`UNI_ADMIN_DIR` to the copied output, so `/app` and `/admin` are served by the uni itself — no Vite preview anywhere.
 
 **Deploying the uni server, in order:**

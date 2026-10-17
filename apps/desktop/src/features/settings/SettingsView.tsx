@@ -7,8 +7,10 @@ import { Switch } from '@/components/ui/overlays';
 import { Badge, Eyebrow, Input, Label, PageHeader, Panel } from '@/components/ui/primitives';
 import { FormSkeleton } from '@/components/ui/skeletons';
 import { api, type StoredSettings } from '@/lib/api';
-import { useHealth, useSaveSettings, useSettings } from '@/lib/queries';
+import { useCapability, useHealth, useSaveSettings, useSettings } from '@/lib/queries';
 import { ProfilePanel } from './ProfilePanel';
+import { RecommendationCard } from './RecommendationCard';
+import { applySuggestions, suggestionFor } from './recommendation';
 import { VaultPanel } from './VaultPanel';
 
 const ROLE_INFO: Record<ModelRole, { label: string; hint: string; icon: typeof Cpu }> = {
@@ -29,6 +31,7 @@ const KIND_LABEL: Record<ProviderConfig['kind'], string> = {
 export function SettingsView() {
   const settings = useSettings();
   const health = useHealth();
+  const capability = useCapability();
   const save = useSaveSettings();
   const [form, setForm] = useState<StoredSettings | null>(null);
 
@@ -72,6 +75,11 @@ export function SettingsView() {
 
           <section>
             <Eyebrow className="mb-3">Model roles</Eyebrow>
+            {capability.data && (
+              <div className="mb-3">
+                <RecommendationCard capability={capability.data} settings={form} onApply={(suggestions) => set('roles', applySuggestions(form.roles, suggestions))} />
+              </div>
+            )}
             <div className="grid gap-3 md:grid-cols-3">
               {(Object.keys(ROLE_INFO) as ModelRole[]).map((role) => (
                 <RoleCard
@@ -79,6 +87,7 @@ export function SettingsView() {
                   role={role}
                   settings={form}
                   reachable={health.data?.models.find((m) => m.role === role)}
+                  recommended={suggestionFor(role, capability.data, form)}
                   onChange={(patch) => set('roles', { ...form.roles, [role]: { ...form.roles[role], ...patch } })}
                 />
               ))}
@@ -155,11 +164,13 @@ function RoleCard({
   role,
   settings,
   reachable,
+  recommended,
   onChange,
 }: {
   role: ModelRole;
   settings: StoredSettings;
   reachable?: { reachable: boolean; detail?: string };
+  recommended?: string;
   onChange: (patch: { provider?: string; model?: string }) => void;
 }) {
   const info = ROLE_INFO[role];
@@ -193,6 +204,11 @@ function RoleCard({
       <datalist id={`models-${role}`}>
         {models.data?.models.map((m) => <option key={m} value={m} />)}
       </datalist>
+      {recommended && recommended !== current.model && (
+        <button type="button" className="self-start text-[11.5px] text-beacon-300 hover:text-beacon-200" onClick={() => onChange({ model: recommended })}>
+          Recommended here: {recommended}
+        </button>
+      )}
       {reachable && !reachable.reachable && <p className="text-[11.5px] text-rose-400">{reachable.detail}</p>}
     </Panel>
   );
