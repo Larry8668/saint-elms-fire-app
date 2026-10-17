@@ -21,6 +21,7 @@ import { ContentStore } from '../content/store';
 import { ContentSync } from '../content/sync';
 import { SessionStore } from '../sessions/store';
 import { PeerShareService } from '../shares/service';
+import { ShareScreener } from '../shares/screen';
 import { PeerShareStore } from '../shares/store';
 import type { SettingsStore } from '../settings/store';
 import type { ProfileRegistry } from './registry';
@@ -159,6 +160,7 @@ export class WorkspaceManager {
             cohortId: currentProfile?.cohortId ?? profile.cohortId ?? null,
           };
         },
+        screen: new ShareScreener(settings),
       }),
     };
     log.info('workspace_opened', { profileId, root: paths.root });

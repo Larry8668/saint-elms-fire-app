@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import path from 'node:path';
 import { test } from 'node:test';
-import { CONTRACT_VERSION, type EngineSettings, type PublishedShare } from '@sef/shared';
+import { CONTRACT_VERSION, type EngineSettings, type PublishedShare, type SharePayload, type ShareScreening } from '@sef/shared';
 import { WikiCompiler } from '../brain/compiler/compile';
 import type { KeeperDraft } from '../brain/compiler/draft';
 import { SourceIngestor } from '../brain/sources/ingest';
@@ -76,6 +76,7 @@ async function harness(
     cohortId?: string | null;
     propose?: (prompt: string) => Promise<KeeperDraft>;
     store?: WikiStore;
+    screen?: (payload: SharePayload) => Promise<ShareScreening>;
   } = {},
 ): Promise<Harness> {
   const store = opts.store ?? (await vault(prefix));
@@ -97,6 +98,7 @@ async function harness(
     uniToken: async () => ('token' in opts ? opts.token : 'uni-session-token'),
     enrolment: async () => ({ programmeId: PROFILE.programmeId, cohortId: 'cohortId' in opts ? (opts.cohortId ?? null) : 'coh-1' }),
     call,
+    ...(opts.screen ? { screen: { screen: opts.screen } } : {}),
   });
   return { service, store, shareStore, calls };
 }
@@ -360,4 +362,61 @@ test('after import the feed item reports its source+job pair', async () => {
   const feed = await service.feed();
   const item = feed.items.find((i) => i.id === 'share-9');
   assert.deepEqual(item?.import, { sourceId: imported.sourceId, jobId: imported.jobId });
+});
+
+test('an imported share is screened before ingest — the flag rides the result and the source ledger', async () => {
+  const incoming = share({ id: 'share-9' });
+  const { service, store } = await harness('import-screened', {
+    respond: () => ({ status: 200, data: incoming }),
+    screen: async () => ({ status: 'flagged', categories: ['harassment'], model: 'shieldgemma:2b' }),
+  });
+  const result = await service.importShare('share-9');
+  assert.equal(result.screening?.status, 'flagged');
+  assert.deepEqual(result.screening?.categories, ['harassment']);
+  assert.equal(result.reused, false, 'flagged still imports — the screen never blocks');
+
+  const record = await store.readSource(result.sourceId);
+  const note = record?.extractions[0]?.note ?? '';
+  assert.match(note, /flagged.*harassment/i, 'the extraction ledger carries the advisory for later review');
+});
+
+test('with no screener wired the import still lands, honestly marked unavailable', async () => {
+  const incoming = share({ id: 'share-9' });
+  const { service, store } = await harness('import-unscreened', { respond: () => ({ status: 200, data: incoming }) });
+  const result = await service.importShare('share-9');
+  assert.equal(result.screening?.status, 'unavailable');
+  const record = await store.readSource(result.sourceId);
+  assert.match(record?.extractions[0]?.note ?? '', /unavailable/i);
+});
+
+test('a replayed import does not screen again — nothing new was fetched', async () => {
+  const incoming = share({ id: 'share-9' });
+  let screened = 0;
+  const { service } = await harness('import-screen-reuse', {
+    respond: () => ({ status: 200, data: incoming }),
+    screen: async () => {
+      screened += 1;
+      return { status: 'clean', categories: [], model: 'shieldgemma:2b' };
+    },
+  });
+  const first = await service.importShare('share-9');
+  const second = await service.importShare('share-9');
+  assert.equal(first.screening?.status, 'clean');
+  assert.equal(second.reused, true);
+  assert.equal(second.screening, undefined, 'the replay reports what exists, not a fresh screen');
+  assert.equal(screened, 1, 'the screener ran once, for the new material only');
+});
+
+test('the publish draft carries its own screen — the author sees what importers would', async () => {
+  let screenedText = '';
+  const { service, store } = await harness('share-screen-draft', {
+    screen: async (payload) => {
+      screenedText = `${payload.title}\n${payload.markdown}`;
+      return { status: 'clean', categories: [], model: 'shieldgemma:2b' };
+    },
+  });
+  await store.applyProposal(proposal([{ op: 'upsert_page', page: conceptDraft('orbits-intro') }], { 'orbits-intro': null }));
+  const draft = await service.prepare({ pageId: 'orbits-intro' });
+  assert.equal(draft.screening?.status, 'clean');
+  assert.match(screenedText, /orbits/i, 'the screen ran over the draft payload the student is about to publish');
 });

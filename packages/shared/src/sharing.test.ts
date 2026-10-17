@@ -4,7 +4,10 @@ import {
   PublishShareRequestSchema,
   PublishedShareSchema,
   ShareCitationSchema,
+  ShareDraftResponseSchema,
+  ShareImportResultSchema,
   SharePayloadSchema,
+  ShareScreeningSchema,
   SharedAttachmentSchema,
 } from './sharing';
 import { makeContractFixtures } from './testing/fixtures';
@@ -55,4 +58,37 @@ test('published share is a server-shaped record', () => {
   const { sharing } = makeContractFixtures();
   assert.equal(PublishedShareSchema.safeParse(sharing.publishedShare).success, true);
   rejects(PublishedShareSchema, { ...sharing.publishedShare, state: 'draft' });
+});
+
+test('screening is a closed set of honest statuses — it cannot invent a fourth', () => {
+  assert.equal(ShareScreeningSchema.safeParse({ status: 'clean', categories: [], model: 'shieldgemma:2b' }).success, true);
+  assert.equal(ShareScreeningSchema.safeParse({ status: 'flagged', categories: ['harassment'], model: 'm' }).success, true);
+  assert.equal(ShareScreeningSchema.safeParse({ status: 'unavailable', categories: [], model: '' }).success, true);
+  rejects(ShareScreeningSchema, { status: 'blocked', categories: [], model: 'm' });
+  rejects(ShareScreeningSchema, { status: 'trusted', categories: [], model: 'm' }, 'no status may imply the content was vetted safe');
+});
+
+test('screening rides the draft and import shapes, and a replayed import may omit it', () => {
+  const { sharing } = makeContractFixtures();
+  const screening = { status: 'flagged', categories: ['dangerous'], model: 'shieldgemma:2b' };
+  const draft = {
+    schemaVersion: 2,
+    request: sharing.shareRequest,
+    cohortId: 'cohort-a',
+    excluded: [],
+    screening,
+  };
+  assert.equal(ShareDraftResponseSchema.parse(draft).screening?.status, 'flagged');
+  const result = {
+    schemaVersion: 2,
+    shareId: 'share-1',
+    sourceId: 'source-1',
+    jobId: 'job-1',
+    proposalId: null,
+    stage: 'awaiting_review',
+    reused: false,
+    screening,
+  };
+  assert.equal(ShareImportResultSchema.parse(result).screening?.status, 'flagged');
+  assert.equal(ShareImportResultSchema.parse({ ...result, reused: true, screening: undefined }).screening, undefined);
 });

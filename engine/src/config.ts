@@ -72,6 +72,8 @@ export const config = {
     brainModel: env('BRAIN_MODEL', 'gemma4:e4b'),
     visionModel: env('VISION_MODEL', 'gemma4:e4b'),
     embedModel: env('EMBED_MODEL', 'embeddinggemma'),
+    /** The on-device safety model used to screen peer shares — advisory only, never a teacher. */
+    safetyModel: env('SAFETY_MODEL', 'shieldgemma:2b'),
   },
 };
 

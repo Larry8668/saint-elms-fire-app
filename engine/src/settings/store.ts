@@ -31,6 +31,7 @@ function defaultSettings(): StoredSettings {
       brain: { provider: 'ollama', model: d.brainModel },
       vision: { provider: 'ollama', model: d.visionModel },
       embed: { provider: 'ollama', model: d.embedModel },
+      safety: { provider: 'ollama', model: d.safetyModel },
     },
   };
 }

@@ -42,6 +42,9 @@ if tags=$(curl -fsS --max-time 3 "$OLLAMA_URL/api/tags" 2>/dev/null); then
   for m in "${MODELS[@]}"; do
     if grep -q "\"$m" <<<"$tags"; then ok "$m"; else bad "$m missing — run: ollama pull $m"; fi
   done
+  # The safety model only screens peer shares — advisory, so its absence warns, never fails.
+  safety="${SAFETY_MODEL:-shieldgemma:2b}"
+  if grep -q "\"$safety" <<<"$tags"; then ok "$safety"; else warn "$safety missing — share screening reports unavailable (run: ollama pull $safety)"; fi
 else
   bad "Ollama not reachable at $OLLAMA_URL — run: ollama serve"
 fi
