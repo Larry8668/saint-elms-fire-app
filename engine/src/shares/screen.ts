@@ -75,11 +75,12 @@ const RESTATEMENT = /polic|guideline|categor|definition/;
  * A policy is attributed only when its name is *claimed*, not merely mentioned:
  * a clause that negates it ("no hate speech"), a bare list item trailing a
  * negated verb ("does not contain harassment, dangerous content"), a restated
- * policy list ("our policies are …", `"dangerous": …`), or a heading before the
- * name does not count — so a chatty or echoing model cannot flag every category
- * at once. Contrast markers ("but", "however") reopen the claim ("not X but Y"
- * attributes Y). Anything ambiguous is dropped: a flagged verdict with no
- * categories is honest, a wrong category is not.
+ * policy list ("our policies are …"), or a `name:` definition head (the prompt's
+ * own `"harassment": <rule>` shape, quoted or not) does not count — so a chatty
+ * or echoing model cannot flag every category at once. Contrast markers
+ * ("but", "however") reopen the claim ("not X but Y" attributes Y). A bare name
+ * — bullet, heading or otherwise — still counts as a claim; anything ambiguous
+ * drops to a flagged verdict with no categories rather than a wrong one.
  */
 function claimsViolation(answer: string, name: string): boolean {
   // Contrast words are kept as split delimiters so "not A but B" re-evaluates B.
