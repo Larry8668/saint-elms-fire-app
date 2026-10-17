@@ -1,0 +1,149 @@
+import assert from 'node:assert/strict';
+import { mkdtemp } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
+import path from 'node:path';
+import { test } from 'node:test';
+import type { DeviceProfile } from '@sef/shared';
+
+const dataDir = await mkdtemp(path.join(tmpdir(), 'sef-http-remote-'));
+process.env.ENGINE_DATA_DIR = dataDir;
+// Port 9 refuses connections: the uni, models and web are all "unreachable", and no shared service is touched.
+process.env.UNI_SERVER_URL = 'http://127.0.0.1:9';
+process.env.OLLAMA_URL = 'http://127.0.0.1:9';
+process.env.SEARXNG_URL = 'http://127.0.0.1:9';
+
+const { createApp } = await import('./app');
+const { profilePaths } = await import('../config');
+const { MemoryCredentialStore } = await import('../credentials/store');
+const { ProfileRegistry } = await import('../profiles/registry');
+const { AuthSessions } = await import('../profiles/sessions');
+const { AuthService } = await import('../profiles/auth');
+const { SettingsStore } = await import('../settings/store');
+
+const SEAT = 'seat.example.test';
+const LOCAL = { host: '127.0.0.1:4100' };
+/** What the measured Instabox edge sends: loopback Host, the public name in X-Forwarded-Host. */
+const viaEdge = (client: string) => ({ host: '127.0.0.1:4100', 'x-forwarded-host': SEAT, 'x-forwarded-for': client, 'x-forwarded-proto': 'https' });
+const edgeSocket = { incoming: { socket: { remoteAddress: '127.0.0.1', remotePort: 50000, remoteFamily: 'IPv4' } } };
+
+/** Builds an app under the given env; the edge policy is read when the app is created. */
+async function harness(env: Record<string, string> = {}) {
+  const saved = Object.fromEntries(Object.keys(env).map((k) => [k, process.env[k]]));
+  Object.assign(process.env, env);
+  try {
+    const credentials = new MemoryCredentialStore();
+    const registry = new ProfileRegistry(credentials);
+    const sessions = new AuthSessions();
+    const settings = new SettingsStore();
+    const auth = new AuthService(settings, registry, sessions, credentials, () => Promise.resolve('dev-test'));
+    const workspaces = {
+      get: async (profile: DeviceProfile) => ({ profile, paths: profilePaths(profile.id) }),
+      drop: () => undefined,
+    };
+    const app = createApp({ settings, auth, workspaces, anonymousData: {} } as never);
+    const call = (url: string, init: RequestInit = {}, socket?: object) => app.request(url, { ...init, headers: { ...LOCAL, ...(init.headers as Record<string, string>) } }, socket);
+    return { app, call, registry, sessions };
+  } finally {
+    for (const [k, v] of Object.entries(saved)) {
+      if (v === undefined) delete process.env[k];
+      else process.env[k] = v;
+    }
+  }
+}
+
+const login = (call: Awaited<ReturnType<typeof harness>>['call'], email: string, password: string, headers: Record<string, string> = {}, socket?: object) =>
+  call('/api/auth/login', { method: 'POST', headers: { 'content-type': 'application/json', ...headers }, body: JSON.stringify({ email, password }) }, socket);
+
+/** Captures console.error lines (warn/error logs) emitted while `fn` runs. */
+async function captureWarnings(fn: () => Promise<void>): Promise<string[]> {
+  const lines: string[] = [];
+  const original = console.error;
+  console.error = (line: unknown) => void lines.push(String(line));
+  try {
+    await fn();
+  } finally {
+    console.error = original;
+  }
+  return lines;
+}
+
+test('unauthenticated health is liveness only; the detail needs a session', async () => {
+  const { call, registry, sessions } = await harness();
+  const live = await call('/api/health');
+  assert.equal(live.status, 200);
+  assert.deepEqual(Object.keys((await live.json()) as object).sort(), ['engine', 'ok']);
+
+  assert.equal((await call('/api/health/detail')).status, 401);
+  assert.equal((await call('/api/health/detail', { headers: { authorization: 'Bearer guessed' } })).status, 401);
+
+  await registry.ensure({ id: 'health-user', name: 'H', email: 'h@test', cohortId: 'c' }, 'pw');
+  const token = await sessions.create('health-user', 'offline');
+  const detail = await call('/api/health/detail', { headers: { authorization: `Bearer ${token}` } });
+  assert.equal(detail.status, 200);
+  const body = (await detail.json()) as { ok: boolean; uni: { reachable: boolean }; models: unknown[]; web: { reachable: boolean } };
+  assert.equal(body.uni.reachable, false);
+  assert.ok(Array.isArray(body.models));
+  assert.equal(body.web.reachable, false);
+});
+
+test('a hosted seat admits its edge, refuses foreign hosts and origins, and keeps loopback working', async () => {
+  const { call } = await harness({ ENGINE_PUBLIC_HOST: SEAT, ENGINE_TRUST_PROXY: '1' });
+  assert.equal((await call('/api/health', { headers: viaEdge('198.51.100.7') }, edgeSocket)).status, 200);
+  assert.equal((await call('/api/health', { headers: { ...viaEdge('198.51.100.7'), 'x-forwarded-host': 'evil.example' } }, edgeSocket)).status, 403);
+  assert.equal((await call('/api/health', { headers: { host: 'evil.example' } })).status, 403);
+  assert.equal((await call('/api/health')).status, 200, 'a local caller on the box');
+
+  const post = (origin: string) =>
+    call('/api/auth/login', { method: 'POST', headers: { ...viaEdge('198.51.100.8'), origin, 'content-type': 'application/json' }, body: '{}' }, edgeSocket);
+  assert.equal((await post('https://evil.example')).status, 403);
+  assert.equal((await post(`https://${SEAT}`)).status, 400, 'the seat origin reaches the handler (which 400s the empty body)');
+  assert.equal((await post('tauri://localhost')).status, 400, 'the Tauri shell stays allowed');
+
+  const preflight = await call('/api/auth/login', { method: 'OPTIONS', headers: { ...viaEdge('198.51.100.8'), origin: `https://${SEAT}`, 'access-control-request-method': 'POST' } }, edgeSocket);
+  assert.equal(preflight.headers.get('access-control-allow-origin'), `https://${SEAT}`);
+});
+
+test('the sixth bad sign-in in a minute is 429 with retryAfter; good sign-ins never use up the budget', async () => {
+  const { call, registry } = await harness();
+  await registry.ensure({ id: 'rl-user', name: 'R', email: 'rl@example.test', cohortId: 'c' }, 'right-password');
+  for (let i = 0; i < 6; i += 1) assert.equal((await login(call, 'rl@example.test', 'right-password')).status, 200, 'uni down: the offline verifier signs in');
+
+  const warnings = await captureWarnings(async () => {
+    for (let i = 0; i < 5; i += 1) assert.equal((await login(call, 'rl@example.test', 'wrong-password')).status, 503);
+  });
+  const limited = await login(call, 'rl@example.test', 'right-password');
+  assert.equal(limited.status, 429, 'even the right password waits once guessing exhausted the window');
+  const body = (await limited.json()) as { code: string; retryAfter: number };
+  assert.equal(body.code, 'rate_limited');
+  assert.ok(body.retryAfter > 0 && body.retryAfter <= 60);
+  assert.equal(limited.headers.get('retry-after'), String(body.retryAfter));
+
+  const failures = warnings.filter((line) => line.includes('"auth_failed"'));
+  assert.equal(failures.length, 5, 'every bad sign-in is logged');
+  for (const line of failures) {
+    assert.ok(!line.includes('wrong-password') && !line.includes('rl@example.test'), `no password or email in: ${line}`);
+    assert.match(line, /"code":"offline_unknown_profile"/);
+  }
+});
+
+test('behind a trusted edge each client has its own bucket — one attacker cannot lock out every student', async () => {
+  const { call } = await harness({ ENGINE_PUBLIC_HOST: SEAT, ENGINE_TRUST_PROXY: '1' });
+  await captureWarnings(async () => {
+    for (let i = 0; i < 5; i += 1) await login(call, 'nobody@example.test', 'guess', viaEdge('198.51.100.66'), edgeSocket);
+  });
+  assert.equal((await login(call, 'nobody@example.test', 'guess', viaEdge('198.51.100.66'), edgeSocket)).status, 429);
+  // A spoofed left-most hop does not buy the attacker a fresh bucket: the edge appended the real address last.
+  assert.equal((await login(call, 'nobody@example.test', 'guess', viaEdge('1.2.3.4, 198.51.100.66'), edgeSocket)).status, 429);
+  assert.notEqual((await login(call, 'nobody@example.test', 'guess', viaEdge('198.51.100.77'), edgeSocket)).status, 429, 'another student is unaffected');
+});
+
+test('a hosted seat closes the profile picker and the password-less offline unlock', async () => {
+  const { call, registry } = await harness({ ENGINE_PUBLIC_HOST: SEAT });
+  await registry.ensure({ id: 'listed-user', name: 'L', email: 'l@test', cohortId: 'c' }, 'pw');
+  assert.deepEqual(await (await call('/api/auth/profiles')).json(), []);
+  const unlock = await call('/api/auth/offline-login', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ profileId: 'listed-user' }) });
+  assert.equal(unlock.status, 403);
+
+  const local = await harness();
+  assert.ok(((await (await local.call('/api/auth/profiles')).json()) as unknown[]).length > 0, 'a loopback engine keeps the picker');
+});

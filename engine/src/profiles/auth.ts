@@ -1,3 +1,4 @@
+import { createHash, randomBytes, timingSafeEqual } from 'node:crypto';
 import type {
   AdmissionMe,
   DevicePollResult,
@@ -34,7 +35,17 @@ interface PendingDeviceFlow {
   deviceCode: string;
   intervalSeconds: number;
   expiresAtMs: number;
+  /** SHA-256 of the key handed to the client that started the grant. */
+  flowKeyHash: Buffer;
 }
+
+export interface DevicePollOptions {
+  flowKey?: string;
+  /** A hosted engine refuses polls without the starting client's key; loopback keeps it optional. */
+  requireFlowKey?: boolean;
+}
+
+const sha256 = (value: string) => createHash('sha256').update(value).digest();
 
 const FULL: SessionAccess = { mode: 'full' };
 
@@ -109,10 +120,12 @@ export class AuthService {
   async startDeviceSignIn(): Promise<DeviceSignInStart> {
     const { uniServerUrl } = await this.settings.get();
     const grant = await requestDeviceGrant(uniServerUrl);
+    const flowKey = randomBytes(24).toString('base64url');
     this.pendingFlow = {
       deviceCode: grant.deviceCode,
       intervalSeconds: grant.intervalSeconds,
       expiresAtMs: Date.now() + grant.expiresInSeconds * 1000,
+      flowKeyHash: sha256(flowKey),
     };
     log.info('device_signin_started', { expiresInSeconds: grant.expiresInSeconds });
     return {
@@ -121,6 +134,7 @@ export class AuthService {
       verificationUriComplete: grant.verificationUriComplete,
       expiresInSeconds: grant.expiresInSeconds,
       intervalSeconds: grant.intervalSeconds,
+      flowKey,
     };
   }
 
@@ -128,9 +142,13 @@ export class AuthService {
    * One poll of the pending device grant. The UI drives the interval; `slow_down`
    * from the uni comes back as an increased `intervalSeconds` hint.
    */
-  async pollDeviceSignIn(): Promise<DevicePollResult> {
+  async pollDeviceSignIn(options: DevicePollOptions = {}): Promise<DevicePollResult> {
     const pending = this.pendingFlow;
     if (!pending) throw new AuthError('no_device_flow', 'No device sign-in is in progress.');
+    // A wrong key is indistinguishable from no flow, so a stranger polling learns nothing.
+    if (options.flowKey !== undefined ? !timingSafeEqual(sha256(options.flowKey), pending.flowKeyHash) : options.requireFlowKey) {
+      throw new AuthError('no_device_flow', 'No device sign-in is in progress.');
+    }
     if (Date.now() > pending.expiresAtMs) {
       this.pendingFlow = null;
       return { status: 'expired' };

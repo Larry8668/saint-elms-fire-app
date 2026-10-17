@@ -1,11 +1,12 @@
 import { Hono } from 'hono';
 import { bodyLimit } from 'hono/body-limit';
 import { cors } from 'hono/cors';
-import type { HealthResponse } from '@sef/shared';
+import type { HealthLiveness, HealthResponse } from '@sef/shared';
 import { config, errorFields, log } from '../config';
 import { probeHealth } from '../system/health';
 import { webReachable } from '../web/searxng';
-import type { EngineDeps, EngineEnv } from './context';
+import { requireProfile, type EngineDeps, type EngineEnv } from './context';
+import { edgePolicy } from './edge';
 import { errorStatus, friendlyError } from './errors';
 import { anchorRoutes } from './routes/anchors';
 import { attentionRoutes } from './routes/attention';
@@ -22,34 +23,20 @@ import { wikiRoutes } from './routes/wiki';
 
 export type { EngineDeps } from './context';
 
-/**
- * Origins allowed to call the engine with browser credentials: the Vite dev server and
- * the Tauri webview schemes. A hostile web page can hit 127.0.0.1 but cannot produce an
- * allowed Origin header — and the Host check additionally rejects DNS-rebound requests.
- */
-const ALLOWED_ORIGINS = new Set(
-  [
-    'http://localhost:5173',
-    'http://127.0.0.1:5173',
-    'tauri://localhost',
-    'http://tauri.localhost',
-    'https://tauri.localhost',
-    ...(process.env.ENGINE_ALLOWED_ORIGINS ?? '').split(','),
-  ]
-    .map((o) => o.trim())
-    .filter(Boolean),
-);
-
-const LOOPBACK_HOSTS = new Set(['localhost', '127.0.0.1', '::1', '[::1]']);
-
-const hostName = (host: string | undefined): string => {
-  if (!host) return '';
-  const bracketed = host.match(/^\[(.+)\]/)?.[1];
-  return (bracketed ?? host.split(':')[0]!).toLowerCase();
-};
-
 export function createApp(deps: EngineDeps) {
   const app = new Hono<EngineEnv>();
+  // Origin and Host allowlists (see edge.ts): loopback by default, plus a hosted seat's own name.
+  const edge = edgePolicy(process.env);
+  const ALLOWED_ORIGINS = edge.origins;
+
+  // Every path, not only /api: a DNS-rebound name must not be served the UI either.
+  app.use('*', async (c, next) => {
+    if (!edge.admits(c)) {
+      return c.json({ error: 'Forbidden host', code: 'forbidden_host' }, 403);
+    }
+    await next();
+  });
+
   app.use(
     '*',
     cors({
@@ -60,10 +47,6 @@ export function createApp(deps: EngineDeps) {
   );
 
   app.use('/api/*', async (c, next) => {
-    // The engine only ever serves loopback clients; any other Host is a rebound name.
-    if (!LOOPBACK_HOSTS.has(hostName(c.req.header('host')))) {
-      return c.json({ error: 'Forbidden host', code: 'forbidden_host' }, 403);
-    }
     // Mutations require no Origin (curl, Tauri native) or an allowed one. A cross-site
     // browser request always carries a forbidden Origin and dies here.
     if (c.req.method !== 'GET' && c.req.method !== 'HEAD' && c.req.method !== 'OPTIONS') {
@@ -91,7 +74,7 @@ export function createApp(deps: EngineDeps) {
   app.use('/api/*', async (c, next) => {
     const started = Date.now();
     await next();
-    if (c.req.path !== '/api/health') log.info('request', { method: c.req.method, path: c.req.path, status: c.res.status, ms: Date.now() - started });
+    if (!c.req.path.startsWith('/api/health')) log.info('request', { method: c.req.method, path: c.req.path, status: c.res.status, ms: Date.now() - started });
   });
 
   // Write triggers: any successful profile mutation may change what a detector sees.
@@ -108,8 +91,11 @@ export function createApp(deps: EngineDeps) {
     return c.json({ error: friendlyError(error) }, errorStatus(error));
   });
 
-  /** Public: the sign-in screen uses this to show whether we are online. */
-  app.get('/api/health', async (c) => {
+  /** Public liveness: a hosted seat's URL is reachable by anyone, so it names nothing about the setup. */
+  app.get('/api/health', (c) => c.json({ ok: true, engine: config.version } satisfies HealthLiveness));
+
+  /** The full model, uni and web report, for a signed-in client. */
+  app.get('/api/health/detail', requireProfile(deps), async (c) => {
     const settings = await deps.settings.get();
     const [{ uni, models }, web] = await Promise.all([probeHealth(settings), webReachable(settings.searxngUrl)]);
     const body: HealthResponse = {

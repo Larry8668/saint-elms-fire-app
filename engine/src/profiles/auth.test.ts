@@ -215,3 +215,38 @@ test('staff accounts are refused and sent to the /admin portal, never relayed', 
     uni.close();
   }
 });
+
+test('a device grant can only be polled by the client that started it, when the key is required', async () => {
+  const uni = createServer((req, res) => {
+    res.setHeader('content-type', 'application/json');
+    if (req.method === 'POST' && req.url === '/v1/auth/device/code') {
+      res.end(JSON.stringify({ device_code: 'dc-1', user_code: 'ABCD-EFGH', verification_uri: 'https://uni.test/device', expires_in: 600, interval: 5 }));
+      return;
+    }
+    if (req.method === 'POST' && req.url === '/v1/auth/device/token') {
+      res.writeHead(400).end(JSON.stringify({ error: 'authorization_pending' }));
+      return;
+    }
+    res.writeHead(404).end('{}');
+  });
+  await new Promise<void>((resolve) => uni.listen(0, '127.0.0.1', resolve));
+  try {
+    const address = uni.address();
+    const port = typeof address === 'object' && address ? address.port : 0;
+    const settings = new SettingsStore(path.join(dataDir, 'settings-flow-key.json'));
+    await settings.update({ uniServerUrl: `http://127.0.0.1:${port}` });
+    const credentials = new MemoryCredentialStore();
+    const auth = new AuthService(settings, new ProfileRegistry(credentials), new AuthSessions(), credentials);
+    const grant = await auth.startDeviceSignIn();
+    assert.ok(grant.flowKey && grant.flowKey.length >= 32);
+
+    const noFlow = (e: unknown) => e instanceof AuthError && e.code === 'no_device_flow';
+    await assert.rejects(auth.pollDeviceSignIn({ requireFlowKey: true }), noFlow, 'a stranger without the key');
+    await assert.rejects(auth.pollDeviceSignIn({ flowKey: 'guessed', requireFlowKey: true }), noFlow, 'a wrong key');
+    await assert.rejects(auth.pollDeviceSignIn({ flowKey: 'guessed' }), noFlow, 'a wrong key is refused even when optional');
+    assert.equal((await auth.pollDeviceSignIn({ flowKey: grant.flowKey, requireFlowKey: true })).status, 'pending');
+    assert.equal((await auth.pollDeviceSignIn()).status, 'pending', 'a loopback engine keeps keyless polls working');
+  } finally {
+    uni.close();
+  }
+});
