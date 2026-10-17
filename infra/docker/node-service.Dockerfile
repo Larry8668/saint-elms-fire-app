@@ -50,5 +50,8 @@ CMD ["sh", "-c", "pnpm --filter \"$SERVICE\" start"]
 FROM runtime AS uni
 COPY --from=web-assets --chown=node:node /app/apps/desktop/dist-portal /portal
 COPY --from=web-assets --chown=node:node /app/apps/admin/dist /admin
+# Baked in so a host without the compose bind mount (Render) still has the catalogue;
+# compose keeps mounting ./courseware over COURSEWARE_DIR=/courseware.
+COPY --chown=node:node courseware /app/courseware
 ENV UNI_PORTAL_DIR=/portal UNI_ADMIN_DIR=/admin
 USER node
