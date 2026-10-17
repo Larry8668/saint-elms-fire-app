@@ -13,7 +13,9 @@ const bearer = (header: string | undefined) => header?.match(/^Bearer\s+(.+)$/i)
 /**
  * An approved, enrolled student: a better-auth session through the existing admission guard
  * (account = user.id, what a device sign-in on the VM pins), or a legacy student token for
- * an enabled account (account = account.id, what a password sign-in on the VM pins).
+ * an enabled student account whose cohort is still in the release plan (account = account.id,
+ * what a password sign-in on the VM pins). The legacy store has no admission rows; its
+ * enrolment is the cohort, so that is what is checked.
  */
 function requireSessionStudent(deps: UniDeps): MiddlewareHandler<SessionEnv> {
   const approved = requireAdmission(deps, { approved: true });
@@ -31,6 +33,9 @@ function requireSessionStudent(deps: UniDeps): MiddlewareHandler<SessionEnv> {
       }
       const account = deps.accounts.get(sub);
       if (!account || account.disabled || account.role !== 'student') return c.json({ error: 'unapproved', message: 'Account unavailable' }, 403);
+      // The legacy model's enrolment is its cohort: it must still exist in the release plan,
+      // the same rule course delivery applies (routes/student.ts cohortFor).
+      if (!account.cohortId || !deps.releases.has(account.cohortId)) return c.json({ error: 'unapproved', message: 'No current cohort' }, 403);
       if (!ACCOUNT_ID.test(sub)) return c.json({ error: 'account_unsupported' }, 409);
       c.set('sessionAccount', { id: sub, kind: 'legacy' });
       return next();

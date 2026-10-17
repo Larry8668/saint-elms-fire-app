@@ -74,9 +74,10 @@ function statics() {
   return staticDeps;
 }
 
-const LEGACY_ACCOUNTS: Record<string, { id: string; role: string; disabled: boolean }> = {
-  ananya: { id: 'ananya', role: 'student', disabled: false },
-  gone: { id: 'gone', role: 'student', disabled: true },
+const LEGACY_ACCOUNTS: Record<string, { id: string; role: string; disabled: boolean; cohortId?: string }> = {
+  ananya: { id: 'ananya', role: 'student', disabled: false, cohortId: COHORT },
+  gone: { id: 'gone', role: 'student', disabled: true, cohortId: COHORT },
+  orphaned: { id: 'orphaned', role: 'student', disabled: false, cohortId: 'retired-cohort' },
 };
 
 async function withSessions(run: (h: Harness) => Promise<void>, overrides: Partial<SessionConfig> = {}): Promise<void> {
@@ -502,6 +503,7 @@ test('legacy student tokens pin the session to account.id; disabled and admin-fr
     assert.equal((await row(h, status.id)).account_kind, 'legacy');
     assert.equal(sessionStartExecs(h)[0]!.body.envs.ENGINE_SEAT_OWNER, 'ananya');
     assert.equal((await call(h, 'POST', '/v1/session', token('gone', 'student'))).status, 403);
+    assert.equal((await call(h, 'POST', '/v1/session', token('orphaned', 'student'))).status, 403, 'a cohort no longer in the release plan');
     assert.equal((await call(h, 'POST', '/v1/session', token('admin', 'admin'))).status, 403);
     // A legacy admin can list and end sessions.
     const list = await json<{ sessions: Array<{ id: string }> }>(await call(h, 'GET', '/v1/admin/sessions', token('admin', 'admin')));
