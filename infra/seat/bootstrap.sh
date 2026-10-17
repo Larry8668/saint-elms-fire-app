@@ -189,7 +189,7 @@ wait_http() {
     return
   fi
   local deadline=$(($(now) + seconds))
-  until curl -fsS -o /dev/null --max-time 5 "$url"; do
+  until curl -fsS -o /dev/null --max-time 5 "$url" 2>/dev/null; do
     (($(now) < deadline)) || die "$label did not answer at $url within ${seconds}s"
     sleep 2
   done
