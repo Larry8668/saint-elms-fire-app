@@ -66,7 +66,7 @@ It creates a VM from the snapshot (`metadata app:sef-session-smoke`), starts it,
 
 ## Measured (2026-10-17, 4 vCPU / 8 GiB `universal`)
 
-These numbers are from the first build (`sef-golden-9946999-…`, smoke-tested, then superseded). The current snapshot is `sn_agquvqu6h2bc33n7w2bfctcxni` (`sef-golden-942573f-202610171647`). It was built in 45 s by the same pipeline (bootstrap 29 s, build 17 s), and uses 1.2 GB on `/data`.
+These numbers are from the first build (`sef-golden-9946999-…`, smoke-tested, then superseded). The current snapshot is `sn_agquwaykk47e4x4cns5gfcv2pa` (`sef-golden-b02ea1b-202610171757`, engine commit `b02ea1b`: the native gateway path and the sync session values). It was built in 48 s by the same pipeline (bootstrap 23 s, build 13 s) and uses 1.2 GB on `/data`. Its smoke session was ready in 28 s (create 16, start 4, publish 1, `session-start.sh` 4, public health 3); Instabox's restore time varies from run to run. It predates #82/#83, so it has no `session-stop.sh` and no sync engine code (see "Rebuild after these merge").
 
 | Build phase | Seconds |
 | --- | --- |
@@ -87,6 +87,6 @@ These numbers are from the first build (`sef-golden-9946999-…`, smoke-tested, 
 | public `/api/health` | 0 |
 | **login-to-ready** | **19** |
 
-Compared with a fresh seat bootstrap (98 s, 91 of it Ollama and the models), the session path is 19 s, and most of that is Instabox restoring the disk. After a stop/start of that session VM, the engine answered publicly 6 s after the start began, with no exec needed. The session VM used 713 MiB of RAM with no Ollama. On disk, the `uni` provider held the gateway URL and no key.
+Compared with a fresh seat bootstrap (98 s, 91 of it Ollama and the models), the session path is 19 s, and most of that is Instabox restoring the disk. After a stop/start of that session VM, the engine answered publicly 6 s after the start began, with no exec needed. The session VM used 713 MiB of RAM with no Ollama. On disk, the `uni` provider held the gateway URL and no key. Since `b02ea1b` it holds neither: the gateway URL and token are overlaid from the environment on every read.
 
 **Exec and detaching.** `cd X && setsid nohup job > log 2>&1 < /dev/null &` backgrounds the whole `&&` list, and that subshell keeps the exec's output open, so the exec waits for the job to end. `cd X || exit 1; setsid nohup job ... &` returns at once. Measured: 21 s against 1 s for a 20 s job.
