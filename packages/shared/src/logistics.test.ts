@@ -2,6 +2,7 @@ import assert from 'node:assert/strict';
 import { test } from 'node:test';
 import {
   compareLogistics,
+  dueInstant,
   formatDue,
   LogisticsExtractionSchema,
   LogisticsRecordSchema,
@@ -75,4 +76,13 @@ test('compareLogistics puts dated records first, nearest out front', () => {
   const undated = { ...record, id: 'c', dueAt: null };
   const sorted = [undated, later, sooner].sort(compareLogistics).map((r) => r.id);
   assert.deepEqual(sorted, ['a', 'b', 'c']);
+});
+
+test('dueInstant reads wall clocks in the recorded zone and bare dates as end of day', () => {
+  assert.equal(dueInstant({ dueAt: '2026-03-14T17:00', allDay: false, timeZone: 'Asia/Kolkata' }), Date.parse('2026-03-14T11:30:00Z'));
+  assert.equal(dueInstant({ dueAt: '2026-03-14T17:00', allDay: false, timeZone: 'UTC' }), Date.parse('2026-03-14T17:00:00Z'));
+  assert.equal(dueInstant({ dueAt: '2026-03-14', allDay: true, timeZone: 'Asia/Kolkata' }), Date.parse('2026-03-14T18:29:59Z'));
+  assert.equal(dueInstant({ dueAt: '2026-03-14T17:00:00Z', allDay: false, timeZone: 'Asia/Kolkata' }), Date.parse('2026-03-14T17:00:00Z'), 'an explicit offset wins');
+  assert.equal(dueInstant({ dueAt: null, allDay: false, timeZone: null }), null);
+  assert.equal(dueInstant({ dueAt: '2026-03-14T17:00', allDay: false, timeZone: 'Not/AZone' }), null, 'an unusable zone is not guessed');
 });

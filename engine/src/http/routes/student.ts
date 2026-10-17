@@ -46,7 +46,12 @@ export function studentRoutes(deps: EngineDeps, conversations: ConversationRegis
   });
 
   // Courseware sync
-  app.get('/sync/status', guard, async (c) => c.json(await c.get('ws').sync.status()));
+  app.get('/sync/status', guard, async (c) => {
+    const ws = c.get('ws');
+    const status = await ws.sync.status();
+    ws.signals?.observeSync(status).catch((error) => log.warn('signal_observe_failed', { source: 'sync', ...errorFields(error) }));
+    return c.json(status);
+  });
 
   /**
    * The full programme manifest for an approved student. Behind `approved: true`, because

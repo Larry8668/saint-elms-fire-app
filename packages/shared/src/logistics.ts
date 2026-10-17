@@ -144,6 +144,44 @@ export function formatDue(record: Pick<LogisticsRecord, 'dueAt' | 'allDay' | 'ti
   return `due ${record.dueAt}${record.timeZone ? '' : ' — time zone not recorded'}`;
 }
 
+/** How far a zone's wall clock sits from UTC at a given instant. */
+function zoneOffsetMs(utcMs: number, timeZone: string): number {
+  const parts = new Intl.DateTimeFormat('en-US', {
+    timeZone,
+    hourCycle: 'h23',
+    year: 'numeric',
+    month: '2-digit',
+    day: '2-digit',
+    hour: '2-digit',
+    minute: '2-digit',
+    second: '2-digit',
+  }).formatToParts(new Date(utcMs));
+  const field = (type: Intl.DateTimeFormatPartTypes) => Number(parts.find((p) => p.type === type)?.value);
+  return Date.UTC(field('year'), field('month') - 1, field('day'), field('hour'), field('minute'), field('second')) - utcMs;
+}
+
+/**
+ * The moment a record falls due, in epoch ms. A bare date is due at the end of that day and
+ * a naive wall clock is read in the record's zone (host-local when none was recorded).
+ * Null when no date exists or the zone is unusable — never a guessed instant.
+ */
+export function dueInstant(record: Pick<LogisticsRecord, 'dueAt' | 'allDay' | 'timeZone'>): number | null {
+  if (!record.dueAt) return null;
+  const wall = DATE_ONLY.test(record.dueAt) || record.allDay ? `${record.dueAt.slice(0, 10)}T23:59:59` : record.dueAt;
+  const m = wall.match(NAIVE_DATETIME);
+  if (!m) {
+    const instant = Date.parse(wall);
+    return Number.isNaN(instant) ? null : instant;
+  }
+  if (!record.timeZone) return Date.parse(wall);
+  try {
+    const guess = Date.UTC(Number(m[1]), Number(m[2]) - 1, Number(m[3]), Number(m[4]), Number(m[5]), Number(m[6] ?? 0));
+    return guess - zoneOffsetMs(guess, record.timeZone);
+  } catch {
+    return null;
+  }
+}
+
 /** Nearest deadline first; records with no date sort last, then by recency. */
 export function compareLogistics(a: LogisticsRecord, b: LogisticsRecord): number {
   const stamp = (r: LogisticsRecord) => (r.dueAt ? Date.parse(r.allDay ? `${r.dueAt}T00:00:00` : r.dueAt) : Number.POSITIVE_INFINITY);

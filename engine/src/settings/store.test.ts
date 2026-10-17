@@ -70,3 +70,24 @@ test('a settings file from before the embed role existed gains it on read, and p
   assert.equal(after.roles.tutor.model, 'custom-tutor');
   assert.equal(after.roles.embed.model, config.defaults.embedModel, 'an update naming only one role keeps the others');
 });
+
+test('proactivity defaults are private, backfilled for older files, and merged per field', async () => {
+  const device = new SettingsStore();
+  const dave = new ProfileSettingsStore(device, profilePaths('dave').privateSettings);
+  const fresh = await dave.get();
+  assert.equal(fresh.proactivity.nudges, true);
+  assert.equal(fresh.proactivity.draftedAdvice, false, 'the only scheduled model call defaults off');
+  assert.equal(fresh.proactivity.kinds.deadline, true);
+
+  // A file from before a signal kind existed gains it on read.
+  await writeJson(profilePaths('erin').privateSettings, { proactivity: { nudges: false, quietHours: { enabled: true }, kinds: { deadline: false } } });
+  const erin = await new ProfileSettingsStore(device, profilePaths('erin').privateSettings).get();
+  assert.equal(erin.proactivity.nudges, false);
+  assert.deepEqual(erin.proactivity.quietHours, { enabled: true, start: '22:00', end: '07:00' });
+  assert.equal(erin.proactivity.kinds.deadline, false);
+  assert.equal(erin.proactivity.kinds.connectivity, true);
+
+  await dave.update({ proactivity: { ...fresh.proactivity, nudges: false } });
+  assert.equal((await dave.get()).proactivity.nudges, false);
+  assert.equal((await new ProfileSettingsStore(device, profilePaths('frank').privateSettings).get()).proactivity.nudges, true, 'one student’s choice never leaks to another');
+});

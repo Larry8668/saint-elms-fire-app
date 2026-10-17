@@ -1,9 +1,20 @@
-import type { EngineSettings, ProviderConfig } from '@sef/shared';
+import { defaultProactivity, type EngineSettings, type ProactivitySettings, type ProviderConfig } from '@sef/shared';
 import { config, log } from '../config';
 import { readJson, writeJson } from '../lib/fs';
 
 export type StoredSettings = EngineSettings;
-export type PrivateStoredSettings = Pick<StoredSettings, 'providers' | 'roles' | 'thinking'>;
+export type PrivateStoredSettings = Pick<StoredSettings, 'providers' | 'roles' | 'thinking' | 'proactivity'>;
+
+/** Older files lack the field (or a newer signal kind); both gain the defaults on read. */
+function withProactivityDefaults(stored: Partial<ProactivitySettings> | undefined): ProactivitySettings {
+  const defaults = defaultProactivity();
+  return {
+    ...defaults,
+    ...stored,
+    quietHours: { ...defaults.quietHours, ...stored?.quietHours },
+    kinds: { ...defaults.kinds, ...stored?.kinds },
+  };
+}
 
 export interface SettingsReader {
   get(): Promise<StoredSettings>;
@@ -33,6 +44,7 @@ function defaultSettings(): StoredSettings {
       embed: { provider: 'ollama', model: d.embedModel },
       safety: { provider: 'ollama', model: d.safetyModel },
     },
+    proactivity: defaultProactivity(),
   };
 }
 
@@ -95,6 +107,7 @@ export class ProfileSettingsStore implements SettingsSource {
         providers: stored?.providers ?? defaults.providers,
         roles: { ...defaults.roles, ...(stored?.roles ?? {}) },
         thinking: stored?.thinking ?? defaults.thinking,
+        proactivity: withProactivityDefaults(stored?.proactivity),
       };
     }
     return this.current;
@@ -116,6 +129,7 @@ export class ProfileSettingsStore implements SettingsSource {
       providers: patch.providers ? mergeProviders(existing.providers, patch.providers) : existing.providers,
       roles: { ...existing.roles, ...(patch.roles ?? {}) },
       thinking: patch.thinking ?? existing.thinking,
+      proactivity: patch.proactivity ? withProactivityDefaults(patch.proactivity) : existing.proactivity,
     };
     await writeJson(this.filePath, this.current);
     log.info('profile_settings_updated', { fields: Object.keys(patch).filter((field) => !['uniServerUrl', 'searxngUrl'].includes(field)) });
