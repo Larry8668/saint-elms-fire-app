@@ -1,6 +1,7 @@
 import { normalizeEdgeType, type DroppedItem, type FindingEvidence, type MaintenanceFinding } from '@sef/shared';
 import { z } from 'zod';
 import { UNTRUSTED_CONTENT_NOTE } from '../../agents/prompts';
+import { embedKeyId, type SimilarPair } from '../../embed/hybrid';
 import type { PageSnapshot } from '../wiki-store';
 import { makeFinding, pageRevisions } from './findings';
 
@@ -77,15 +78,30 @@ const clip = (text: string, max: number): string => (text.length <= max ? text :
 /**
  * The bounded page selection: pages with standing claims first (that is where contradictions
  * and stale knowledge live), then the rest by recency, capped so the prompt stays small.
+ * Similarity pairs from the embedding index add a signal: a page that is near-identical to
+ * another it does not link is exactly what a review exists for, so each such partner counts
+ * like a standing claim — capped, so similarity alone never outranks the evidence pages.
  */
-export function selectReviewPages(pages: PageSnapshot[]): PageSnapshot[] {
+export function selectReviewPages(pages: PageSnapshot[], options: { similarPairs?: SimilarPair[] | null } = {}): PageSnapshot[] {
   const readable = pages.filter((page) => page.format !== null && page.state === 'ok');
+  const byId = new Map(readable.map((page) => [page.id, page]));
+  const linked = (from: PageSnapshot, to: string) =>
+    (from.metadata?.links ?? []).some((link) => link.toPageId === to) || (from.legacy?.links ?? []).some((link) => link.to === to);
+  const unlinkedSimilar = new Map<string, number>();
+  for (const pair of options.similarPairs ?? []) {
+    const a = byId.get(embedKeyId(pair.a));
+    const b = byId.get(embedKeyId(pair.b));
+    if (!a || !b || linked(a, b.id) || linked(b, a.id)) continue;
+    unlinkedSimilar.set(a.id, (unlinkedSimilar.get(a.id) ?? 0) + 1);
+    unlinkedSimilar.set(b.id, (unlinkedSimilar.get(b.id) ?? 0) + 1);
+  }
   const scored = readable.map((page) => ({
     page,
     claims: (page.metadata?.claims ?? []).filter((claim) => claim.status === 'current').length,
+    similar: Math.min(unlinkedSimilar.get(page.id) ?? 0, 3),
     updated: page.metadata?.updatedAt ?? page.legacy?.updated ?? '',
   }));
-  scored.sort((a, b) => b.claims - a.claims || b.updated.localeCompare(a.updated));
+  scored.sort((a, b) => b.claims + b.similar - (a.claims + a.similar) || b.updated.localeCompare(a.updated));
   return scored.slice(0, MAX_REVIEW_PAGES).map((entry) => entry.page);
 }
 

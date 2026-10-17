@@ -1,4 +1,6 @@
-import type { Lesson } from '@sef/shared';
+import type { Lesson, SearchMatchKind, SearchMode } from '@sef/shared';
+import { EMBED_TEXT_MAX, mergeHits, type EmbedSearchFn } from '../embed/hybrid';
+import { sha256Hex } from '../lib/hash';
 
 const STOPWORDS = new Set([
   'about', 'and', 'are', 'been', 'but', 'can', 'could', 'did', 'does', 'for', 'from', 'have', 'how', 'into',
@@ -64,6 +66,68 @@ export function searchLessons(lessons: Lesson[], query: string, limit = 3): Less
     .filter((s) => s.score >= floor)
     .slice(0, limit)
     .map((s) => ({ ...s, excerpt: excerptFor(s.lesson, terms) }));
+}
+
+export interface LessonSearchHit extends LessonHit {
+  match: SearchMatchKind;
+}
+
+export interface LessonSearch {
+  hits: LessonSearchHit[];
+  /** 'keyword_only' when the semantic lane could not run — the hits are real, just keyword-scored. */
+  searchMode: SearchMode;
+}
+
+/** The text a lesson contributes to its vector — metadata first, then headings, then body. */
+export function lessonEmbedText(lesson: Lesson): string {
+  const headings = lesson.markdown.split('\n').filter((l) => /^#{1,4}\s/.test(l)).join(' ');
+  return [lesson.title, lesson.courseName, lesson.concepts.join(' '), headings, lesson.markdown].join('\n').slice(0, EMBED_TEXT_MAX);
+}
+
+const embedKeys = new WeakMap<Lesson, string>();
+
+/**
+ * The key a lesson's vector is stored under: `lessonId@contentHash`. An edit — any byte
+ * of title, concepts or markdown — changes the hash, so a re-release re-embeds and the
+ * old vector is evicted. Memoised because the store caches its lesson array per install.
+ */
+export function lessonEmbedKey(lesson: Lesson): string {
+  const cached = embedKeys.get(lesson);
+  if (cached) return cached;
+  const key = `${lesson.id}@${sha256Hex([lesson.title, ...lesson.concepts, lesson.markdown].join('')).slice(0, 16)}`;
+  embedKeys.set(lesson, key);
+  return key;
+}
+
+/**
+ * Keyword retrieval union-merged with the embedding lane over installed lessons. The
+ * `embed` seam is `null` when no lane is wired; the lane itself answers `null` when the
+ * model cannot run — either way the result says which mode produced it.
+ */
+export async function searchLessonsHybrid(lessons: Lesson[], query: string, options: { limit?: number; embed?: EmbedSearchFn } = {}): Promise<LessonSearch> {
+  const limit = options.limit ?? 3;
+  const terms = queryTerms(query);
+  const keyword = new Map(searchLessons(lessons, query, lessons.length).map((hit) => [hit.lesson.id, hit]));
+  const corpus = new Map(lessons.map((lesson) => [lessonEmbedKey(lesson), lessonEmbedText(lesson)]));
+  const semantic = options.embed ? await options.embed(corpus, query) : null;
+  const byId = new Map(lessons.map((lesson) => [lesson.id, lesson]));
+  const hits = mergeHits(
+    new Map([...keyword].map(([id, hit]) => [id, hit.score])),
+    semantic,
+  )
+    .filter((merged) => byId.has(merged.id))
+    .slice(0, limit)
+    .map((merged) => {
+      const known = keyword.get(merged.id);
+      const lesson = known?.lesson ?? byId.get(merged.id)!;
+      return {
+        lesson,
+        score: Math.round(merged.score * 100) / 100,
+        excerpt: known?.excerpt ?? excerptFor(lesson, terms),
+        match: merged.match,
+      };
+    });
+  return { hits, searchMode: semantic ? 'hybrid' : 'keyword_only' };
 }
 
 /** The window of the lesson body that best matches the query terms. */

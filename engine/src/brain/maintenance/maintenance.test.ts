@@ -13,6 +13,7 @@ import {
   type WikiLink,
 } from '@sef/shared';
 import type { ContentStore } from '../../content/store';
+import type { EmbedPairsFn } from '../../embed/hybrid';
 import type { SettingsReader } from '../../settings/store';
 import { WikiCompiler } from '../compiler/compile';
 import { readProposalRecord } from '../proposals';
@@ -83,14 +84,21 @@ interface Harness {
 
 async function harness(
   prefix: string,
-  opts: { lessons?: Lesson[]; propose?: (prompt: string) => Promise<SemanticReviewDraft> } = {},
+  opts: { lessons?: Lesson[]; propose?: (prompt: string) => Promise<SemanticReviewDraft>; similarPages?: EmbedPairsFn } = {},
 ): Promise<Harness> {
   const store = await vault(prefix);
   const content = withLessons(opts.lessons ?? []);
   const identity = async () => PROFILE;
   return {
     store,
-    service: new MaintenanceService({ wiki: store, content, settings, identity, ...(opts.propose ? { propose: opts.propose } : {}) }),
+    service: new MaintenanceService({
+      wiki: store,
+      content,
+      settings,
+      identity,
+      ...(opts.similarPages ? { similarPages: opts.similarPages } : {}),
+      ...(opts.propose ? { propose: opts.propose } : {}),
+    }),
     compiler: new WikiCompiler(store, { settings, content, profile: identity }),
   };
 }
@@ -341,6 +349,64 @@ test('the semantic review validates every reference, cites both sides, and persi
   await writeFile(pageA, `${await readFile(pageA, 'utf8')}\nNew paragraph.\n`);
   const afterEdit = await service.report();
   assert.equal(byKind(afterEdit.findings, 'contradiction').length, 0, 'the contradiction finding goes stale with the page');
+});
+
+test('similar-but-unlinked pages reach the review selection over claim-free pages', async () => {
+  // Twelve one-claim pages already fill the review cap — only a similarity signal lets a
+  // claim-free pair in ahead of them.
+  const claimPages = Array.from({ length: 12 }, (_, i) => `claim-${String(i + 1).padStart(2, '0')}`);
+  const store = await vault('similar');
+  await store.applyProposal(
+    proposal(
+      claimPages.map((id) => ({ op: 'upsert_page' as const, page: conceptDraft(id, { claims: [claim(`clm_${id}`, `A fact on ${id}`)] }) })),
+      Object.fromEntries(claimPages.map((id) => [id, null])),
+    ),
+  );
+  // Applied later, these are the newest pages: the similar pair, an already-linked
+  // lookalike pair (no signal — the link is recorded), and one ordinary page.
+  await store.applyProposal(
+    proposal(
+      [
+        { op: 'upsert_page', page: conceptDraft('sim-a', { claims: [] }) },
+        { op: 'upsert_page', page: conceptDraft('sim-b', { claims: [] }) },
+        { op: 'upsert_page', page: conceptDraft('linked-a', { claims: [], links: [link('linked-b')] }) },
+        { op: 'upsert_page', page: conceptDraft('linked-b', { claims: [] }) },
+        { op: 'upsert_page', page: conceptDraft('plain', { claims: [] }) },
+      ],
+      { 'sim-a': null, 'sim-b': null, 'linked-a': null, 'linked-b': null, plain: null },
+    ),
+  );
+
+  let prompt = '';
+  let corpusKeys: string[] = [];
+  const identity = async () => PROFILE;
+  const service = new MaintenanceService({
+    wiki: store,
+    content: withLessons([]),
+    settings,
+    identity,
+    similarPages: async (corpus) => {
+      corpusKeys = [...corpus.keys()];
+      return [
+        { a: 'sim-a@rev-1', b: 'sim-b@rev-1', score: 0.9 },
+        { a: 'linked-a@rev-1', b: 'linked-b@rev-1', score: 0.95 },
+      ];
+    },
+    propose: async (text) => {
+      prompt = text;
+      return { contradictions: [], staleClaims: [], connections: [], questions: [] };
+    },
+  });
+
+  const result = await service.review();
+  assert.equal(result.pagesReviewed, 12, 'the cap still bounds the review');
+  assert.ok(corpusKeys.some((key) => key.startsWith('sim-a@')), 'the corpus is keyed by page@revision');
+  assert.equal(corpusKeys.length, 17);
+  assert.match(prompt, /- page sim-a \(/, 'an unlinked near-duplicate outranks claim-free recency');
+  assert.match(prompt, /- page sim-b \(/);
+  assert.doesNotMatch(prompt, /- page linked-a \(/, 'a pair already linked gets no similarity signal');
+  assert.doesNotMatch(prompt, /- page linked-b \(/);
+  assert.doesNotMatch(prompt, /- page plain \(/, 'an ordinary claim-free page stays below the cap');
 });
 
 test('an accepted contradiction proposal disputes both claims', async () => {

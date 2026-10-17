@@ -71,6 +71,7 @@ export const config = {
     tutorModel: env('TUTOR_MODEL', 'gemma4:e4b'),
     brainModel: env('BRAIN_MODEL', 'gemma4:e4b'),
     visionModel: env('VISION_MODEL', 'gemma4:e4b'),
+    embedModel: env('EMBED_MODEL', 'embeddinggemma'),
   },
 };
 

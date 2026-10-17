@@ -6,7 +6,8 @@ import { test } from 'node:test';
 
 process.env.ENGINE_DATA_DIR = await mkdtemp(path.join(tmpdir(), 'sef-private-settings-'));
 
-const { profilePaths } = await import('../config');
+const { config, profilePaths } = await import('../config');
+const { writeJson } = await import('../lib/fs');
 const { ProfileSettingsStore, SettingsStore } = await import('./store');
 
 const provider = (id: string, apiKey?: string) => ({
@@ -45,4 +46,27 @@ test('profile settings share device endpoints while keeping model choices local'
   assert.equal((await bob.get()).uniServerUrl, 'https://uni.example.test');
   assert.equal((await bob.get()).thinking, true);
   assert.equal((await alice.get()).thinking, false);
+});
+
+test('a settings file from before the embed role existed gains it on read, and partial role updates keep the rest', async () => {
+  // Device level: the stored file lacks the role entirely.
+  const deviceFile = path.join(await mkdtemp(path.join(tmpdir(), 'sef-device-')), 'settings.json');
+  await writeJson(deviceFile, {
+    uniServerUrl: 'https://uni.example.test',
+    searxngUrl: '',
+    thinking: true,
+    providers: [{ id: 'ollama', kind: 'ollama', label: 'Local', baseUrl: 'http://localhost:11434' }],
+    roles: { tutor: { provider: 'ollama', model: 'gemma4:e4b' }, brain: { provider: 'ollama', model: 'gemma4:e4b' }, vision: { provider: 'ollama', model: 'gemma4:e4b' } },
+  });
+  const device = new SettingsStore(deviceFile);
+  const deviceSettings = await device.get();
+  assert.equal(deviceSettings.roles.embed.provider, 'ollama');
+  assert.equal(deviceSettings.roles.embed.model, config.defaults.embedModel);
+
+  // Profile level: same backfill, and a partial roles patch does not drop the backfilled role.
+  const carol = new ProfileSettingsStore(device, profilePaths('carol').privateSettings);
+  await carol.update({ roles: { tutor: { provider: 'x', model: 'custom-tutor' } } });
+  const after = await carol.get();
+  assert.equal(after.roles.tutor.model, 'custom-tutor');
+  assert.equal(after.roles.embed.model, config.defaults.embedModel, 'an update naming only one role keeps the others');
 });

@@ -169,6 +169,7 @@ export function studentRoutes(deps: EngineDeps, conversations: ConversationRegis
       studentName: ws.profile.name,
       claims: ws.wiki,
       wiki: ws.wiki,
+      embeddings: ws.embeddings,
       logistics: ws.logistics,
       ...(anchors ? { anchors: profileAnchors(anchors) } : {}),
     };

@@ -6,7 +6,8 @@ import type { BrainService } from '../brain/service';
 import { claimsFor, evidenceIndexFrom, renderClaims, type ClaimReader } from '../brain/claim-evidence';
 import { pageEvidenceText, WikiQuery, type WikiReader } from '../brain/query';
 import type { ContentStore } from '../content/store';
-import { searchLessons } from '../content/search';
+import { searchLessonsHybrid } from '../content/search';
+import type { EmbedSearchFn } from '../embed/hybrid';
 import { webSearch } from '../web/searxng';
 import type { TurnContext } from './context';
 import { anchorWebQuery } from './web-query';
@@ -19,6 +20,10 @@ export interface ToolDeps {
   claims?: ClaimReader;
   /** The wiki the compiled-page tools read; the same store, under a page-shaped view. */
   wiki?: WikiReader;
+  /** The semantic lane for lesson search; absent or unavailable → keyword-only, honestly marked. */
+  lessonEmbeddings?: EmbedSearchFn;
+  /** The semantic lane for wiki search; absent or unavailable → keyword-only, honestly marked. */
+  wikiEmbeddings?: EmbedSearchFn;
   /** Per-turn consent. Without it the Philosopher's web tool refuses rather than reaching out. */
   webConsented?: boolean;
   /** The consented anchor topic: code prefixes it to every web query this turn. */
@@ -59,7 +64,7 @@ export function buildTools(teacher: TeacherId, deps: ToolDeps, ctx: TurnContext)
     execute: async ({ query }) => {
       const capability: CapabilityId = can(teacher, 'lesson:support_pool') ? 'lesson:support_pool' : 'lesson:academic_pool';
       if (!can(teacher, capability)) return refuse(capability);
-      const hits = searchLessons(await lessonPool(teacher, deps.content), query, 3);
+      const hits = (await searchLessonsHybrid(await lessonPool(teacher, deps.content), query, { limit: 3, embed: deps.lessonEmbeddings })).hits;
       ctx.recordTool('search_lessons', `"${query}" → ${hits.length} lesson${hits.length === 1 ? '' : 's'}`);
       for (const h of hits) ctx.addSource({ kind: poolKind(teacher), id: h.lesson.id, title: h.lesson.title }, `${h.lesson.title}\n${h.excerpt}`);
       return hits.map((h) => ({ lessonId: h.lesson.id, title: h.lesson.title, course: h.lesson.courseName, excerpt: h.excerpt }));
@@ -157,7 +162,7 @@ export function buildTools(teacher: TeacherId, deps: ToolDeps, ctx: TurnContext)
     execute: async ({ query }) => {
       if (!can(teacher, 'tool:search_wiki')) return refuse('tool:search_wiki');
       if (!deps.wiki) return { error: 'No wiki is attached to this turn' };
-      const hits = await new WikiQuery(deps.wiki).search(query, 5);
+      const hits = (await new WikiQuery(deps.wiki, deps.wikiEmbeddings).search(query, 5)).hits;
       ctx.recordTool('search_wiki', `"${query}" → ${hits.length} page${hits.length === 1 ? '' : 's'}`);
       return hits.map((hit) => ({
         pageId: hit.id,

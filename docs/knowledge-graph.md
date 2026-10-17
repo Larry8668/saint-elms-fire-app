@@ -62,6 +62,7 @@ questions/<key>.md   investigations and open questions
 .meta/journal/…      in-flight commits (a commit is cleared only once every file landed)
 .meta/recovery/…     records of commits that were finished after a crash
 .meta/tombstones/…   erasure markers: a deleted source leaves one record a sync can carry
+.meta/embeddings/…   derived vector indexes for semantic search — rebuildable, never exported
 ```
 
 `WikiStore` (`engine/src/brain/wiki-store.ts`) is the single authoritative writer for this vault.

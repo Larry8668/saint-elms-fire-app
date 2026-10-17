@@ -115,11 +115,39 @@ test('search finds the compiled page, so a repeated question reuses the saved sy
     ),
   );
 
-  const hits = await new WikiQuery(store).search('how do impulse and momentum relate');
+  const hits = (await new WikiQuery(store).search('how do impulse and momentum relate')).hits;
   assert.equal(hits[0]?.id, 'impulse-momentum-synthesis', 'the saved synthesis is the worked answer the repeat finds');
   assert.equal(hits[0]?.kind, 'synthesis');
-  assert.deepEqual(await new WikiQuery(store).search('zqx wobble'), [], 'nothing real, nothing returned');
-  assert.deepEqual(await new WikiQuery(store).search(''), []);
+  assert.equal(hits[0]?.match, 'keyword');
+  const nothing = await new WikiQuery(store).search('zqx wobble');
+  assert.deepEqual(nothing.hits, [], 'nothing real, nothing returned');
+  assert.equal(nothing.searchMode, 'keyword_only', 'no embed lane means the honest keyword mode');
+  assert.deepEqual((await new WikiQuery(store).search('')).hits, []);
+});
+
+test('the semantic lane admits pages keyword scoring missed, and marks how each was found', async () => {
+  const store = await vault('q-hybrid');
+  await store.applyProposal(
+    proposal(
+      [
+        { op: 'upsert_page', page: conceptDraft('damping', { markdown: 'A damped oscillator loses amplitude each cycle.' }) },
+        { op: 'upsert_page', page: conceptDraft('resonance', { title: 'Resonant driving', summary: 'Amplitude builds at the natural frequency.' }) },
+      ],
+      { damping: null, resonance: null },
+    ),
+  );
+
+  // The lane answers a cosine map over the corpus keys; 'damping' is admitted even though
+  // the query shares no search terms with it — that is what the lane is for.
+  const embed = async () => new Map([['damping@rev-1', 0.9]]);
+  const found = await new WikiQuery(store, embed).search('energy loss in oscillators');
+  assert.equal(found.searchMode, 'hybrid');
+  assert.equal(found.hits[0]?.id, 'damping');
+  assert.equal(found.hits[0]?.match, 'semantic');
+
+  const down = await new WikiQuery(store, async () => null).search('energy loss in oscillators');
+  assert.equal(down.searchMode, 'keyword_only');
+  assert.deepEqual(down.hits, [], 'a semantic-only page is honestly absent when the lane is down');
 });
 
 test('a page view judges every claim live against the current source catalogue', async () => {
