@@ -66,7 +66,7 @@ export const SourceTombstoneSchema = z.strictObject({
   schemaVersion: ContractVersionSchema,
   id: IdentifierSchema,
   revision: RevisionSchema,
-  kind: z.enum(['note', 'document', 'image', 'session', 'answer', 'peer']),
+  kind: z.enum(['note', 'document', 'image', 'audio', 'session', 'answer', 'peer']),
   mediaType: z.string().min(1).max(120),
   sha256: Sha256Schema,
   erasedAt: TimestampSchema,

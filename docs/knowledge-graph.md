@@ -239,15 +239,23 @@ uploads), **Reflect** (freezing a chat's fresh turns) and the
 1. **Freeze.** The material becomes a source: the original bytes are stored immutably, the
    extraction (transcript, transcription, parsed text) is frozen beside the record under
    `.meta/sources/<id>/extracted/`, and a durable job tracks it. Ingest accepts only the
-   allowlisted media types (Markdown, plain text, PDF, PNG, JPEG — `ACCEPTED_MEDIA` in
-   `brain/sources/limits.ts`); anything else is a typed 415 refusal before a byte is
-   written, and byte and pixel limits are enforced the same way. Each source declares its
-   **origin** (`student` or `external`) and optional attribution (creator, URL), and waits at
-   `awaiting_source_review` until the student compiles it — before that they can fix a bad
-   read with a *correction*, which appends a new `student_correction` extraction revision
-   instead of overwriting the original. Reflect freezes exactly the turns that had not been
-   reflected on before; the transcript range travels with the source. The `/raw` route serves
-   an original back with `X-Content-Type-Options: nosniff`: PNG/JPEG inline for preview,
+   allowlisted media types (Markdown, plain text, PDF, PNG, JPEG, and the `audio/*` family —
+   `ACCEPTED_MEDIA` in `brain/sources/limits.ts`); anything else is a typed 415 refusal
+   before a byte is written, and byte and pixel limits are enforced the same way. Audio
+   carries its own caps: ≤256 MB of bytes, and a probed duration of ≤4 hours refused by name
+   (`audio_too_long`) before the file is stored — ffmpeg (`FFMPEG_PATH` or PATH) validates
+   the stream at probe time, so a file that merely *claims* to be audio is refused too. The
+   recording then transcribes through `engine/src/media/audio.ts`: ffmpeg normalizes to mono
+   16 kHz PCM once, ~50 s overlapping windows post to the vision-role provider's
+   OpenAI-compatible `/v1/audio/transcriptions` endpoint, and the joined transcript is a
+   timestamped ordinary extraction — failed chunks mark the pass `partial` with the reason.
+   Each source declares its **origin** (`student` or `external`) and optional attribution
+   (creator, URL), and waits at `awaiting_source_review` until the student compiles it —
+   before that they can fix a bad read with a *correction*, which appends a new
+   `student_correction` extraction revision instead of overwriting the original. Reflect
+   freezes exactly the turns that had not been reflected on before; the transcript range
+   travels with the source. The `/raw` route serves an original back with
+   `X-Content-Type-Options: nosniff`: PNG/JPEG and audio inline for preview and replay,
    everything else as an `application/octet-stream` download, so a stored type can never
    render active content in the engine origin.
 2. **Context** (`context.ts`). The keeper sees the conventions revision, `index.md`, the

@@ -53,9 +53,10 @@ export function flowStep(stage: WikiJob['stage']): number {
   }
 }
 
-/** What a chosen file becomes. Only a photo can be filed as the student's own material. */
-export function uploadContribution(mediaType: string, own: boolean): { kind: 'document' | 'image'; origin: 'student' | 'external' } {
+/** What a chosen file becomes. Only a photo or a recording can be the student's own material. */
+export function uploadContribution(mediaType: string, own: boolean): { kind: 'document' | 'image' | 'audio'; origin: 'student' | 'external' } {
   if (mediaType.startsWith('image/')) return { kind: 'image', origin: own ? 'student' : 'external' };
+  if (mediaType.startsWith('audio/')) return { kind: 'audio', origin: own ? 'student' : 'external' };
   return { kind: 'document', origin: 'external' };
 }
 
@@ -77,7 +78,7 @@ export function normalizeMediaType(file: { type: string; name: string }): string
 }
 
 export const sourceKindLabel = (kind: SourceRecord['kind']): string =>
-  ({ note: 'Note', document: 'Document', image: 'Photo', session: 'Conversation', answer: 'Answer', peer: 'From a peer' })[kind] ?? kind;
+  ({ note: 'Note', document: 'Document', image: 'Photo', audio: 'Recording', session: 'Conversation', answer: 'Answer', peer: 'From a peer' })[kind] ?? kind;
 
 export const originLabel = (origin: SourceRecord['origin']): string =>
   ({ student: 'your own', external: 'external', course: 'course', peer: 'a peer', model: 'a model' })[origin] ?? origin;

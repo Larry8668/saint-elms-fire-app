@@ -30,6 +30,8 @@ test('uploads map onto kinds the schema allows', () => {
   assert.deepEqual(uploadContribution('image/jpeg', false), { kind: 'image', origin: 'external' });
   assert.deepEqual(uploadContribution('application/pdf', true), { kind: 'document', origin: 'external' }, 'a PDF is always external — own words arrive as notes');
   assert.deepEqual(uploadContribution('text/plain', false), { kind: 'document', origin: 'external' });
+  assert.deepEqual(uploadContribution('audio/wav', true), { kind: 'audio', origin: 'student' }, 'a voice memo can be the student’s own');
+  assert.deepEqual(uploadContribution('audio/mp4', false), { kind: 'audio', origin: 'external' }, 'a lecture recording can be external material');
 });
 
 test('typed text can be the student\u2019s own understanding or external material', () => {

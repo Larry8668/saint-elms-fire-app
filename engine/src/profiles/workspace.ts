@@ -14,6 +14,7 @@ import { log, profilePaths, type ProfilePaths } from '../config';
 import { EmbeddingIndex } from '../embed/index';
 import { EmbeddingService } from '../embed/service';
 import { LogisticsStore } from '../logistics/store';
+import { AudioTranscriber } from '../media/audio';
 import { ProfileSettingsStore } from '../settings/store';
 import { ContentStore } from '../content/store';
 import { ContentSync } from '../content/sync';
@@ -101,7 +102,7 @@ export class WorkspaceManager {
       return { issuer: uniServerUrl, studentId: profileId, programmeId };
     };
 
-    const sources = new SourceIngestor(wiki, identity);
+    const sources = new SourceIngestor(wiki, identity, new AudioTranscriber(settings));
     const compiler = new WikiCompiler(wiki, { settings, content, profile: identity });
     // The index lives inside the vault's .meta — profile-scoped, atomic, rebuildable.
     const embeddings = new EmbeddingService({

@@ -1,0 +1,189 @@
+import assert from 'node:assert/strict';
+import { writeFileSync } from 'node:fs';
+import { mkdtemp } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
+import path from 'node:path';
+import { test } from 'node:test';
+import type { StoredSettings } from '../settings/store';
+import { AudioTranscriber, AudioTranscribeError, chunkPlan, parseFfmpegDuration, wavWrap, type RunCommand } from './audio';
+
+/** Settings with an Ollama vision role — resolved but never contacted by the fakes. */
+const settings = (providerKind: 'ollama' | 'anthropic' = 'ollama') =>
+  ({
+    get: async () =>
+      ({
+        providers: [{ id: 'p', kind: providerKind, label: 'Test provider', baseUrl: 'http://127.0.0.1:9', ...(providerKind === 'anthropic' ? { apiKey: 'k' } : {}) }],
+        roles: { vision: { provider: 'p', model: 'gemma4:e4b' } },
+      }) as StoredSettings,
+  }) satisfies { get(): Promise<StoredSettings> };
+
+/** ffmpeg's `-i` answer is a non-zero exit whose stderr carries the stream description. */
+const probeStderr = (duration: string) =>
+  `Input #0, wav, from 'pipe:0':\n  Duration: ${duration}, bitrate: 256 kb/s\n  Stream #0:0: Audio: pcm_s16le, 16000 Hz, mono\nAt least one output file must be specified\n`;
+
+/**
+ * A fake ffmpeg: `-i` answers the canned probe stderr, the normalize step writes synthetic
+ * mono PCM of the requested seconds to the output path (the last argv element).
+ */
+const fakeRun = (seconds: number, overrides: { probeStderr?: string } = {}): { run: RunCommand; calls: string[][] } => {
+  const calls: string[][] = [];
+  const run: RunCommand = async (_command, args) => {
+    calls.push(args);
+    const outIndex = args.indexOf('-f');
+    if (outIndex === -1) {
+      return { code: 1, stdout: '', stderr: overrides.probeStderr ?? probeStderr(new Date(seconds * 1000).toISOString().slice(11, 23)) };
+    }
+    const pcmPath = args[args.length - 1]!;
+    writeFileSync(pcmPath, Buffer.alloc(Math.round(seconds * 32_000)));
+    return { code: 0, stdout: '', stderr: '' };
+  };
+  return { run, calls };
+};
+
+const fakeFetch = (answer: (chunk: number) => string | null) => {
+  const calls: Array<{ url: string; size: number }> = [];
+  let n = 0;
+  const fetchFn = async (url: string | URL | Request, init?: RequestInit) => {
+    calls.push({ url: String(url), size: (init?.body as FormData).get('file') instanceof Blob ? ((init!.body as FormData).get('file') as Blob).size : 0 });
+    const body = answer(n++);
+    if (body === null) return new Response('down', { status: 503 });
+    return new Response(body, { status: 200 });
+  };
+  return { fetchFn: fetchFn as typeof fetch, calls };
+};
+
+const bytes = new Uint8Array([0x52, 0x49, 0x46, 0x46]);
+
+test('ffmpeg duration parses from the -i stderr, and only there', () => {
+  assert.equal(parseFfmpegDuration(probeStderr('00:02:05.50')), 125.5);
+  assert.equal(parseFfmpegDuration('garbage'), null);
+});
+
+test('the chunk plan is ~50s windows stepping 49s — overlap, not gaps', () => {
+  assert.deepEqual(chunkPlan(30), [{ start: 0, length: 30 }]);
+  assert.deepEqual(chunkPlan(120), [
+    { start: 0, length: 50 },
+    { start: 49, length: 50 },
+    { start: 98, length: 22 },
+  ]);
+  // A recording just over one window still gets its tail chunk.
+  assert.equal(chunkPlan(50.5).length, 2);
+  assert.deepEqual(chunkPlan(0.4), [{ start: 0, length: 0.4 }]);
+});
+
+test('wavWrap produces a playable RIFF header over the PCM slice', () => {
+  const pcm = new Uint8Array(32_000); // one second of silence
+  const wav = Buffer.from(wavWrap(pcm));
+  assert.equal(wav.subarray(0, 4).toString('ascii'), 'RIFF');
+  assert.equal(wav.subarray(8, 12).toString('ascii'), 'WAVE');
+  assert.equal(wav.readUInt32LE(24), 16_000, 'the declared sample rate is the normalized one');
+  assert.equal(wav.readUInt32LE(40), pcm.byteLength);
+  assert.equal(wav.byteLength, 44 + pcm.byteLength);
+});
+
+test('probe reports the stream duration and refuses non-audio by name', async () => {
+  const dir = await mkdtemp(path.join(tmpdir(), 'sef-audio-test-'));
+  const { run } = fakeRun(95);
+  const transcriber = new AudioTranscriber(settings(), { run, tmpRoot: dir });
+  assert.equal((await transcriber.probe(bytes, 'audio/wav')).seconds, 95);
+
+  const unreadable = new AudioTranscriber(settings(), { run: async () => ({ code: 1, stdout: '', stderr: 'pipe:0: Invalid data found when processing input' }), tmpRoot: dir });
+  const error = await unreadable.probe(bytes, 'audio/wav').catch((e: unknown) => e);
+  assert.ok(error instanceof AudioTranscribeError);
+  assert.equal(error.code, 'audio_unreadable');
+});
+
+test('a multi-chunk recording joins transcripts with absolute timestamps', async () => {
+  const dir = await mkdtemp(path.join(tmpdir(), 'sef-audio-test-'));
+  const { run, calls } = fakeRun(120);
+  const { fetchFn, calls: posts } = fakeFetch((n) => JSON.stringify({ text: `words of chunk ${n}` }));
+  const transcriber = new AudioTranscriber(settings(), { run, fetchFn, tmpRoot: dir });
+
+  const result = await transcriber.transcribe(bytes, 'audio/m4a');
+  assert.equal(result.chunks, 3);
+  assert.equal(result.failedChunks, 0);
+  assert.equal(result.partial, false);
+  assert.deepEqual(posts.map((c) => c.url), ['http://127.0.0.1:9/v1/audio/transcriptions', 'http://127.0.0.1:9/v1/audio/transcriptions', 'http://127.0.0.1:9/v1/audio/transcriptions']);
+  const lines = result.text.split('\n');
+  assert.match(lines[0]!, /^\[0:00\] words of chunk 0$/);
+  assert.match(lines[1]!, /^\[0:49\] words of chunk 1$/);
+  assert.match(lines[2]!, /^\[1:38\] words of chunk 2$/);
+  // One probe, one normalize — the source bytes are fed on stdin each time.
+  assert.equal(calls.length, 2);
+  assert.equal(calls[1]!.includes('-f'), true);
+});
+
+test('verbose_json segments keep their own timestamps, offset by the chunk window', async () => {
+  const dir = await mkdtemp(path.join(tmpdir(), 'sef-audio-test-'));
+  const { run } = fakeRun(60);
+  const { fetchFn } = fakeFetch(() => JSON.stringify({ text: 'all', segments: [{ start: 1, end: 4, text: 'first words' }, { start: 6, end: 9, text: 'second words' }] }));
+  const transcriber = new AudioTranscriber(settings(), { run, fetchFn, tmpRoot: dir });
+
+  const result = await transcriber.transcribe(bytes, 'audio/wav');
+  const lines = result.text.split('\n');
+  // Chunks at 0s and 49s; segment offsets land inside the right windows.
+  assert.match(lines[0]!, /^\[0:01\] first words$/);
+  assert.match(lines[1]!, /^\[0:06\] second words$/);
+  assert.match(lines[2]!, /^\[0:50\] first words$/);
+});
+
+test('a failed chunk leaves a partial transcript that says so', async () => {
+  const dir = await mkdtemp(path.join(tmpdir(), 'sef-audio-test-'));
+  const { run } = fakeRun(120);
+  const { fetchFn } = fakeFetch((n) => (n === 1 ? null : JSON.stringify({ text: `chunk ${n}` })));
+  const transcriber = new AudioTranscriber(settings(), { run, fetchFn, tmpRoot: dir });
+
+  const result = await transcriber.transcribe(bytes, 'audio/wav');
+  assert.equal(result.failedChunks, 1);
+  assert.equal(result.partial, true);
+  assert.match(result.note ?? '', /1 of 3 audio chunks could not be transcribed/);
+  assert.equal(result.text.split('\n').length, 2, 'the surviving chunks still contribute their lines');
+});
+
+test('an endpoint that never answers stops early rather than grinding through every chunk', async () => {
+  const dir = await mkdtemp(path.join(tmpdir(), 'sef-audio-test-'));
+  const { run } = fakeRun(200); // five windows — enough to see the early stop
+  const { fetchFn, calls } = fakeFetch(() => null);
+  const transcriber = new AudioTranscriber(settings(), { run, fetchFn, tmpRoot: dir });
+
+  const result = await transcriber.transcribe(bytes, 'audio/m4a');
+  assert.equal(result.attemptedChunks, 3, 'three unanswered chunks is enough to call the endpoint down');
+  assert.equal(result.failedChunks, 3);
+  assert.equal(calls.length, 3);
+  assert.equal(result.partial, true);
+  assert.equal(result.text, '');
+  assert.match(result.note ?? '', /stopped early/);
+});
+
+test('a stream that hid its length from the probe is still refused on the decoded duration', async () => {
+  const dir = await mkdtemp(path.join(tmpdir(), 'sef-audio-test-'));
+  // MediaRecorder-style output: an audio stream but no Duration line, so probe answers NaN.
+  const noDuration = `Input #0, matroska,webm, from 'pipe:0':\n  Stream #0:0: Audio: opus, 48000 Hz, mono\nAt least one output file must be specified\n`;
+  const { run } = fakeRun(120, { probeStderr: noDuration });
+  const { fetchFn, calls } = fakeFetch(() => JSON.stringify({ text: 'never reached' }));
+  const transcriber = new AudioTranscriber(settings(), { run, fetchFn, tmpRoot: dir });
+
+  const error = await transcriber.transcribe(bytes, 'audio/webm', { maxSeconds: 100 }).catch((e: unknown) => e);
+  assert.ok(error instanceof AudioTranscribeError);
+  assert.equal(error.code, 'audio_too_long');
+  assert.equal(calls.length, 0, 'no chunk ever reached the endpoint');
+});
+
+test('a missing ffmpeg is a named failure, and Anthropic is honest about having no endpoint', async () => {
+  const dir = await mkdtemp(path.join(tmpdir(), 'sef-audio-test-'));
+  const missing = new AudioTranscriber(settings(), {
+    run: async () => {
+      throw new AudioTranscribeError('ffmpeg is not installed on this device — audio sources need it (brew install ffmpeg).', 'ffmpeg_missing');
+    },
+    tmpRoot: dir,
+  });
+  const error = await missing.probe(bytes, 'audio/wav').catch((e: unknown) => e);
+  assert.ok(error instanceof AudioTranscribeError);
+  assert.equal(error.code, 'ffmpeg_missing');
+
+  const { run } = fakeRun(10);
+  const anthropic = new AudioTranscriber(settings('anthropic'), { run, tmpRoot: dir });
+  const unavailable = await anthropic.transcribe(bytes, 'audio/wav').catch((e: unknown) => e);
+  assert.ok(unavailable instanceof AudioTranscribeError);
+  assert.equal(unavailable.code, 'transcription_unavailable');
+});

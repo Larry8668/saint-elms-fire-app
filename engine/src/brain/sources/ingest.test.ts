@@ -1,13 +1,14 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
-import { SourceIngestor, SourceRejection } from './ingest';
+import { AudioTranscribeError } from '../../media/audio';
+import { SourceIngestor, SourceRejection, type AudioReader } from './ingest';
 import { JobConflictError, JobStateError } from './jobs';
 import { PROFILE, tempRoot, vault } from '../testing/fixtures';
 
-const harness = async (prefix: string) => {
+const harness = async (prefix: string, audio?: AudioReader) => {
   const store = await vault(prefix);
   const jobsRoot = await tempRoot(`${prefix}-jobs`);
-  const ingestor = new SourceIngestor(store, async () => PROFILE);
+  const ingestor = new SourceIngestor(store, async () => PROFILE, audio);
   return { store, jobsRoot, ingestor };
 };
 
@@ -210,4 +211,153 @@ test('a missing source or an empty correction is refused, not written', async ()
 
   const { source } = await ingestor.ingest(note('keep me'));
   await assert.rejects(() => ingestor.correct(source.id, '   '), SourceRejection);
+});
+
+const audioFile = (over: Record<string, unknown> = {}) => ({
+  kind: 'audio' as const,
+  title: 'Lecture memo',
+  mediaType: 'audio/m4a',
+  bytes: Buffer.from([0x00, 0x00, 0x00, 0x20, 0x66, 0x74, 0x79, 0x70]),
+  ...over,
+});
+
+const fakeAudio = (over: Partial<AudioReader> = {}): AudioReader => ({
+  probe: async () => ({ seconds: 95 }),
+  transcribe: async () => ({
+    text: '[0:00] Waves carry energy.\n[0:49] Frequency is cycles per second.',
+    seconds: 95,
+    chunks: 2,
+    attemptedChunks: 2,
+    failedChunks: 0,
+    partial: false,
+  }),
+  ...over,
+});
+
+test('a recording is stored, transcribed on arrival, and queued for review like any source', async () => {
+  const { store, ingestor } = await harness('ingest-audio', fakeAudio());
+  const result = await ingestor.ingest(audioFile());
+
+  assert.equal(result.source.kind, 'audio');
+  assert.equal(result.source.extracted, true);
+  assert.equal(result.extraction?.method, 'audio');
+  assert.match(result.extraction?.text ?? '', /Waves carry energy/);
+  const record = await store.readSource(result.source.id);
+  assert.equal(record?.extractions.at(-1)?.method, 'audio', 'the ledger records the audio pass');
+  assert.ok(await store.readSourceBytes(result.source.id), 'the original audio bytes are kept');
+});
+
+test('a recording over the duration cap is refused before anything is stored', async () => {
+  const { store, ingestor } = await harness('ingest-audio-long', fakeAudio());
+  const refused = await ingestor.ingest(audioFile(), { maxAudioSeconds: 60 }).catch((e: unknown) => e);
+  assert.ok(refused instanceof SourceRejection);
+  assert.equal(refused.code, 'audio_too_long');
+  assert.equal(refused.status, 413);
+  assert.deepEqual(Object.keys(await store.listSources()), [], 'a refused upload leaves no trace');
+});
+
+test('audio bytes run against the audio cap, not the smaller document cap', async () => {
+  const { ingestor } = await harness('ingest-audio-bytes', fakeAudio());
+  const refused = await ingestor.ingest(audioFile(), { maxAudioBytes: 4 }).catch((e: unknown) => e);
+  assert.ok(refused instanceof SourceRejection);
+  assert.equal(refused.code, 'too_large');
+  // And the same bytes are small enough for the audio cap's default.
+  assert.equal((await ingestor.ingest(audioFile({ title: 'ok' }))).source.kind, 'audio');
+});
+
+test('a missing ffmpeg refuses the upload by name — nothing is kept it cannot read', async () => {
+  const { store, ingestor } = await harness(
+    'ingest-audio-ffmpeg',
+    fakeAudio({
+      probe: async () => {
+        throw new AudioTranscribeError('ffmpeg is not installed on this device — audio sources need it (brew install ffmpeg).', 'ffmpeg_missing');
+      },
+    }),
+  );
+  const refused = await ingestor.ingest(audioFile()).catch((e: unknown) => e);
+  assert.ok(refused instanceof SourceRejection);
+  assert.equal(refused.code, 'ffmpeg_missing');
+  assert.equal(refused.status, 503);
+  assert.deepEqual(Object.keys(await store.listSources()), [], 'a refused upload leaves no trace');
+});
+
+test('a file claiming audio that ffmpeg cannot parse is refused before storage', async () => {
+  const { store, ingestor } = await harness(
+    'ingest-audio-unreadable',
+    fakeAudio({
+      probe: async () => {
+        throw new AudioTranscribeError('That file does not contain a readable audio stream.', 'audio_unreadable');
+      },
+    }),
+  );
+  const refused = await ingestor.ingest(audioFile({ mediaType: 'audio/wav' })).catch((e: unknown) => e);
+  assert.ok(refused instanceof SourceRejection);
+  assert.equal(refused.code, 'unsupported_media');
+  assert.deepEqual(Object.keys(await store.listSources()), []);
+});
+
+test('a recording filed while transcription is unavailable keeps its bytes and says why', async () => {
+  const { store, ingestor } = await harness(
+    'ingest-audio-down',
+    fakeAudio({
+      transcribe: async () => {
+        throw new AudioTranscribeError('The transcription model could not be reached.', 'transcription_unavailable');
+      },
+    }),
+  );
+  const result = await ingestor.ingest(audioFile());
+  assert.equal(result.source.extracted, false);
+  assert.equal(result.source.partial, true);
+  assert.match(result.source.note ?? '', /could not be reached/);
+  assert.ok(await store.readSourceBytes(result.source.id), 'the recording itself is still kept');
+});
+
+test('with no transcriber wired, an audio source is stored and reports the missing lane', async () => {
+  const { ingestor } = await harness('ingest-audio-unwired');
+  const result = await ingestor.ingest(audioFile());
+  assert.equal(result.source.extracted, false);
+  assert.match(result.source.note ?? '', /not configured/);
+});
+
+test('partial transcripts stay honest: failed chunks are marked, not smoothed over', async () => {
+  const { ingestor } = await harness(
+    'ingest-audio-partial',
+    fakeAudio({
+      transcribe: async () => ({
+        text: '[0:00] Waves carry energy.',
+        seconds: 95,
+        chunks: 2,
+        attemptedChunks: 2,
+        failedChunks: 1,
+        partial: true,
+        note: '1 of 2 audio chunks could not be transcribed.',
+      }),
+    }),
+  );
+  const result = await ingestor.ingest(audioFile());
+  assert.equal(result.extraction?.partial, true);
+  assert.match(result.extraction?.note ?? '', /1 of 2 audio chunks/);
+});
+
+test('a voice memo can be the student’s own; a model may never claim it', async () => {
+  const { ingestor } = await harness('ingest-audio-origin', fakeAudio());
+  const own = await ingestor.ingest(audioFile({ origin: 'student' }));
+  assert.equal(own.source.kind, 'audio');
+  const external = await ingestor.ingest(audioFile({ title: 'Lecture recording', origin: 'external' }));
+  assert.equal(external.source.kind, 'audio');
+
+  const refused = await ingestor.ingest(audioFile({ title: 'x', origin: 'model' })).catch((e: unknown) => e);
+  assert.ok(refused instanceof SourceRejection);
+  assert.equal(refused.code, 'origin_mismatch');
+});
+
+test('the audio family pins the kind — a mislabelled pair is refused before probing', async () => {
+  const { store, ingestor } = await harness('ingest-audio-mismatch', fakeAudio());
+  const wrongKind = await ingestor.ingest(audioFile({ kind: 'document' })).catch((e: unknown) => e);
+  assert.ok(wrongKind instanceof SourceRejection);
+  assert.equal(wrongKind.code, 'kind_mismatch');
+  const wrongMedia = await ingestor.ingest(audioFile({ mediaType: 'text/plain' })).catch((e: unknown) => e);
+  assert.ok(wrongMedia instanceof SourceRejection);
+  assert.equal(wrongMedia.code, 'kind_mismatch');
+  assert.deepEqual(Object.keys(await store.listSources()), []);
 });

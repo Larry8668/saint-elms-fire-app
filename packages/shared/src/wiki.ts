@@ -46,7 +46,7 @@ export const CourseConceptRefSchema = z.strictObject({
 export type CourseConceptRef = z.infer<typeof CourseConceptRefSchema>;
 
 /** How a source's text was produced — the last ledger entry is the text a compile would read. */
-export const ExtractionMethodSchema = z.enum(['text', 'pdf', 'vision', 'student_correction']);
+export const ExtractionMethodSchema = z.enum(['text', 'pdf', 'vision', 'audio', 'student_correction']);
 export type ExtractionMethod = z.infer<typeof ExtractionMethodSchema>;
 
 const sourceBase = z.strictObject({
@@ -89,6 +89,7 @@ export const SourceRecordSchema = z.discriminatedUnion('kind', [
   sourceBase.extend({ kind: z.literal('note'), origin: z.literal('student') }),
   sourceBase.extend({ kind: z.literal('document'), origin: z.enum(['course', 'external']) }),
   sourceBase.extend({ kind: z.literal('image'), origin: z.enum(['student', 'external']) }),
+  sourceBase.extend({ kind: z.literal('audio'), origin: z.enum(['student', 'external']) }),
   sourceBase.extend({ kind: z.literal('session'), origin: z.literal('student'), session: sessionRef }),
   sourceBase.extend({ kind: z.literal('answer'), origin: z.literal('model'), session: sessionRef }),
   sourceBase.extend({
@@ -320,7 +321,7 @@ export const SourceSummarySchema = z.strictObject({
   id: IdentifierSchema,
   revision: RevisionSchema,
   title: z.string().min(1).max(300),
-  kind: z.enum(['note', 'document', 'image', 'session', 'answer', 'peer']),
+  kind: z.enum(['note', 'document', 'image', 'audio', 'session', 'answer', 'peer']),
   mediaType: z.string().min(1).max(120),
   bytes: z.number().int().nonnegative(),
   sha256: Sha256Schema,
@@ -525,7 +526,7 @@ export type WikiClaimView = z.infer<typeof WikiClaimViewSchema>;
 export const WikiPageSourceSchema = z.strictObject({
   id: IdentifierSchema,
   title: z.string(),
-  kind: z.enum(['note', 'document', 'image', 'session', 'answer', 'peer']),
+  kind: z.enum(['note', 'document', 'image', 'audio', 'session', 'answer', 'peer']),
   origin: z.enum(['course', 'external', 'student', 'peer', 'model']),
 });
 export type WikiPageSource = z.infer<typeof WikiPageSourceSchema>;

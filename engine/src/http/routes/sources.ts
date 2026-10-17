@@ -23,13 +23,13 @@ import { friendlyError } from '../errors';
  * can reach another student's vault.
  */
 
-// Base64 carries 3 bytes in 4 characters; the envelope cap derives from the decoded-byte
-// limit with slack for the whitespace and padding some clients fold in.
-const MAX_ENVELOPE_CHARS = Math.ceil(INGEST_LIMITS.maxSourceBytes / 3) * 4 + 4 + 64 * 1024;
+// Base64 carries 3 bytes in 4 characters; the envelope cap derives from the largest
+// decoded-byte limit (audio) with slack for the whitespace and padding some clients fold in.
+export const MAX_ENVELOPE_CHARS = Math.ceil(INGEST_LIMITS.maxAudioBytes / 3) * 4 + 4 + 64 * 1024;
 
 const ingestBody = z
   .object({
-    kind: z.enum(['note', 'document', 'image']),
+    kind: z.enum(['note', 'document', 'image', 'audio']),
     title: z.string().min(1).max(300),
     mediaType: z.string().min(1).max(120),
     // Ceiling on the envelope only; the real limit is enforced on the decoded bytes.
@@ -129,12 +129,14 @@ export function sourceRoutes(deps: EngineDeps) {
     try {
       const raw = await c.get('ws').sources.rawBytes(id.data);
       if (!raw) return c.json({ error: 'Source not found', code: 'not_found' }, 404);
-      // Only the two preview image types may render inside this origin. Everything else —
-      // including a stored type a vault restore once planted — downloads as opaque bytes,
-      // with nosniff so the declared type cannot be re-read by the browser.
+      // Preview types render inside this origin: the two image types and audio, which the
+      // student replays beside its transcript. Everything else — including a stored type a
+      // vault restore once planted — downloads as opaque bytes, with nosniff so the
+      // declared type cannot be re-read by the browser.
       const mediaType = raw.mediaType.split(';')[0]!.trim().toLowerCase();
       const headers: Record<string, string> = { 'x-content-type-options': 'nosniff' };
-      if (mediaType === 'image/png' || mediaType === 'image/jpeg') {
+      // Audio renders inline too — the student replays the memo beside its transcript.
+      if (mediaType === 'image/png' || mediaType === 'image/jpeg' || mediaType.startsWith('audio/')) {
         headers['content-type'] = mediaType;
       } else {
         headers['content-type'] = 'application/octet-stream';

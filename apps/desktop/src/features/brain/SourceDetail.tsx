@@ -1,5 +1,5 @@
 import { useMutation, useQuery } from '@tanstack/react-query';
-import { FileText, Image as ImageIcon, MessagesSquare, NotebookPen, Pencil, ScanText, Share2, ShieldQuestion, Trash2, type LucideIcon } from 'lucide-react';
+import { AudioLines, FileText, Image as ImageIcon, MessagesSquare, NotebookPen, Pencil, ScanText, Share2, ShieldQuestion, Trash2, type LucideIcon } from 'lucide-react';
 import { useEffect, useMemo, useState } from 'react';
 import { toast } from 'sonner';
 import type { SourceRecord } from '@sef/shared';
@@ -18,6 +18,7 @@ export const SOURCE_KIND_ICON: Record<SourceRecord['kind'], LucideIcon> = {
   note: NotebookPen,
   document: FileText,
   image: ImageIcon,
+  audio: AudioLines,
   session: MessagesSquare,
   answer: ShieldQuestion,
   peer: Share2,
@@ -32,6 +33,17 @@ function SourceImage({ sourceId, title }: { sourceId: string; title: string }) {
   }, [url]);
   if (!url) return null;
   return <img src={url} alt={title} className="max-h-56 w-full rounded-xl border border-white/[0.06] object-contain bg-black/30" />;
+}
+
+/** The kept recording, playable while the student checks its transcript. */
+function SourceAudio({ sourceId, title }: { sourceId: string; title: string }) {
+  const blob = useSourceBytes(sourceId);
+  const url = useMemo(() => (blob.data ? URL.createObjectURL(blob.data) : null), [blob.data]);
+  useEffect(() => () => {
+    if (url) URL.revokeObjectURL(url);
+  }, [url]);
+  if (!url) return null;
+  return <audio src={url} aria-label={title} controls className="w-full" />;
 }
 
 function Meta({ label, children }: { label: string; children: React.ReactNode }) {
@@ -162,6 +174,7 @@ export function SourceDetailView({ sourceId, onReviewProposal, onErased }: { sou
       </div>
 
       {record.kind === 'image' && <SourceImage sourceId={record.id} title={record.title} />}
+      {record.kind === 'audio' && <SourceAudio sourceId={record.id} title={record.title} />}
 
       <section>
         <div className="mb-2 flex items-center justify-between">

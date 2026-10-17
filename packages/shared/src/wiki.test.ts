@@ -23,7 +23,7 @@ type AnySchema = { safeParse: (v: unknown) => { success: boolean }; parse: (v: u
 const rejects = (schema: AnySchema, value: unknown, message?: string) =>
   assert.equal(schema.safeParse(value).success, false, message);
 
-test('all six source kinds parse from fixtures', () => {
+test('all seven source kinds parse from fixtures', () => {
   const { sources } = makeContractFixtures();
   for (const [name, record] of Object.entries(sources)) {
     assert.equal(SourceRecordSchema.safeParse(record).success, true, `${name} should parse`);
@@ -40,6 +40,17 @@ test('source variants enforce their origin and detail requirements', () => {
   });
   rejects(SourceRecordSchema, { ...sources.studentNote, origin: 'course' });
   rejects(SourceRecordSchema, { ...sources.externalDocument, extraneous: 'field' });
+  // A recording is only ever the student's own voice or external material.
+  rejects(SourceRecordSchema, { ...sources.audio, origin: 'course' });
+  rejects(SourceRecordSchema, { ...sources.audio, origin: 'model' });
+});
+
+test('an audio source and its audio extraction pass round-trip the contract', () => {
+  const { sources } = makeContractFixtures();
+  const parsed = SourceRecordSchema.parse(sources.audio);
+  assert.equal(parsed.kind, 'audio');
+  assert.equal(parsed.mediaType, 'audio/wav');
+  assert.equal(parsed.extractions.at(-1)?.method, 'audio');
 });
 
 test('locators reject reversed ranges and invalid pages', () => {

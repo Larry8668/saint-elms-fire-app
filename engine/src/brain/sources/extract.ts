@@ -10,7 +10,7 @@ import { INGEST_LIMITS, checkPageCount, countChars, sliceChars, type Limits, typ
  * into a job that cannot record why it failed.
  */
 
-export type ExtractionMethod = 'text' | 'pdf' | 'vision' | 'student_correction';
+export type ExtractionMethod = 'text' | 'pdf' | 'vision' | 'audio' | 'student_correction';
 
 export interface ExtractionResult {
   method: ExtractionMethod;
@@ -163,6 +163,27 @@ export function recordVisionText(bytes: Uint8Array, text: string, limits: Limits
       sha256: sha256(bytes),
       partial,
       ...(partial ? { note: `Only the first ${maxChars.toLocaleString('en-GB')} characters of the reading were kept.` } : {}),
+    },
+  };
+}
+
+/**
+ * A recording's transcript, capped like every other reading. The transcriber reports its
+ * own gaps (failed chunks, an early stop); truncation here just adds to the same note.
+ */
+export function recordAudioTranscript(bytes: Uint8Array, transcript: { text: string; chunks: number; partial: boolean; note?: string }, limits: Limits = {}): ExtractionOutcome {
+  const maxChars = limits.maxExtractedChars ?? INGEST_LIMITS.maxExtractedChars;
+  const truncated = countChars(transcript.text) > maxChars;
+  const notes = [transcript.note?.replace(/\.+$/, ''), truncated ? `Only the first ${maxChars.toLocaleString('en-GB')} characters of the transcript were kept` : ''].filter(Boolean);
+  return {
+    ok: true,
+    result: {
+      method: 'audio',
+      text: sliceChars(transcript.text, maxChars),
+      sha256: sha256(bytes),
+      partial: transcript.partial || truncated,
+      ...(notes.length ? { note: `${notes.join('; ')}.` } : {}),
+      units: transcript.chunks,
     },
   };
 }
