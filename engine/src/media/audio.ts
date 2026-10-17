@@ -1,4 +1,3 @@
-import { spawn } from 'node:child_process';
 import { mkdtempSync } from 'node:fs';
 import { mkdir, open, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
@@ -8,6 +7,7 @@ import { errorFields, log } from '../config';
 import { checkAudioDuration, formatDuration } from '../brain/sources/limits';
 import { ModelConfigError, resolveModel } from '../models/registry';
 import type { StoredSettings } from '../settings/store';
+import { ProcessError, spawnProcess, type RunCommand } from './process';
 
 /**
  * Audio ingestion: a recording is frozen like any other source, then transcribed locally —
@@ -30,14 +30,7 @@ export class AudioTranscribeError extends Error {
   }
 }
 
-export interface RunResult {
-  code: number;
-  stdout: string;
-  stderr: string;
-}
-
-/** The subprocess seam — argv + stdin bytes in, stdout/stderr out. Tests fake it; production spawns. */
-export type RunCommand = (command: string, args: string[], opts: { input?: Uint8Array; timeoutMs?: number }) => Promise<RunResult>;
+export type { RunCommand, RunResult } from './process';
 
 export interface AudioProbe {
   /** Stream length in seconds; NaN when ffmpeg reports the stream but no duration. */
@@ -115,42 +108,18 @@ export function wavWrap(pcm: Uint8Array): Uint8Array {
   return new Uint8Array(wav);
 }
 
-/** The one real subprocess runner: argv only, stdin = the source bytes, bounded output. */
-const spawnRun: RunCommand = (command, args, opts) =>
-  new Promise<RunResult>((resolve, reject) => {
-    const child = spawn(command, args, { stdio: ['pipe', 'pipe', 'pipe'] });
-    const stdout: Buffer[] = [];
-    const stderr: Buffer[] = [];
-    let settled = false;
-    const timer = setTimeout(() => {
-      settled = true;
-      child.kill('SIGKILL');
-      reject(new AudioTranscribeError(`ffmpeg did not answer within ${Math.round((opts.timeoutMs ?? FFMPEG_TIMEOUT_MS) / 1000)} seconds.`, 'transcode_failed'));
-    }, opts.timeoutMs ?? FFMPEG_TIMEOUT_MS);
-    child.stdout.on('data', (chunk: Buffer) => stdout.push(chunk));
-    child.stderr.on('data', (chunk: Buffer) => stderr.push(chunk));
-    child.on('error', (error: NodeJS.ErrnoException) => {
-      if (settled) return;
-      settled = true;
-      clearTimeout(timer);
-      reject(
-        error.code === 'ENOENT'
-          ? new AudioTranscribeError('ffmpeg is not installed on this device — audio sources need it (brew install ffmpeg).', 'ffmpeg_missing')
-          : error,
-      );
-    });
-    child.on('close', (code) => {
-      if (settled) return;
-      settled = true;
-      clearTimeout(timer);
-      resolve({ code: code ?? -1, stdout: Buffer.concat(stdout).toString('utf8'), stderr: Buffer.concat(stderr).toString('utf8') });
-    });
-    if (opts.input) {
-      child.stdin.on('error', () => {});
-      child.stdin.write(opts.input);
+/** Process failures, translated into this module's own vocabulary. */
+const ffmpegRun: RunCommand = async (command, args, opts) => {
+  try {
+    return await spawnProcess(command, args, opts);
+  } catch (error) {
+    if (error instanceof ProcessError && error.reason === 'missing') {
+      throw new AudioTranscribeError('ffmpeg is not installed on this device — audio sources need it (brew install ffmpeg).', 'ffmpeg_missing');
     }
-    child.stdin.end();
-  });
+    if (error instanceof ProcessError) throw new AudioTranscribeError(error.message, 'transcode_failed');
+    throw error;
+  }
+};
 
 export interface AudioTranscriberDeps {
   env?: NodeJS.ProcessEnv;
@@ -194,7 +163,7 @@ export class AudioTranscriber {
     deps: AudioTranscriberDeps = {},
   ) {
     this.env = deps.env ?? process.env;
-    this.run = deps.run ?? spawnRun;
+    this.run = deps.run ?? ffmpegRun;
     this.fetchFn = deps.fetchFn ?? fetch;
     this.tmpRoot = deps.tmpRoot;
   }
@@ -208,7 +177,7 @@ export class AudioTranscriber {
    * rather than half-read. A stream ffmpeg cannot parse as audio is rejected by name.
    */
   async probe(bytes: Uint8Array, _mediaType: string): Promise<AudioProbe> {
-    const { stderr } = await this.run(this.ffmpeg, ['-hide_banner', '-i', 'pipe:0'], { input: bytes });
+    const { stderr } = await this.run(this.ffmpeg, ['-hide_banner', '-i', 'pipe:0'], { input: bytes, timeoutMs: FFMPEG_TIMEOUT_MS });
     if (!hasAudioStream(stderr)) {
       throw new AudioTranscribeError('That file does not contain a readable audio stream.', 'audio_unreadable');
     }
@@ -233,7 +202,7 @@ export class AudioTranscriber {
       const normalized = await this.run(
         this.ffmpeg,
         ['-y', '-hide_banner', '-loglevel', 'error', '-i', 'pipe:0', '-ac', '1', '-ar', String(SAMPLE_RATE), '-f', 's16le', pcmPath],
-        { input: bytes },
+        { input: bytes, timeoutMs: FFMPEG_TIMEOUT_MS },
       );
       if (normalized.code !== 0) {
         throw new AudioTranscribeError(`ffmpeg could not decode that recording${normalized.stderr.trim() ? ` — ${normalized.stderr.trim().slice(0, 200)}` : ''}`, 'transcode_failed');

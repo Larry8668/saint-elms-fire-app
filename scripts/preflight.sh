@@ -29,7 +29,13 @@ need_cmd pnpm bad "corepack enable"
 need_cmd ollama bad "https://ollama.com/download"
 need_cmd docker warn "only needed for docker compose"
 need_cmd cargo warn "only needed for the Tauri desktop build"
-need_cmd "${FFMPEG_PATH:-ffmpeg}" warn "only needed for audio source ingestion"
+need_cmd "${FFMPEG_PATH:-ffmpeg}" warn "only needed for audio and video source ingestion"
+# yt-dlp resolves env → PATH → the vendored youtube-dl-exec package at runtime.
+if command -v "${YTDLP_PATH:-yt-dlp}" >/dev/null 2>&1 || [ -x engine/node_modules/youtube-dl-exec/bin/yt-dlp ]; then
+  ok "yt-dlp"
+else
+  warn "yt-dlp not found — only needed for YouTube video ingestion (brew install yt-dlp)"
+fi
 
 section "Models"
 if tags=$(curl -fsS --max-time 3 "$OLLAMA_URL/api/tags" 2>/dev/null); then

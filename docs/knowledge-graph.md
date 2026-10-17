@@ -249,6 +249,19 @@ uploads), **Reflect** (freezing a chat's fresh turns) and the
    16 kHz PCM once, ~50 s overlapping windows post to the vision-role provider's
    OpenAI-compatible `/v1/audio/transcriptions` endpoint, and the joined transcript is a
    timestamped ordinary extraction — failed chunks mark the pass `partial` with the reason.
+   A video link is the third intake lane beside text and uploads: `engine/src/media/youtube.ts`
+   accepts only an explicit host allowlist (`youtube.com`, `www.youtube.com`,
+   `m.youtube.com`, `youtu.be` — no subdomain guessing), resolves `yt-dlp` via
+   `YTDLP_PATH` → PATH → the vendored `youtube-dl-exec` binary, and splits the fetch into two
+   consent-separated phases — `POST /api/sources/video-preview` runs `--dump-json` for the
+   metadata card and no media bytes move, then `POST /api/sources/video` runs
+   `-x --audio-format wav` into a bounded temp area whose bytes feed the same audio pipeline.
+   The result is a `kind: 'video'` source — always `origin: 'external'`, carrying `link`
+   provenance `{ provider: 'youtube', url, videoId, fetchedAt }` — whose stored original is
+   the extracted audio track (`mediaType` is the audio container) and whose transcript cites
+   through the ordinary `text` locator. Duration (≤4 h) and fetched-byte caps apply before and
+   during the download, and egress is logged as `video_url_preview` / `video_url_fetch`;
+   age-gated, geo-blocked, no-audio-stream and missing-`yt-dlp` each fail with a named code.
    Each source declares its **origin** (`student` or `external`) and optional attribution
    (creator, URL), and waits at `awaiting_source_review` until the student compiles it —
    before that they can fix a bad read with a *correction*, which appends a new

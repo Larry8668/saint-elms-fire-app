@@ -2,7 +2,7 @@ import { useMutation } from '@tanstack/react-query';
 import { FileUp, MessagesSquare, Send } from 'lucide-react';
 import { useRef, useState } from 'react';
 import { toast } from 'sonner';
-import { TEACHERS, type ContributeBody, type SourceReceipt } from '@sef/shared';
+import { TEACHERS, type ContributeBody, type SourceReceipt, type VideoPreview } from '@sef/shared';
 import { Button } from '@/components/ui/button';
 import { Tabs } from '@/components/ui/overlays';
 import { Badge, Eyebrow, Input, Label, Panel, Textarea } from '@/components/ui/primitives';
@@ -11,9 +11,9 @@ import { cn } from '@/lib/cn';
 import { log } from '@/lib/log';
 import { useInvalidateBrain, useSessions } from '@/lib/queries';
 import { timeAgo } from '@/lib/time';
-import { normalizeMediaType, textContribution, uploadContribution } from './review';
+import { formatSeconds, normalizeMediaType, textContribution, uploadContribution } from './review';
 
-type Mode = 'write' | 'upload' | 'conversation';
+type Mode = 'write' | 'upload' | 'link' | 'conversation';
 
 /** Own understanding vs external material — the provenance the record will carry. */
 function OriginToggle({ own, onChange }: { own: boolean; onChange: (own: boolean) => void }) {
@@ -63,6 +63,7 @@ function AttributionFields({ creator, url, onCreator, onUrl }: { creator: string
 const MODES: Array<{ value: Mode; label: string }> = [
   { value: 'write', label: 'Write or paste' },
   { value: 'upload', label: 'Upload a file' },
+  { value: 'link', label: 'A video link' },
   { value: 'conversation', label: 'From a conversation' },
 ];
 
@@ -80,6 +81,8 @@ export function ContributionComposer({ onFiled }: { onFiled: (receipt: SourceRec
   const [creator, setCreator] = useState('');
   const [url, setUrl] = useState('');
   const [file, setFile] = useState<{ name: string; mediaType: string; data: string; preview: string } | null>(null);
+  const [videoUrl, setVideoUrl] = useState('');
+  const [preview, setPreview] = useState<VideoPreview | null>(null);
   const [dragging, setDragging] = useState(false);
   const input = useRef<HTMLInputElement>(null);
   const sessions = useSessions();
@@ -102,6 +105,23 @@ export function ContributionComposer({ onFiled }: { onFiled: (receipt: SourceRec
     onError: (e) => toast.error((e as Error).message),
   });
 
+  const previewLink = useMutation({
+    mutationFn: (url: string) => api.videoPreview(url),
+    onSuccess: setPreview,
+    onError: (e) => toast.error((e as Error).message),
+  });
+
+  const fetchLink = useMutation({
+    mutationFn: (url: string) => api.videoIngest(url),
+    onSuccess: (receipt) => {
+      invalidateBrain();
+      onFiled(receipt);
+      toast.success('Kept — check the transcript before it is proposed');
+      reset();
+    },
+    onError: (e) => toast.error((e as Error).message),
+  });
+
   const freeze = useMutation({
     mutationFn: (sessionId: string) => api.reflectReview(sessionId),
     onSuccess: (receipt) => {
@@ -118,6 +138,8 @@ export function ContributionComposer({ onFiled }: { onFiled: (receipt: SourceRec
     setFile(null);
     setCreator('');
     setUrl('');
+    setVideoUrl('');
+    setPreview(null);
     setOwn(true);
   };
 
@@ -240,6 +262,45 @@ export function ContributionComposer({ onFiled }: { onFiled: (receipt: SourceRec
               <Send /> Keep it
             </Button>
           </div>
+        </div>
+      )}
+
+      {mode === 'link' && (
+        <div className="space-y-4">
+          <div>
+            <Label htmlFor="contrib-video-url">YouTube link</Label>
+            <div className="flex gap-2">
+              <Input
+                id="contrib-video-url"
+                value={videoUrl}
+                onChange={(e) => {
+                  setVideoUrl(e.target.value);
+                  setPreview(null);
+                }}
+                placeholder="https://www.youtube.com/watch?v=…"
+                inputMode="url"
+              />
+              <Button variant="outline" disabled={!videoUrl.trim()} loading={previewLink.isPending} onClick={() => previewLink.mutate(videoUrl.trim())}>
+                Look it up
+              </Button>
+            </div>
+            <p className="mt-1.5 text-[12px] text-night-500">Nothing is downloaded until you approve the preview.</p>
+          </div>
+          {preview && (
+            <div className="rounded-xl border border-white/[0.08] bg-white/[0.02] p-4">
+              {preview.thumbnailUrl && <img src={preview.thumbnailUrl} alt="" className="mb-3 aspect-video w-full rounded-lg border border-white/[0.06] bg-black/30 object-cover" />}
+              <div className="text-[14px] font-medium text-night-100">{preview.title}</div>
+              <div className="mt-0.5 text-[12px] text-night-500">
+                {[preview.uploader, formatSeconds(preview.seconds), 'YouTube'].filter(Boolean).join(' · ')}
+              </div>
+              <div className="mt-3 flex flex-wrap items-center justify-between gap-3">
+                <p className="text-[12px] leading-5 text-night-400">Keeps the audio track only, transcribed like any recording — the video itself is never stored.</p>
+                <Button variant="primary" loading={fetchLink.isPending} onClick={() => fetchLink.mutate(preview.url)}>
+                  <Send /> Fetch and transcribe
+                </Button>
+              </div>
+            </div>
+          )}
         </div>
       )}
 

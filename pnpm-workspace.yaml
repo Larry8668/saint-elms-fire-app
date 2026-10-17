@@ -6,3 +6,5 @@ packages:
 
 onlyBuiltDependencies:
   - esbuild
+  # Its postinstall fetches the yt-dlp binary the video-ingest lane falls back to.
+  - youtube-dl-exec

@@ -9,11 +9,13 @@ import {
   SourceDetailSchema,
   SourceReadResultSchema,
   SourceReceiptSchema,
+  VideoPreviewSchema,
 } from '@sef/shared';
 import { JobConflictError, JobStateError, SourceRejection } from '../../brain/sources/ingest';
 import { ProposalStateError } from '../../brain/compiler/compile';
 import { VaultConflictError } from '../../brain/vault-errors';
-import { INGEST_LIMITS, safeSourceFilename } from '../../brain/sources/limits';
+import { INGEST_LIMITS, safeSourceFilename, sanitiseTitle } from '../../brain/sources/limits';
+import { YouTubeError } from '../../media/youtube';
 import { requireProfile, type EngineDeps, type EngineEnv } from '../context';
 import { friendlyError } from '../errors';
 
@@ -41,6 +43,26 @@ const ingestBody = z
 
 const correctionBody = z.object({ text: z.string().min(1).max(INGEST_LIMITS.maxExtractedChars + 1) }).strict();
 
+/** A pasted video link — the engine's allowlist names exactly why a link is refused. */
+const videoBody = z.strictObject({ url: z.string().trim().min(1).max(2000) });
+
+/** How each named video failure reaches the client. */
+const VIDEO_STATUS: Record<YouTubeError['code'], ContentfulStatusCode> = {
+  unsupported_url: 400,
+  unsupported_host: 400,
+  video_too_long: 413,
+  video_too_large: 413,
+  age_gated: 422,
+  geo_blocked: 422,
+  video_unavailable: 422,
+  no_audio_stream: 422,
+  video_unreachable: 502,
+  preview_failed: 502,
+  fetch_failed: 502,
+  ytdlp_missing: 503,
+  ffmpeg_missing: 503,
+};
+
 const rejectBody = z.object({ note: z.string().max(500).optional() }).strict();
 
 /**
@@ -67,6 +89,7 @@ export function sourceRoutes(deps: EngineDeps) {
 
   const handled = (error: unknown, fallbackCode: string): { body: { error: string; code: string; details?: unknown }; status: ContentfulStatusCode } => {
     if (error instanceof SourceRejection) return { body: { error: error.message, code: error.code }, status: error.status };
+    if (error instanceof YouTubeError) return { body: { error: error.message, code: error.code }, status: VIDEO_STATUS[error.code] };
     if (error instanceof JobConflictError) return { body: { error: error.message, code: 'job_conflict' }, status: 404 };
     if (error instanceof JobStateError) return { body: { error: error.message, code: 'job_state' }, status: 409 };
     if (error instanceof ProposalStateError) return { body: { error: error.message, code: 'proposal_state' }, status: 409 };
@@ -98,6 +121,52 @@ export function sourceRoutes(deps: EngineDeps) {
 
     try {
       const result = await c.get('ws').sources.ingest({ kind, title, mediaType, bytes, origin, attribution });
+      const extraction = result.extraction
+        ? { method: result.extraction.method, text: result.extraction.text, partial: result.extraction.partial, ...(result.extraction.note ? { note: result.extraction.note } : {}) }
+        : null;
+      return c.json(SourceReceiptSchema.parse({ schemaVersion: CONTRACT_VERSION, source: result.source, extraction, jobId: result.jobId, reused: result.reused }), 201);
+    } catch (error) {
+      const { body, status } = handled(error, 'ingest_failed');
+      return c.json(body, status);
+    }
+  });
+
+  /**
+   * The video lane's first phase: metadata only. yt-dlp dumps what a link *is* — title,
+   * length, channel, thumbnail — and no media bytes move. The consent card the client
+   * renders from this is what stands between a pasted URL and a download.
+   */
+  app.post('/sources/video-preview', guard, async (c) => {
+    const parsed = videoBody.safeParse(await c.req.json().catch(() => null));
+    if (!parsed.success) return c.json({ error: 'Send the video link as url', code: 'invalid_request' }, 400);
+    try {
+      const preview = await c.get('ws').youtube.preview(parsed.data.url);
+      return c.json(VideoPreviewSchema.parse({ schemaVersion: CONTRACT_VERSION, ...preview }));
+    } catch (error) {
+      const { body, status } = handled(error, 'preview_failed');
+      return c.json(body, status);
+    }
+  });
+
+  /**
+   * The second, consented phase — only ever called from the preview card's explicit
+   * action: yt-dlp extracts the audio track, then the ordinary ingest path freezes those
+   * bytes as a 'video' source and transcribes them like any other audio.
+   */
+  app.post('/sources/video', guard, async (c) => {
+    const parsed = videoBody.safeParse(await c.req.json().catch(() => null));
+    if (!parsed.success) return c.json({ error: 'Send the video link as url', code: 'invalid_request' }, 400);
+    try {
+      const fetched = await c.get('ws').youtube.fetchAudio(parsed.data.url);
+      const result = await c.get('ws').sources.ingest({
+        kind: 'video',
+        title: sanitiseTitle(fetched.title),
+        mediaType: fetched.mediaType,
+        bytes: fetched.bytes,
+        origin: 'external',
+        attribution: { ...(fetched.uploader ? { creator: fetched.uploader } : {}), url: fetched.link.url },
+        link: fetched.link,
+      });
       const extraction = result.extraction
         ? { method: result.extraction.method, text: result.extraction.text, partial: result.extraction.partial, ...(result.extraction.note ? { note: result.extraction.note } : {}) }
         : null;

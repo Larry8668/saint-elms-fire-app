@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
 import type { ProposalPreview, SourceCitation, WikiJob } from '@sef/shared';
-import { STAGE_INFO, canCorrect, citationExcerpt, flowStep, isLiveJob, locatorLabel, normalizeMediaType, pageBody, previewSummary, textContribution, uploadContribution } from './review';
+import { STAGE_INFO, canCorrect, citationExcerpt, flowStep, formatSeconds, isLiveJob, locatorLabel, normalizeMediaType, pageBody, previewSummary, sourceKindLabel, textContribution, uploadContribution } from './review';
 
 const STAGES: WikiJob['stage'][] = ['queued', 'extracting', 'awaiting_source_review', 'compiling', 'awaiting_review', 'committed', 'no_changes', 'failed', 'cancelled'];
 
@@ -44,7 +44,19 @@ test('media types fall back to the extension when the platform gives none', () =
   assert.equal(normalizeMediaType({ type: '', name: 'notes.md' }), 'text/markdown');
   assert.equal(normalizeMediaType({ type: '', name: 'photo.PNG' }), 'image/png');
   assert.equal(normalizeMediaType({ type: 'image/webp', name: 'photo.bin' }), 'image/webp');
+  // A recording the platform cannot type still reaches the audio lane.
+  assert.equal(normalizeMediaType({ type: '', name: 'lecture.m4a' }), 'audio/mp4');
+  assert.equal(normalizeMediaType({ type: '', name: 'memo.WAV' }), 'audio/wav');
+  assert.equal(normalizeMediaType({ type: '', name: 'voicemail.3gp' }), 'audio/3gpp');
   assert.equal(normalizeMediaType({ type: '', name: 'thing.bin' }), 'application/octet-stream');
+});
+
+test('kind labels and durations render for every source kind', () => {
+  assert.equal(sourceKindLabel('video'), 'Video');
+  assert.equal(sourceKindLabel('audio'), 'Recording');
+  assert.equal(formatSeconds(95), '1:35');
+  assert.equal(formatSeconds(3600 + 125), '1:02:05');
+  assert.equal(formatSeconds(0), '0:00');
 });
 
 test('a correction is possible while no committed proposal has read the text', () => {

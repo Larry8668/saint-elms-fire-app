@@ -1,5 +1,5 @@
 import { useMutation, useQuery } from '@tanstack/react-query';
-import { AudioLines, FileText, Image as ImageIcon, MessagesSquare, NotebookPen, Pencil, ScanText, Share2, ShieldQuestion, Trash2, type LucideIcon } from 'lucide-react';
+import { AudioLines, FileText, Film, Image as ImageIcon, MessagesSquare, NotebookPen, Pencil, ScanText, Share2, ShieldQuestion, Trash2, type LucideIcon } from 'lucide-react';
 import { useEffect, useMemo, useState } from 'react';
 import { toast } from 'sonner';
 import type { SourceRecord } from '@sef/shared';
@@ -19,6 +19,7 @@ export const SOURCE_KIND_ICON: Record<SourceRecord['kind'], LucideIcon> = {
   document: FileText,
   image: ImageIcon,
   audio: AudioLines,
+  video: Film,
   session: MessagesSquare,
   answer: ShieldQuestion,
   peer: Share2,
@@ -174,7 +175,8 @@ export function SourceDetailView({ sourceId, onReviewProposal, onErased }: { sou
       </div>
 
       {record.kind === 'image' && <SourceImage sourceId={record.id} title={record.title} />}
-      {record.kind === 'audio' && <SourceAudio sourceId={record.id} title={record.title} />}
+      {/* A video's kept original is its audio track — the same inline replay applies. */}
+      {(record.kind === 'audio' || record.kind === 'video') && <SourceAudio sourceId={record.id} title={record.title} />}
 
       <section>
         <div className="mb-2 flex items-center justify-between">

@@ -125,8 +125,10 @@ export function sanitiseTitle(raw: string): string {
     .replace(/[\u0000-\u001f\u007f]/g, ' ')
     .replace(/[\\/]+/g, ' ')
     // Strip leading dots, separators and the spaces the replacements leave behind, so
-    // `../../x` cannot survive as `.. x`.
+    // `../../x` cannot survive as `.. x` — and collapse interior `..` runs, which
+    // titleIsSafe refuses wherever they sit.
     .replace(/^[\s./]+/, '')
+    .replace(/\.{2,}/g, '.')
     .trim();
   return cleaned.slice(0, 300) || 'Untitled source';
 }

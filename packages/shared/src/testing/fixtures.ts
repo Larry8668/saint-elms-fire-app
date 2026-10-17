@@ -253,6 +253,14 @@ export function makeContractFixtures() {
     origin: 'student',
     extractions: [{ revision: 'rev-1', method: 'audio' as const, sha256: HASH_A, createdAt: T1 }],
   });
+  const videoSource = SourceRecordSchema.parse({
+    ...sourceBase('source-video', 'rev-1', 'A talk on orbits', HASH_B, 'audio/wav'),
+    kind: 'video',
+    origin: 'external',
+    attribution: { creator: 'Example Lectures', url: 'https://www.youtube.com/watch?v=abc123XYZ_0' },
+    link: { provider: 'youtube', url: 'https://www.youtube.com/watch?v=abc123XYZ_0', videoId: 'abc123XYZ_0', fetchedAt: T1 },
+    extractions: [{ revision: 'rev-1', method: 'audio' as const, sha256: HASH_B, createdAt: T1 }],
+  });
   const sessionSource = SourceRecordSchema.parse({
     ...sourceBase('source-session', 'rev-1', 'Guide session on oscillations', HASH_A, 'application/x-sef-session'),
     kind: 'session',
@@ -576,6 +584,7 @@ export function makeContractFixtures() {
       externalDocument,
       studentImage,
       audio: audioSource,
+      video: videoSource,
       session: sessionSource,
       answer: answerSource,
       peer: peerSource,
