@@ -145,4 +145,17 @@ export class AuthSessions {
     }
     if (changed) await this.persist();
   }
+
+  /** Drops every session whose profile fails `keep`; returns how many went. A hosted seat's startup sweep. */
+  async revokeUnless(keep: (profileId: string) => boolean): Promise<number> {
+    const sessions = await this.load();
+    let revoked = 0;
+    for (const [key, s] of sessions) {
+      if (keep(s.profileId)) continue;
+      sessions.delete(key);
+      revoked += 1;
+    }
+    if (revoked > 0) await this.persist();
+    return revoked;
+  }
 }

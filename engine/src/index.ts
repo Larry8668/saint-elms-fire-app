@@ -8,6 +8,7 @@ import { edgeStartupCheck } from './http/edge';
 import { AuthService } from './profiles/auth';
 import { AnonymousDataManager } from './profiles/anonymous';
 import { ProfileRegistry } from './profiles/registry';
+import { enforceSeatOwner, SeatOwner } from './profiles/seat-owner';
 import { AuthSessions } from './profiles/sessions';
 import { WorkspaceManager } from './profiles/workspace';
 import { SettingsStore } from './settings/store';
@@ -26,7 +27,10 @@ async function main() {
   const credentials = createCredentialStore();
   const registry = new ProfileRegistry(credentials);
   const workspaces = new WorkspaceManager(settings, registry);
-  const auth = new AuthService(settings, registry, new AuthSessions(), credentials);
+  const sessions = new AuthSessions();
+  const seat = SeatOwner.fromEnv(process.env);
+  await enforceSeatOwner(seat, sessions);
+  const auth = new AuthService(settings, registry, sessions, credentials, undefined, { seat });
 
   if (config.seedDemo) await bootstrapDemo(registry, workspaces);
 

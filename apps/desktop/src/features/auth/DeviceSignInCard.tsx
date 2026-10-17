@@ -5,7 +5,7 @@ import { toast } from 'sonner';
 import type { DevicePollResult, DeviceProfile, DeviceSignInStart } from '@sef/shared';
 import { Button } from '@/components/ui/button';
 import { Label } from '@/components/ui/primitives';
-import { api } from '@/lib/api';
+import { api, EngineError } from '@/lib/api';
 import { log } from '@/lib/log';
 import { useSession } from '@/lib/session';
 import { formatCountdown, initialPollInterval, nextPollIntervalSeconds, outcomeMessage, type GrantOutcome } from './device-grant';
@@ -115,6 +115,12 @@ function DeviceGrantPending({ grant, poll, onCancel }: { grant: DeviceSignInStar
         }
       } catch (err) {
         if (stopped) return;
+        if (err instanceof EngineError && err.code === 'seat_not_yours') {
+          stopped = true;
+          clearInterval(countdown);
+          setOutcome('seat_not_yours');
+          return;
+        }
         log.warn('device_poll_failed', { error: String(err) });
         setMessage('Lost contact with the university server. Still trying…');
       }
