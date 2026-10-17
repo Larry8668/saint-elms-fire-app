@@ -23,5 +23,21 @@ export function templateText(seed: Seed, teacher: TeacherId): string {
       return `How are ${s.a} and ${s.b} connected?`;
     case 'feed_item':
       return `In the news — “${s.title}”. What's the bigger idea behind it?`;
+    case 'plan_step':
+      return planStepText(seed);
+  }
+}
+
+function planStepText(seed: Seed): string {
+  const subject = seed.slots.subject;
+  switch (seed.variant) {
+    case 'quiz':
+      return `Quiz me on ${subject} — it's next on my plan.`;
+    case 'read_lesson':
+      return `Walk me through “${subject}” — it's next on my plan.`;
+    case 'answer_question':
+      return `Help me answer my open question: ${subject}`;
+    default:
+      return `Help me review ${subject} — it's next on my plan.`;
   }
 }

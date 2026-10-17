@@ -92,6 +92,11 @@ export class SessionStore {
     return [...new Set((await this.all()).flatMap((s) => s.lessonIds))];
   }
 
+  /** When a conversation last drew on each lesson — the evidence a plan's read-lesson step waits for. */
+  async lessonActivity(): Promise<Array<{ lessonId: string; at: string }>> {
+    return (await this.all()).flatMap((s) => s.lessonIds.map((lessonId) => ({ lessonId, at: s.updatedAt })));
+  }
+
   /** Newest first. `limit` is clamped to 1–MAX_LIST; non-numeric input falls back to 30. */
   async list({ teacher, limit = 30 }: { teacher?: TeacherId; limit?: number } = {}): Promise<SessionSummary[]> {
     const take = Number.isFinite(limit) ? Math.min(MAX_LIST, Math.max(1, Math.floor(limit))) : 30;
