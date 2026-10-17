@@ -95,7 +95,7 @@ test('steps run in order and each one is marked started and done', () => {
   assert.ok(marks.indexOf('configure done') < marks.indexOf('ollama start'));
   assert.ok(marks.indexOf('build done') < marks.indexOf('engine start'));
   assert.ok(marks.indexOf('models done') < marks.indexOf('engine start'));
-  assert.match(run.output, /dry-run: docker compose .* up -d --force-recreate engine/);
+  assert.match(run.output, /dry-run: docker compose .* up -d --quiet-pull --force-recreate engine/);
 });
 
 test('a bare re-run reuses the saved inputs; a re-run with a new value reconfigures', () => {
