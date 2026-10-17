@@ -1,5 +1,6 @@
 import type { ProviderConfig, SharePayload, ShareScreening } from '@sef/shared';
 import { errorFields, log } from '../config';
+import { ollamaHeaders } from '../models/registry';
 import type { SettingsReader } from '../settings/store';
 
 /**
@@ -106,14 +107,6 @@ export type SafetyScore = (provider: ProviderConfig, model: string, prompt: stri
 
 const trimSlash = (url: string) => url.replace(/\/+$/, '');
 
-/**
- * Stand-in for `ollamaHeaders` from `../models/registry` (PR #77): a key on an `ollama`
- * provider goes out as a bearer, which on a hosted session is the gateway token. Once #77 is
- * on main this becomes `import { ollamaHeaders } from '../models/registry'`.
- */
-const ollamaHeaders = (provider: Pick<ProviderConfig, 'apiKey'>): Record<string, string> =>
-  provider.apiKey ? { authorization: `Bearer ${provider.apiKey}` } : {};
-
 async function postJson(url: string, body: unknown, headers: Record<string, string> = {}): Promise<unknown> {
   const res = await fetch(url, {
     method: 'POST',
@@ -143,6 +136,7 @@ export const defaultScore: SafetyScore = async (provider, model, prompt) => {
           top_logprobs: TOP_LOGPROBS,
           options: { temperature: 0, num_predict: 1 },
         },
+        // The same bearer every native call sends: on a hosted session this provider is the gateway.
         ollamaHeaders(provider),
       )) as { message?: { content?: string }; logprobs?: Array<{ top_logprobs?: TokenLogprob[] }> };
       return scored(res.logprobs?.[0]?.top_logprobs, res.message?.content);
