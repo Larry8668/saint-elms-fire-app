@@ -1,5 +1,6 @@
 import type { ProviderConfig, SharePayload, ShareScreening } from '@sef/shared';
 import { errorFields, log } from '../config';
+import { ollamaHeaders } from '../models/registry';
 import type { SettingsReader } from '../settings/store';
 
 /**
@@ -14,95 +15,95 @@ import type { SettingsReader } from '../settings/store';
  * attachment *names* (a name can carry content). Sender, cohort, programme and
  * share identity never enter the prompt — the screen judges the text, not who
  * sent it.
+ *
+ * ShieldGemma is trained to judge one policy per prompt, and Google scores it by the
+ * probability of a "Yes" first token rather than by reading its prose. So each policy
+ * is its own call, and a category is flagged when P(Yes) reaches the threshold.
  */
 
-const SCREEN_TIMEOUT_MS = 30_000;
+/** Per call; four run one after another per screen. The larger tier's first call also loads the model. */
+const SCREEN_TIMEOUT_MS = 90_000;
 /** The model only judges a bounded excerpt — the payload caps already keep this small. */
 const SCREEN_TEXT_MAX_CHARS = 8_000;
+/** Google's suggested cut-off on P(Yes). */
+export const FLAG_THRESHOLD = 0.5;
+const TOP_LOGPROBS = 10;
 
 /**
- * Harm categories, worded as ShieldGemma policies. The names double as the labels
- * surfaced in the UI, so keep them short and plain.
+ * Google's published ShieldGemma policy wording. The names double as the labels surfaced
+ * in the UI, so keep them short and plain.
  */
-const POLICIES: ReadonlyArray<{ name: string; rule: string }> = [
-  { name: 'harassment', rule: 'content that is malicious, intimidating, bullying, or abusive toward a person or group' },
-  { name: 'hate speech', rule: 'content that expresses, incites, or promotes hate based on race, gender, ethnicity, religion, nationality, sexual orientation, disability, or caste' },
-  { name: 'sexually explicit', rule: 'sexually explicit or pornographic content' },
-  { name: 'dangerous', rule: 'content that promotes, facilitates, or instructs in dangerous, illegal, or self-harming activities' },
+export const POLICIES: ReadonlyArray<{ name: string; rule: string }> = [
+  {
+    name: 'dangerous',
+    rule: '"No Dangerous Content": The prompt shall not contain or seek generation of content that harming oneself and/or others (e.g., accessing or building firearms and explosive devices, promotion of terrorism, instructions for suicide).',
+  },
+  {
+    name: 'harassment',
+    rule: '"No Harassment": The prompt shall not contain or seek generation of content that is malicious, intimidating, bullying, or abusive content targeting another individual (e.g., physical threats, denial of tragic events, disparaging victims of violence).',
+  },
+  {
+    name: 'hate speech',
+    rule: '"No Hate Speech": The prompt shall not contain or seek generation of content that targeting identity and/or protected attributes (e.g., racial slurs, promotion of discrimination, calls to violence against protected groups) or dehumanizing/belittling/vilifying on the bases of race, ethnicity, religion, disability, age, nationality, veteran status, sexual orientation, gender, gender identity, caste, or any other protected status.',
+  },
+  {
+    name: 'sexually explicit',
+    rule: '"No Sexually Explicit Information": The prompt shall not contain or seek generation of content that contains references to sexual acts or other lewd content (e.g., sexually graphic descriptions, content aimed at causing arousal). Medical or scientific terms related to human anatomy or sex education are permitted.',
+  },
 ];
+
+/**
+ * Gemma's turn and sequence markers. A payload that spelled them out could close the
+ * "Human Question" turn early and write its own verdict, so they never reach the prompt.
+ */
+const CONTROL_MARKERS = /<\/?(?:start_of_turn|end_of_turn|bos|eos|pad)>/gi;
 
 /** What the model is asked to judge. Attachment names are text too, so they ride along. */
 export function screeningText(payload: SharePayload): string {
   const names = payload.attachments.map((a) => a.name).join('\n');
-  return [payload.title, payload.markdown, names].filter(Boolean).join('\n').slice(0, SCREEN_TEXT_MAX_CHARS);
+  return [payload.title, payload.markdown, names].filter(Boolean).join('\n').replace(CONTROL_MARKERS, ' ').slice(0, SCREEN_TEXT_MAX_CHARS);
 }
 
-/** ShieldGemma's trained contract: the policy list goes in the prompt, the answer starts "Yes" or "No". */
-export function screeningPrompt(text: string): string {
-  const policies = POLICIES.map((p, i) => `${i + 1}. "${p.name}": ${p.rule}`).join('\n');
+/** ShieldGemma's trained prompt-classification template, one policy at a time. */
+export function screeningPrompt(text: string, rule: string): string {
   return [
-    'You are a policy expert trying to help determine whether the content below violates the defined safety policies.',
+    'You are a policy expert trying to help determine whether a user prompt is in violation of the defined safety policies.',
     '',
     '<start_of_turn>',
-    text,
+    `Human Question: ${text}`,
     '<end_of_turn>',
     '',
-    'Our safety policies are:',
-    policies,
+    'Our safety principle is defined in the below:',
     '',
-    'Does the content violate any of the policies above? Your answer must start with "Yes" or "No". If "Yes", then name every policy it violates.',
+    `* ${rule}`,
+    '',
+    '===',
+    '',
+    "Does the human question violate the above principle? Your answer must start with 'Yes' or 'No'. And then walk through step by step to be sure we answer correctly.",
   ].join('\n');
 }
 
-/** First token decides the verdict; policy names claimed affirmatively become the categories. */
-export function readScreeningAnswer(answer: string, model: string): ShareScreening {
+export interface TokenLogprob {
+  token: string;
+  logprob: number;
+}
+
+/** P(Yes) normalised over the Yes/No pair; null when neither token is among the candidates. */
+export function yesProbability(top: readonly TokenLogprob[]): number | null {
+  const weight = (word: string) => top.filter((t) => t.token.trim().toLowerCase() === word).reduce((sum, t) => sum + Math.exp(t.logprob), 0);
+  const yes = weight('yes');
+  const no = weight('no');
+  return yes + no > 0 ? yes / (yes + no) : null;
+}
+
+/** Fallback for providers without logprobs: the answer's first word, as certainty. */
+export function verdictFromText(answer: string): number | null {
   const trimmed = answer.trim();
-  const verdict = /^yes\b/i.test(trimmed) ? 'flagged' : /^no\b/i.test(trimmed) ? 'clean' : null;
-  if (!verdict) {
-    log.warn('share_screen_unparseable', { head: trimmed.slice(0, 80) });
-    return { status: 'unavailable', categories: [], model };
-  }
-  if (verdict === 'clean') return { status: 'clean', categories: [], model };
-  const categories = POLICIES.filter((p) => claimsViolation(trimmed, p.name)).map((p) => p.name);
-  return { status: 'flagged', categories, model };
+  return /^yes\b/i.test(trimmed) ? 1 : /^no\b/i.test(trimmed) ? 0 : null;
 }
 
-const NEGATION = /\b(no|not|nor|never|neither|without|doesn'?t|don'?t|isn'?t|aren'?t|didn'?t|won'?t|wasn'?t|lack\w*|free\s+of)\b/;
-const VERB = /\b(violat\w*|contain\w*|is|are|was|were|be|been|being|has|have|had|promot\w*|includ\w*|breach\w*|target\w*|express\w*|incit\w*|facilitat\w*|instruct\w*|constitut\w*|qualif\w*|fall\w*|count\w*|amount\w*|warrant\w*)\b/;
-const RESTATEMENT = /polic|guideline|categor|definition/;
-
-/**
- * A policy is attributed only when its name is *claimed*, not merely mentioned:
- * a clause that negates it ("no hate speech"), a bare list item trailing a
- * negated verb ("does not contain harassment, dangerous content"), a restated
- * policy list ("our policies are …"), or a `name:` definition head (the prompt's
- * own `"harassment": <rule>` shape, quoted or not) does not count — so a chatty
- * or echoing model cannot flag every category at once. Contrast markers
- * ("but", "however") reopen the claim ("not X but Y" attributes Y). A bare name
- * — bullet, heading or otherwise — still counts as a claim; anything ambiguous
- * drops to a flagged verdict with no categories rather than a wrong one.
- */
-function claimsViolation(answer: string, name: string): boolean {
-  // Contrast words are kept as split delimiters so "not A but B" re-evaluates B.
-  const parts = answer.toLowerCase().split(/([,;.!?\n]+|\bbut\b|\bhowever\b|\byet\b)/);
-  let carriedNegation = false;
-  for (let i = 0; i < parts.length; i += 2) {
-    const clause = parts[i]!.trim();
-    if (!clause) continue;
-    if (i > 0 && /^(but|however|yet)$/.test(parts[i - 1]!.trim())) carriedNegation = false;
-    const hasVerb = VERB.test(clause);
-    const ownNegation = NEGATION.test(clause);
-    const negated = hasVerb ? ownNegation : ownNegation || carriedNegation;
-    if (hasVerb || ownNegation) carriedNegation = ownNegation;
-    if (!clause.includes(name) || negated || RESTATEMENT.test(clause)) continue;
-    if (new RegExp(`"?${name}"?\\s*:`).test(clause)) continue; // a restated `"name": rule` definition head
-    return true;
-  }
-  return false;
-}
-
-/** The one-shot completion endpoint each provider kind serves — a plain POST, not a chat model. */
-export type SafetyComplete = (provider: ProviderConfig, model: string, prompt: string) => Promise<string>;
+/** P(Yes) for one policy prompt, or null when the answer could not be read. */
+export type SafetyScore = (provider: ProviderConfig, model: string, prompt: string) => Promise<number | null>;
 
 const trimSlash = (url: string) => url.replace(/\/+$/, '');
 
@@ -117,42 +118,52 @@ async function postJson(url: string, body: unknown, headers: Record<string, stri
   return res.json();
 }
 
-export const defaultComplete: SafetyComplete = async (provider, model, prompt) => {
+/**
+ * Logprobs decide whenever a provider returns them — candidates without a Yes/No token are
+ * unreadable, not re-scored from prose. The text verdict is only for providers that return none.
+ */
+export const scored = (top: readonly TokenLogprob[] | undefined, text: string | undefined): number | null =>
+  top?.length ? yesProbability(top) : typeof text === 'string' ? verdictFromText(text) : null;
+
+export const defaultScore: SafetyScore = async (provider, model, prompt) => {
   const auth: Record<string, string> = provider.apiKey ? { authorization: `Bearer ${provider.apiKey}` } : {};
   switch (provider.kind) {
     case 'ollama': {
       const base = trimSlash(provider.baseUrl ?? 'http://localhost:11434');
-      const res = (await postJson(`${base}/api/chat`, {
-        model,
-        messages: [{ role: 'user', content: prompt }],
-        stream: false,
-        options: { temperature: 0, num_predict: 256 },
-      })) as { message?: { content?: string } };
-      if (typeof res.message?.content !== 'string') throw new Error('Ollama /api/chat returned no message');
-      return res.message.content;
+      const res = (await postJson(
+        `${base}/api/chat`,
+        {
+          model,
+          messages: [{ role: 'user', content: prompt }],
+          stream: false,
+          logprobs: true,
+          top_logprobs: TOP_LOGPROBS,
+          options: { temperature: 0, num_predict: 1 },
+        },
+        // The same bearer every native call sends: on a hosted session this provider is the gateway.
+        ollamaHeaders(provider),
+      )) as { message?: { content?: string }; logprobs?: Array<{ top_logprobs?: TokenLogprob[] }> };
+      return scored(res.logprobs?.[0]?.top_logprobs, res.message?.content);
     }
     case 'openai-compatible':
     case 'openai': {
       const base = provider.baseUrl ? trimSlash(provider.baseUrl) : 'https://api.openai.com/v1';
       const res = (await postJson(
         `${base}/chat/completions`,
-        { model, messages: [{ role: 'user', content: prompt }], temperature: 0, max_tokens: 256 },
+        { model, messages: [{ role: 'user', content: prompt }], temperature: 0, max_tokens: 1, logprobs: true, top_logprobs: TOP_LOGPROBS },
         auth,
-      )) as { choices?: Array<{ message?: { content?: string } }> };
-      const content = res.choices?.[0]?.message?.content;
-      if (typeof content !== 'string') throw new Error('Chat completions returned no message');
-      return content;
+      )) as { choices?: Array<{ message?: { content?: string }; logprobs?: { content?: Array<{ top_logprobs?: TokenLogprob[] }> } }> };
+      const choice = res.choices?.[0];
+      return scored(choice?.logprobs?.content?.[0]?.top_logprobs, choice?.message?.content);
     }
     case 'anthropic': {
       if (!provider.apiKey) throw new Error('Anthropic providers need an API key');
       const res = (await postJson(
         `${trimSlash(provider.baseUrl ?? 'https://api.anthropic.com/v1')}/messages`,
-        { model, max_tokens: 256, messages: [{ role: 'user', content: prompt }] },
+        { model, max_tokens: 5, messages: [{ role: 'user', content: prompt }] },
         { 'x-api-key': provider.apiKey, 'anthropic-version': '2023-06-01' },
       )) as { content?: Array<{ type?: string; text?: string }> };
-      const text = res.content?.find((block) => block.type === 'text')?.text;
-      if (typeof text !== 'string') throw new Error('Anthropic /messages returned no text');
-      return text;
+      return scored(undefined, res.content?.find((block) => block.type === 'text')?.text);
     }
   }
 };
@@ -162,14 +173,15 @@ export interface Screener {
 }
 
 /**
- * Resolves the `safety` role and runs the screen. Every failure mode — no role, a
- * provider the app can't reach, a malformed answer — lands as `unavailable` with a
- * logged reason: the screen is never a silent skip and never a thrown exception.
+ * Resolves the `safety` role and runs one scored call per policy. Every failure mode —
+ * no role, a provider the app can't reach, an unreadable answer — lands as `unavailable`
+ * with a logged reason, unless another policy already flagged: the screen is never a
+ * silent skip and never a thrown exception.
  */
 export class ShareScreener implements Screener {
   constructor(
     private readonly settings: SettingsReader,
-    private readonly complete: SafetyComplete = defaultComplete,
+    private readonly score: SafetyScore = defaultScore,
   ) {}
 
   async screen(payload: SharePayload): Promise<ShareScreening> {
@@ -185,15 +197,31 @@ export class ShareScreener implements Screener {
     }
     if (!provider || !model) return { status: 'unavailable', categories: [], model };
 
-    try {
-      const answer = await this.complete(provider, model, screeningPrompt(screeningText(payload)));
-      const screening = readScreeningAnswer(answer, model);
-      log.info('share_screened', { status: screening.status, categories: screening.categories, model });
-      return screening;
-    } catch (error) {
-      log.warn('share_screen_failed', { model, ...errorFields(error) });
-      return { status: 'unavailable', categories: [], model };
+    const started = Date.now();
+    const text = screeningText(payload);
+    // One policy at a time: a local runtime serves them one after another anyway, so firing all
+    // four at once only lets the queued calls' timeouts run out while they wait. In order, each
+    // call also reuses the cached prompt prefix (the payload comes before the policy).
+    const scores: Array<number | null> = [];
+    for (const policy of POLICIES) {
+      try {
+        scores.push(await this.score(provider, model, screeningPrompt(text, policy.rule)));
+      } catch (error) {
+        log.warn('share_screen_failed', { model, policy: policy.name, ...errorFields(error) });
+        scores.push(null);
+      }
     }
+    const categories = POLICIES.filter((_, i) => (scores[i] ?? 0) >= FLAG_THRESHOLD).map((p) => p.name);
+    const unread = scores.some((s) => s === null);
+    const status: ShareScreening['status'] = categories.length ? 'flagged' : unread ? 'unavailable' : 'clean';
+    log.info('share_screened', {
+      status,
+      categories,
+      model,
+      ms: Date.now() - started,
+      scores: Object.fromEntries(POLICIES.map((p, i) => [p.name, scores[i] === null ? null : Math.round(scores[i]! * 1000) / 1000])),
+    });
+    return { status, categories, model };
   }
 }
 

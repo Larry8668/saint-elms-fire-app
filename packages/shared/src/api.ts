@@ -271,8 +271,8 @@ export interface SyncStatus {
   }>;
 }
 
-/** Roles sized to the device; embed and safety are fixed small models. */
-export type TieredRole = Extract<ModelRole, 'tutor' | 'brain' | 'vision'>;
+/** Roles sized to the device; embed is a fixed small model. */
+export type TieredRole = Extract<ModelRole, 'tutor' | 'brain' | 'vision' | 'safety'>;
 
 /** GET /api/system/capability — advisory only: the engine never applies a suggestion itself. */
 export interface DeviceCapability {

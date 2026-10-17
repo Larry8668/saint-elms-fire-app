@@ -138,5 +138,5 @@ test('the token is never written to disk, and the redacted settings carry only a
 test("a session VM's hardware sizes nothing: suggestions are the configured defaults", async () => {
   const capability = await detectCapability();
   assert.equal(capability.ramGb, null);
-  assert.deepEqual(capability.suggested, { tutor: config.defaults.tutorModel, brain: config.defaults.brainModel, vision: config.defaults.visionModel });
+  assert.deepEqual(capability.suggested, { tutor: config.defaults.tutorModel, brain: config.defaults.brainModel, vision: config.defaults.visionModel, safety: config.defaults.safetyModel });
 });
