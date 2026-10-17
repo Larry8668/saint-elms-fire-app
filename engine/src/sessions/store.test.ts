@@ -34,3 +34,15 @@ test('studiedLessonIds unions lessons across every conversation', async () => {
   await store.put(session('s2', 'philosopher', [['q', '2026-10-02T00:00:00Z']], ['l2', 'l3']));
   assert.deepEqual((await store.studiedLessonIds()).sort(), ['l1', 'l2', 'l3']);
 });
+
+test('lessonActivity dates each lesson by the answer that cited it, not by the session’s last turn', async () => {
+  const store = new SessionStore(await mkdtemp(path.join(tmpdir(), 'sef-sessions-')));
+  const s = session('s1', 'guide', [['early', '2026-10-01T09:00:00Z'], ['late', '2026-10-01T18:00:00Z']], ['l-early', 'l-uncited']);
+  const lessonSource = { kind: 'lesson' as const, id: 'l-early', title: 'Early lesson' };
+  s.turns[1] = { ...s.turns[1]!, verification: { sources: [lessonSource] } as unknown as NonNullable<Session['turns'][number]['verification']> };
+  await store.put(s);
+  assert.deepEqual(await store.lessonActivity(), [
+    { lessonId: 'l-early', at: '2026-10-01T09:00:00Z' },
+    { lessonId: 'l-uncited', at: '2026-10-01T09:00:00Z' },
+  ]);
+});

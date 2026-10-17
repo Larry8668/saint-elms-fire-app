@@ -198,3 +198,15 @@ test('an empty trust anchor refuses instead of matching a blank issuer', () => {
   assert.throws(() => check(build({ issuer: '' }), 'waves', ''), /No pinned issuer/);
   assert.throws(() => check(build(), 'waves', ''), /No pinned issuer/);
 });
+
+test('subject feeds ride in signed metadata: reported when signed, refused when tampered, absent for legacy', () => {
+  const feeds = [{ url: 'https://www.nasa.gov/feed/', title: 'NASA news' }];
+  assert.deepEqual(check(build({ metadata: metadata({ subjectFeeds: feeds }) })).subjectFeeds, feeds);
+  rejects(build({ metadata: metadata({ subjectFeeds: feeds }), tamper: (m) => { m.metadata!.subjectFeeds = [{ url: 'https://evil.example/feed', title: 'x' }]; } }), /Signature check failed/);
+  assert.equal(check(build({ legacy: true })).subjectFeeds, undefined);
+});
+
+test('a course without feeds keeps the same content version as before feeds existed', () => {
+  const { subjectFeeds: _none, ...withoutKey } = metadata();
+  assert.equal(deriveContentVersion(files, metadata()), deriveContentVersion(files, withoutKey as CourseMetadata));
+});

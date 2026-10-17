@@ -70,7 +70,7 @@ export class SuggestionService {
     );
     await this.deps.store.write(teacher, print, response).catch((error) => log.warn('suggestion_cache_write_failed', { teacher, ...errorFields(error) }));
     log.info('suggestions_generated', { teacher, count: response.questions.length, kinds: chosen.map((s) => s.kind) });
-    if (drafted && chosen.length) this.scheduleDraft(teacher, print, chosen, entityUniverse(all), response);
+    if (drafted && chosen.some((seed) => seed.draftable !== false)) this.scheduleDraft(teacher, print, chosen, entityUniverse(all), response);
     return response;
   }
 
@@ -104,30 +104,30 @@ export class SuggestionService {
   private async draft(teacher: TeacherId, print: string, seeds: Seed[], universe: Set<string>, base: SuggestionsResponse): Promise<void> {
     const rephrase = this.deps.rephrase;
     if (!rephrase) return;
+    const targets = base.questions.map((question, index) => ({ question, index, seed: seeds[index]! })).filter((t) => t.seed.draftable !== false);
+    if (!targets.length) return;
     let drafts: string[];
     try {
       drafts = await rephrase(
         teacher,
-        base.questions.map((q) => q.text),
+        targets.map((t) => t.question.text),
       );
     } catch (error) {
       log.warn('suggestion_draft_failed', { teacher, ...errorFields(error) });
       return;
     }
-    let accepted = 0;
-    const questions = base.questions.map((q, i) => {
-      const seed = seeds[i]!;
-      if (!acceptDraft(drafts[i], seed, universe)) return q;
-      accepted += 1;
-      return { ...q, text: drafts[i]!.trim() };
+    const replaced = new Map<number, string>();
+    targets.forEach((t, j) => {
+      if (acceptDraft(drafts[j], t.seed, universe)) replaced.set(t.index, drafts[j]!.trim());
     });
-    const rejected = questions.length - accepted;
+    const rejected = targets.length - replaced.size;
     if (rejected) log.info('suggestion_draft_rejected', { teacher, rejected });
-    if (!accepted) return;
+    if (!replaced.size) return;
+    const questions = base.questions.map((q, i) => (replaced.has(i) ? { ...q, text: replaced.get(i)! } : q));
     const current = await this.deps.store.read(teacher);
     // A newer seed set may have replaced the bank while the model was thinking.
     if (current?.fingerprint !== print) return;
-    const mode = rejected ? 'hybrid' : 'drafted';
+    const mode = replaced.size === questions.length ? 'drafted' : 'hybrid';
     await this.deps.store
       .write(teacher, print, { ...base, questions, mode })
       .catch((error) => log.warn('suggestion_cache_write_failed', { teacher, ...errorFields(error) }));

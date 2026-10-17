@@ -18,6 +18,7 @@ export const SIGNAL_KINDS = [
   'maintenance_finding',
   'model_unavailable',
   'connectivity',
+  'feed_item',
 ] as const;
 export const SignalKindSchema = z.enum(SIGNAL_KINDS);
 export type SignalKind = z.infer<typeof SignalKindSchema>;
