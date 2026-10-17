@@ -2,6 +2,7 @@
 #   docker compose up -d --build                  → uni server + web search + engine (uses Ollama on the host)
 #   docker compose --profile ollama up -d --build → also runs Ollama in a container
 #   docker compose up -d searxng                  → just web search, for `pnpm dev` (same as `pnpm search:up`)
+#   docker compose up -d minio minio-init         → object store for vault sync (same as `pnpm store:up`)
 name: saint-elms-fire
 
 x-node-service: &node-service
@@ -145,6 +146,45 @@ services:
       timeout: 5s
       retries: 5
 
+  minio:
+    # S3-compatible object store for vault sync (docs/object-store.md). Opt-in (`pnpm store:up`);
+    # the engine ignores it until OBJECT_STORE_* is set. Upstream MinIO stopped publishing images
+    # and was archived in 2026; this is Chainguard's maintained build, pinned by index digest.
+    image: cgr.dev/chainguard/minio:latest@sha256:c93745c56fccdaf0e5dcb88999a96a65a136428beb045ef5d546255a80d747a7
+    profiles: ["store"]
+    restart: unless-stopped
+    command: ["server", "/data", "--address", ":9000", "--console-address", ":9001"]
+    environment:
+      MINIO_ROOT_USER: ${MINIO_ROOT_USER:-sef-minio-admin}
+      MINIO_ROOT_PASSWORD: ${MINIO_ROOT_PASSWORD:-sef-minio-local-dev-only}
+    volumes:
+      - minio-data:/data
+    ports:
+      - "127.0.0.1:${MINIO_API_PORT:-9000}:9000"
+      - "127.0.0.1:${MINIO_CONSOLE_PORT:-9001}:9001"
+    healthcheck:
+      # The image has bash but no curl or grep: probe the liveness endpoint over /dev/tcp.
+      test: ["CMD", "bash", "-c", "exec 3<>/dev/tcp/127.0.0.1/9000 && printf 'GET /minio/health/live HTTP/1.1\\r\\nHost: localhost\\r\\nConnection: close\\r\\n\\r\\n' >&3 && read -r _ code _ <&3 && [[ $$code == 200 ]]"]
+      interval: 5s
+      timeout: 3s
+      retries: 12
+
+  minio-init:
+    # One-shot, idempotent: bucket + versioning + an engine key scoped to that bucket only.
+    profiles: ["store"]
+    build:
+      context: infra/minio
+      dockerfile: init.Dockerfile
+    restart: "no"
+    environment:
+      MINIO_ROOT_USER: ${MINIO_ROOT_USER:-sef-minio-admin}
+      MINIO_ROOT_PASSWORD: ${MINIO_ROOT_PASSWORD:-sef-minio-local-dev-only}
+      OBJECT_STORE_BUCKET: ${OBJECT_STORE_BUCKET:-sef-vaults}
+      OBJECT_STORE_ACCESS_KEY: ${OBJECT_STORE_ACCESS_KEY:-sef-engine}
+      OBJECT_STORE_SECRET_KEY: ${OBJECT_STORE_SECRET_KEY:-sef-engine-local-dev-only}
+    depends_on:
+      minio: { condition: service_healthy }
+
   ollama:
     image: ollama/ollama:latest
     profiles: ["ollama"]
@@ -163,3 +203,4 @@ volumes:
   uni-postgres-data:
   engine-data:
   ollama-models:
+  minio-data:
