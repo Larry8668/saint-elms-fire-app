@@ -98,7 +98,7 @@ const peerOf = (c: Context): string | null => {
 
 const lastEntry = (header: string | undefined): string | undefined => header?.split(',').map((part) => part.trim()).filter(Boolean).at(-1);
 
-export function edgePolicy(env: NodeJS.ProcessEnv = process.env): EdgePolicy {
+export function edgePolicy(env: NodeJS.ProcessEnv = process.env, enginePort?: number): EdgePolicy {
   const publicHost = parsePublicHost(env.ENGINE_PUBLIC_HOST);
   const trustProxy = truthy(env.ENGINE_TRUST_PROXY);
   const proxies = parseProxyList(env.ENGINE_TRUSTED_PROXIES?.trim() || DEFAULT_TRUSTED_PROXIES);
@@ -107,6 +107,8 @@ export function edgePolicy(env: NodeJS.ProcessEnv = process.env): EdgePolicy {
       ...BUILT_IN_ORIGINS,
       // The edge terminates TLS, so the served UI's origin is always https.
       ...(publicHost ? [`https://${publicHost}`] : []),
+      // The engine's own loopback origin, for its served UI opened on this machine.
+      ...(env.ENGINE_STATIC_DIR?.trim() && enginePort ? [`http://127.0.0.1:${enginePort}`, `http://localhost:${enginePort}`] : []),
       ...(env.ENGINE_ALLOWED_ORIGINS ?? '').split(','),
     ]
       .map((o) => o.trim().replace(/\/+$/, ''))

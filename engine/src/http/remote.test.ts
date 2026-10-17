@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict';
-import { mkdtemp } from 'node:fs/promises';
+import { mkdir, mkdtemp, symlink, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { test } from 'node:test';
@@ -189,4 +189,54 @@ test('a sign-in records the device label it was given, else a User-Agent hint', 
   await login(call, 'label@example.test', 'pw', { 'user-agent': 'Mozilla/5.0 (Macintosh; Intel Mac OS X 14_0) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.0 Safari/605.1.15' });
   const list = ((await (await call('/api/auth/sessions', { headers: { authorization: `Bearer ${token}` } })).json()) as AuthSessionList).sessions;
   assert.deepEqual(list.map((s) => s.deviceLabel).sort(), ['Library PC', 'Safari on macOS']);
+});
+
+test('the served UI: index and SPA routes load, /api is never shadowed, traversal and symlinks are refused', async () => {
+  const root = await mkdtemp(path.join(tmpdir(), 'sef-static-ui-'));
+  await mkdir(path.join(root, 'assets'));
+  await writeFile(path.join(root, 'index.html'), '<!doctype html><title>shell</title>');
+  await writeFile(path.join(root, 'assets', 'app-abcdef12.js'), 'console.log(1)');
+  const secret = path.join(path.dirname(root), `${path.basename(root)}-secret.txt`);
+  await writeFile(secret, 'outside the root');
+  await symlink(secret, path.join(root, 'leak.txt'));
+  const { call } = await harness({ ENGINE_STATIC_DIR: root });
+
+  const index = await call('/');
+  assert.equal(index.status, 200);
+  assert.match(await index.text(), /shell/);
+  assert.match(index.headers.get('content-security-policy') ?? '', /default-src 'self'/);
+  assert.match(index.headers.get('content-security-policy') ?? '', /frame-ancestors 'none'/);
+  assert.equal(index.headers.get('x-frame-options'), 'DENY');
+  assert.equal(index.headers.get('strict-transport-security'), null, 'no HSTS over plain loopback http');
+
+  const asset = await call('/assets/app-abcdef12.js');
+  assert.equal(asset.status, 200);
+  assert.match(asset.headers.get('cache-control') ?? '', /immutable/);
+
+  assert.match(await (await call('/brain/wiki')).text(), /shell/, 'client routes fall back to the shell');
+  assert.equal((await call('/assets/missing-abcdef12.js')).status, 404, 'a missing asset is not the shell');
+  assert.equal((await call('/.env')).status, 404);
+
+  for (const apiPath of ['/api/does-not-exist', '/api/auth/nope', '/api']) {
+    const res = await call(apiPath);
+    assert.equal(res.status, 404, apiPath);
+    assert.doesNotMatch(await res.text(), /shell/, `${apiPath} must never be answered by the UI`);
+  }
+  assert.equal((await call('/api/health')).status, 200, 'real API routes still win');
+
+  for (const attack of ['/..%2f..%2fetc%2fpasswd', '/%2e%2e/%2e%2e/etc/passwd', '/assets/..%2f..%2f..%2fpackage.json', `/..%2f${path.basename(secret)}`, '/leak.txt']) {
+    const res = await call(attack);
+    const text = await res.text();
+    assert.ok(!text.includes('outside the root') && !text.includes('root:'), `${attack} leaked a file`);
+    assert.ok(res.status === 404 || /shell/.test(text), `${attack} answered ${res.status}`);
+  }
+
+  assert.equal((await call('/', { headers: { host: 'rebound.evil.test' } })).status, 403, 'the UI is host-gated too');
+
+  const seat = await harness({ ENGINE_STATIC_DIR: root, ENGINE_PUBLIC_HOST: SEAT, ENGINE_TRUST_PROXY: '1' });
+  const overEdge = await seat.call('/', { headers: viaEdge('198.51.100.9') }, edgeSocket);
+  assert.equal(overEdge.status, 200);
+  assert.match(overEdge.headers.get('strict-transport-security') ?? '', /max-age=/, 'HSTS once a trusted edge reports https');
+  const spoofed = await seat.call('/', { headers: { ...viaEdge('198.51.100.9'), 'x-forwarded-host': 'evil.example' } }, edgeSocket);
+  assert.equal(spoofed.status, 403);
 });

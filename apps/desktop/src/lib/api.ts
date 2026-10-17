@@ -74,7 +74,9 @@ import type {
 } from '@sef/shared';
 import { log } from './log';
 
-export const ENGINE_URL = (import.meta.env?.VITE_ENGINE_URL as string | undefined) ?? 'http://127.0.0.1:4100';
+const configuredEngineUrl = import.meta.env?.VITE_ENGINE_URL as string | undefined;
+/** `same-origin` builds the UI an engine serves itself (a hosted seat): requests go to the page's own origin. */
+export const ENGINE_URL = configuredEngineUrl === 'same-origin' ? '' : (configuredEngineUrl ?? 'http://127.0.0.1:4100');
 
 export class EngineError extends Error {
   constructor(

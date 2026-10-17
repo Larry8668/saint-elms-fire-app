@@ -1,3 +1,4 @@
+import path from 'node:path';
 import { Hono } from 'hono';
 import { bodyLimit } from 'hono/body-limit';
 import { cors } from 'hono/cors';
@@ -18,6 +19,7 @@ import { shareRoutes } from './routes/shares';
 import { studentRoutes } from './routes/student';
 import { systemRoutes } from './routes/system';
 import { MAX_ENVELOPE_CHARS, sourceRoutes } from './routes/sources';
+import { staticUiRoutes } from './static-ui';
 import { vaultRoutes } from './routes/vault';
 import { wikiRoutes } from './routes/wiki';
 
@@ -26,7 +28,7 @@ export type { EngineDeps } from './context';
 export function createApp(deps: EngineDeps) {
   const app = new Hono<EngineEnv>();
   // Origin and Host allowlists (see edge.ts): loopback by default, plus a hosted seat's own name.
-  const edge = edgePolicy(process.env);
+  const edge = edgePolicy(process.env, config.port);
   const ALLOWED_ORIGINS = edge.origins;
 
   // Every path, not only /api: a DNS-rebound name must not be served the UI either.
@@ -120,6 +122,10 @@ export function createApp(deps: EngineDeps) {
   app.route('/api', logisticsRoutes(deps));
   app.route('/api', attentionRoutes(deps));
   app.route('/api', suggestRoutes(deps));
+
+  // A hosted seat serves the built UI itself; registered last so it can never shadow /api.
+  const staticDir = process.env.ENGINE_STATIC_DIR?.trim();
+  if (staticDir) app.route('/', staticUiRoutes(path.resolve(staticDir), edge));
 
   return app;
 }

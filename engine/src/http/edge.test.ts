@@ -135,4 +135,8 @@ test('Origin allowlist: built-ins always, the seat origin derived, extras from e
   assert.equal(seat.origins.has('http://seat.example.test'), false, 'the edge serves https only');
   assert.equal(seat.origins.has('*'), false);
   assert.equal(seat.origins.has('null'), false);
+
+  const served = edgePolicy({ ENGINE_STATIC_DIR: '/srv/ui' }, 4520);
+  assert.ok(served.origins.has('http://127.0.0.1:4520'), 'the engine-served UI may call its own origin');
+  assert.equal(edgePolicy({}, 4520).origins.has('http://127.0.0.1:4520'), false, 'only when it serves the UI');
 });
