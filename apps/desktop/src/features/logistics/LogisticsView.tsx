@@ -10,6 +10,7 @@ import { fileToBase64 } from '@/lib/api';
 import { cn } from '@/lib/cn';
 import { useConfirmLogistics, useDeleteLogistics, useDismissLogistics, useExtractLogistics, useLogistics } from '@/lib/queries';
 import { RecordForm } from './RecordForm';
+import { whereItIsKept } from '@/features/auth/sign-in-copy';
 
 /**
  * The student's private logistics ledger: deadlines, notices and timetable entries that
@@ -60,7 +61,7 @@ export function LogisticsView() {
           <EmptyState
             icon={<CalendarClock />}
             title="No logistics yet"
-            body="Add a deadline or read it off a notice photo. Once confirmed, the Friend can ground campus answers in it — it stays on this device either way."
+            body={`Add a deadline or read it off a notice photo. Once confirmed, the Friend can ground campus answers in it — it ${whereItIsKept()} either way.`}
             action={
               <Button variant="primary" onClick={() => setAdding(true)}>
                 <Plus /> Add your first record

@@ -1,5 +1,5 @@
 import { DEMO_PASSWORD_DEFAULT, DEMO_PERSONAS, TEACHER_IDS, TEACHERS } from '@sef/shared';
-import { ChevronDown, GraduationCap, HardDrive, ServerCrash, ShieldCheck, Sparkles, WifiOff } from 'lucide-react';
+import { ChevronDown, Cloud, Database, GraduationCap, HardDrive, ServerCrash, ShieldCheck, Sparkles, WifiOff, type LucideIcon } from 'lucide-react';
 import { AnimatePresence, motion } from 'motion/react';
 import { useRef, useState } from 'react';
 import { Button } from '@/components/ui/button';
@@ -11,7 +11,9 @@ import { DEMO_MODE } from '@/lib/demo';
 import { useHealth } from '@/lib/queries';
 import { useSession } from '@/lib/session';
 import { UNI_URL } from '@/lib/uni-url';
+import { WorkspaceWakeNotice, useWorkspaceWake } from '@/features/workspace/WorkspaceWakeNotice';
 import { DeviceSignInCard } from './DeviceSignInCard';
+import { HOSTED_SIGN_IN_NOTE, SIGN_IN_PROMISES, signInCopyMode, type PromiseIcon } from './sign-in-copy';
 import { uniOfflineFrom } from './uni-offline';
 
 const YEAR_LABEL = ['First-year', 'Second-year', 'Third-year'];
@@ -24,15 +26,14 @@ const DEMO_ACCOUNTS = DEMO_PERSONAS.map((p) => ({
   Icon: GraduationCap,
 }));
 
-const PROMISES = [
-  { Icon: HardDrive, text: 'Your brain stays on this device' },
-  { Icon: ShieldCheck, text: 'Open-weight models, built to GDPR/DPDP' },
-  { Icon: WifiOff, text: 'Keeps working offline' },
-];
+const PROMISE_ICONS: Record<PromiseIcon, LucideIcon> = { device: HardDrive, shield: ShieldCheck, offline: WifiOff, server: Cloud, storage: Database };
 
 export function SignInView() {
   const health = useHealth();
   const engineDown = health.isError;
+  const mode = signInCopyMode();
+  // A hosted workspace behind its edge gets its own notice, never the local "pnpm dev" one.
+  const wake = useWorkspaceWake();
   // Signed out, public health still carries the bare uni boolean; that drives the banner and Continue.
   const uniOffline = uniOfflineFrom(health.data);
 
@@ -40,9 +41,11 @@ export function SignInView() {
     <div className="sky-backdrop relative flex min-h-screen items-center justify-center overflow-y-auto px-6 py-12">
       <StarField />
       <div className="relative grid w-full max-w-5xl gap-12 lg:grid-cols-[1fr_420px] lg:items-center">
-        <Pitch />
+        <Pitch mode={mode} />
         <section className="glass-strong rounded-3xl p-7 animate-rise [animation-delay:80ms]">
-          {engineDown ? (
+          {mode === 'hosted' && (engineDown || wake.phase !== 'idle') ? (
+            <WorkspaceWakeNotice failed={engineDown} />
+          ) : engineDown ? (
             <EmptyState
               icon={<ServerCrash />}
               title="The engine isn't running"
@@ -51,6 +54,7 @@ export function SignInView() {
             />
           ) : (
             <>
+              {mode === 'hosted' && <p className="mb-4 text-[12.5px] leading-5 text-night-400">{HOSTED_SIGN_IN_NOTE}</p>}
               <DeviceSignInCard uniOffline={uniOffline} />
               {DEMO_MODE && <DemoAccounts />}
             </>
@@ -61,7 +65,7 @@ export function SignInView() {
   );
 }
 
-function Pitch() {
+function Pitch({ mode }: { mode: 'hosted' | 'local' }) {
   return (
     <section className="animate-rise">
       <img src="/logo.svg" alt="" className="mb-6 size-12" />
@@ -88,11 +92,14 @@ function Pitch() {
       </ul>
 
       <div className="mt-8 flex flex-wrap gap-x-5 gap-y-2 text-[12px] text-night-400">
-        {PROMISES.map(({ Icon, text }) => (
-          <span key={text} className="inline-flex items-center gap-1.5">
-            <Icon className="size-3.5 text-night-500" /> {text}
-          </span>
-        ))}
+        {SIGN_IN_PROMISES[mode].map(({ icon, text }) => {
+          const Icon = PROMISE_ICONS[icon];
+          return (
+            <span key={text} className="inline-flex items-center gap-1.5">
+              <Icon className="size-3.5 text-night-500" /> {text}
+            </span>
+          );
+        })}
       </div>
     </section>
   );

@@ -127,6 +127,23 @@ The static handler follows the same rules as the uni's `/admin` portal and uses 
 
 Responses carry a CSP limited to the engine's own origin (`default-src 'self'`, `connect-src 'self'`, `frame-ancestors 'none'`, no inline scripts), plus `nosniff`, `X-Frame-Options: DENY` and `Referrer-Policy: no-referrer`. HSTS is added only when a trusted proxy reports `X-Forwarded-Proto: https`.
 
+## The served UI behind the edge: waking and going away
+
+The app reads the engine address on every call (`apps/desktop/src/lib/seat.ts` `engineTarget()`), so it is never a build-time constant baked into a module. The UI that an engine serves itself (`VITE_ENGINE_URL=same-origin`) calls its own origin; outside loopback that is a hosted workspace VM (PR-42), and its sign-in screen says so: "Your workspace runs on the university's servers; your notes are saved to your university storage", never "stays on this device" or "keeps working offline". The local desktop keeps its own copy.
+
+The Instabox edge reports a VM's state in ways the app can tell apart (`apps/desktop/src/lib/seat-wake.ts`):
+
+| The edge answers | Meaning | What the app does |
+| --- | --- | --- |
+| Normal answer after about 1 s | The box was idle-suspended, and the request woke it | Nothing visible |
+| No answer (connection failure or timeout) | The network is down or the box is waking | Shows "Reconnecting to your workspace…" and polls public `/api/health` with backoff (0.5 s rising to 5 s) for up to about 60 s, then sends the call again |
+| `502`, plain text | The box is up, but the engine is not listening yet | Same as above, with "the study engine is still starting" |
+| `503` "Sandbox offline", plain text | The box was stopped or is gone. A request alone never brings it back; for an ephemeral workspace it usually means the session ended | "Your workspace is offline", with a link back to the portal to open a new one (`seat_paused`) |
+
+The engine's own `502` and `503` responses are JSON, for example when the university is unreachable. They are passed through as ordinary errors and never trigger a wake. After a dropped connection only reads are sent again, because a write might already have landed; a write fails with "is back now, try that again" (`seat_woke`). A window that closes with no answer is `seat_unreachable`. None of these say "the local engine is not running", which stays the local engine's message.
+
+Chat streams over the edge. If the answer ever arrives in one piece (the first frames arrive together with the end, more than 2 s after sending), the turn is labelled as delivered all at once instead of streamed.
+
 ## Threat notes
 
 - **TLS ends at the provider's edge.** Between the browser and the edge, traffic is HTTPS (a Let's Encrypt wildcard for `*.instabox.tech`). Between the edge and the engine, it is plain HTTP over the box's loopback. The edge sees request and response bodies in clear: sign-in passwords, session tokens, chat turns and vault exports.
