@@ -64,6 +64,8 @@ import type {
   TeacherId,
   Feed,
   FeedsResponse,
+  PlansResponse,
+  StudyPlan,
   VaultExport,
   VaultImportPreview,
   VaultImportResult,
@@ -192,6 +194,10 @@ export const api = {
   addFeed: (body: { url: string; title?: string }) => post<Feed>('/api/feeds', body),
   setFeedConsent: (id: string, enabled: boolean) => post<Feed>(`/api/feeds/${encodeURIComponent(id)}/consent`, { enabled }),
   removeFeed: (id: string) => request<{ ok: true }>(`/api/feeds/${encodeURIComponent(id)}`, { method: 'DELETE' }),
+  plans: () => request<PlansResponse>('/api/plans'),
+  proposePlan: (body: { goal: string; deadlineAt?: string }) => post<StudyPlan>('/api/plans', body),
+  approvePlan: (id: string) => post<StudyPlan>(`/api/plans/${encodeURIComponent(id)}/approve`),
+  abandonPlan: (id: string) => post<StudyPlan>(`/api/plans/${encodeURIComponent(id)}/abandon`),
 
   syncStatus: () => request<SyncStatus>('/api/sync/status'),
   /** The full published curriculum for an approved student; refusals arrive as typed errors. */

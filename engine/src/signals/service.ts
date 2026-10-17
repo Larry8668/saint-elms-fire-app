@@ -1,6 +1,7 @@
 import { CONTRACT_VERSION, type AttentionResponse, type PeerFeedResponse, type ProactivitySettings, type SyncStatus } from '@sef/shared';
 import { errorFields, log } from '../config';
 import { DETECTORS, type DetectedSignal, type Detector, type SignalInputs } from './detectors';
+import type { RecordMetric } from '../eval/service';
 import { attentionView, URGENCY_RANK } from './policy';
 import type { SignalLedger, SignalStore, StoredSignal } from './store';
 
@@ -15,6 +16,7 @@ export interface SignalServiceDeps {
   proactivity: () => Promise<ProactivitySettings>;
   now?: () => Date;
   detectors?: readonly Detector[];
+  record?: RecordMetric;
 }
 
 export type SignalActionResult = 'ok' | 'not_found';
@@ -138,6 +140,7 @@ export class SignalService {
     return this.update(key, (item) => {
       item.state = 'dismissed';
       log.info('signal_dismissed', { key, kind: item.kind });
+      this.deps.record?.('nudge_dismissed', key, item.kind);
     });
   }
 
@@ -145,6 +148,7 @@ export class SignalService {
     return this.update(key, (item) => {
       item.snoozedUntil = new Date(this.now().getTime() + hours * 3_600_000).toISOString();
       log.info('signal_snoozed', { key, kind: item.kind, hours });
+      this.deps.record?.('nudge_snoozed', key, item.kind);
     });
   }
 

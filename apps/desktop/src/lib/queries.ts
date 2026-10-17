@@ -43,6 +43,7 @@ export const keys = {
     attention: (p: string) => ['profile', p, 'attention'] as const,
     suggestionsAll: (p: string) => ['profile', p, 'suggestions'] as const,
     feeds: (p: string) => ['profile', p, 'feeds'] as const,
+    plans: (p: string) => ['profile', p, 'plans'] as const,
     suggestions: (p: string, teacher: string) => ['profile', p, 'suggestions', teacher] as const,
   },
 };
@@ -361,6 +362,25 @@ export function useFeedActions() {
     add: useMutation({ mutationFn: api.addFeed, onSuccess: refresh, onError }),
     consent: useMutation({ mutationFn: ({ id, enabled }: { id: string; enabled: boolean }) => api.setFeedConsent(id, enabled), onSuccess: refresh, onError }),
     remove: useMutation({ mutationFn: api.removeFeed, onSuccess: refresh, onError }),
+  };
+}
+
+/** Study plans. Progress is recomputed engine-side on every read, so polling picks up new evidence. */
+export const usePlans = () => useQuery({ queryKey: keys.scoped.plans(profile()), queryFn: api.plans, refetchInterval: 60_000 });
+
+/** Plan changes alter which next steps the Guide suggests. Proposal errors stay with the caller's form. */
+export function usePlanActions() {
+  const client = useQueryClient();
+  const p = profile();
+  const refresh = () => {
+    void client.invalidateQueries({ queryKey: keys.scoped.plans(p) });
+    void client.invalidateQueries({ queryKey: keys.scoped.suggestionsAll(p) });
+  };
+  const onError = (error: unknown) => toast.error((error as Error).message);
+  return {
+    propose: useMutation({ mutationFn: api.proposePlan, onSuccess: refresh }),
+    approve: useMutation({ mutationFn: api.approvePlan, onSuccess: refresh, onError }),
+    abandon: useMutation({ mutationFn: api.abandonPlan, onSuccess: refresh, onError }),
   };
 }
 
