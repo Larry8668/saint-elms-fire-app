@@ -130,6 +130,5 @@ To reach the `render.yaml` target:
 3. Dashboard → `sef-uni-db` → Info → Update → Basic-256mb (upgrades in place).
 4. Dashboard → `sef-minio` → Disks → Add disk: mount path `/data`, 5 GB. Same for `sef-uni`, 1 GB.
    Both disks start empty: re-run the MinIO init, and the uni re-seeds its demo accounts on the
-   next boot (same `DEMO_PASSWORD`). The MinIO image runs as uid 65532; if it logs a permission
-   error on `/data`, mount the disk at `/data` and set the start command to
-   `/usr/bin/minio server /data/minio --address :9000`.
+   next boot (same `DEMO_PASSWORD`). The MinIO image runs as uid 65532 and the uni as `node`:
+   check each service's log for a write error on `/data` after the disk is attached.
