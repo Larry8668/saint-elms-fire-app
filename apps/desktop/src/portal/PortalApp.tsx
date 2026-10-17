@@ -6,9 +6,12 @@ import { PortalShell } from './components/PortalShell';
 import { Notice } from './components/Notice';
 import { goToMode, readPortalRoute, type PortalMode, type PortalRoute } from './portal-modes';
 import type { Banner, MailReason } from './portal-copy';
-import { getMe, PortalError, signOut } from './portal-api';
+import type { DemoAccount } from '@/lib/demo-accounts';
+import { demoAvailable, demoSignOut, getMe, PortalError, signOut } from './portal-api';
 import { AdmissionView } from './views/AdmissionView';
 import { CheckEmailView } from './views/CheckEmailView';
+import { DemoSignInView } from './views/DemoSignInView';
+import { DemoStudentView } from './views/DemoStudentView';
 import { MagicLinkView } from './views/MagicLinkView';
 import { RecoverView } from './views/RecoverView';
 import { RegisterView } from './views/RegisterView';
@@ -30,6 +33,14 @@ export function PortalApp() {
   const [banner, setBanner] = useState<Banner | null>(null);
   const [mailbox, setMailbox] = useState<{ email: string; reason: MailReason } | null>(null);
   const [workspace, setWorkspace] = useState(false);
+  /** Whether this university seeds demo students; the demo path is offered only then. */
+  const [demo, setDemo] = useState(false);
+  /** A signed-in demo student (legacy token, held by portal-api in memory). */
+  const [demoStudent, setDemoStudent] = useState<DemoAccount | null>(null);
+
+  useEffect(() => {
+    void demoAvailable().then(setDemo);
+  }, []);
 
   const probe = useCallback(async () => {
     setChecking(true);
@@ -88,6 +99,22 @@ export function PortalApp() {
       });
   }, []);
 
+  if (demoStudent && workspace) return <WorkspaceView onBack={() => setWorkspace(false)} />;
+
+  if (demoStudent) {
+    return (
+      <DemoStudentView
+        persona={demoStudent}
+        onOpenWorkspace={() => setWorkspace(true)}
+        onSignOut={() => {
+          demoSignOut();
+          setDemoStudent(null);
+          go('sign-in');
+        }}
+      />
+    );
+  }
+
   if (checking && !me) {
     return (
       <PortalShell eyebrow="Saint Elms University" title="Checking your account">
@@ -125,6 +152,8 @@ export function PortalApp() {
   }
 
   switch (route.mode) {
+    case 'demo-sign-in':
+      return demo ? <DemoSignInView go={go} onSignedIn={setDemoStudent} /> : <SignInView onAuthenticated={() => void probe()} go={go} banner={null} />;
     case 'register':
       return <RegisterView go={go} onSent={(email) => onMailSent(email, 'verify')} />;
     case 'magic-link':
@@ -138,7 +167,7 @@ export function PortalApp() {
           onChangeEmail={() => go(mailbox.reason === 'reset' ? 'recover' : 'sign-in')}
         />
       ) : (
-        <SignInView onAuthenticated={() => void probe()} go={go} banner={null} />
+        <SignInView onAuthenticated={() => void probe()} go={go} banner={null} demo={demo} />
       );
     case 'recover':
       return <RecoverView go={go} onSent={(email) => onMailSent(email, 'reset')} />;
@@ -155,6 +184,6 @@ export function PortalApp() {
         />
       );
     default:
-      return <SignInView onAuthenticated={() => void probe()} go={go} banner={banner ?? landingBanner} />;
+      return <SignInView onAuthenticated={() => void probe()} go={go} banner={banner ?? landingBanner} demo={demo} />;
   }
 }

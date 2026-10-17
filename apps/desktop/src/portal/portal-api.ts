@@ -60,7 +60,17 @@ const MESSAGES: Record<string, string> = {
   session_orchestrator_unavailable: 'Hosted workspaces are not set up on this university server.',
   no_session: 'You have no workspace open right now.',
   account_unsupported: 'This account cannot open a hosted workspace. Contact the registrar.',
+  // Demo students (legacy accounts).
+  invalid_credentials: 'That password does not match this demo student.',
+  rate_limited: 'Too many attempts. Wait a few minutes and try again.',
 };
+
+/**
+ * A demo student is a legacy account, not a better-auth one, so it has no cookie: its signed
+ * token is held here, in memory only, and sent as a bearer on this page's calls. A reload
+ * forgets it, which is the point: nothing about it is written to storage.
+ */
+let legacyToken: string | null = null;
 
 const messageFor = (code: string, status: number): string =>
   MESSAGES[code] ?? `The university server refused that request (${code || status}).`;
@@ -71,7 +81,7 @@ async function request<T>(path: string, init: RequestInit, parse: (raw: unknown)
     response = await fetch(path, {
       ...init,
       credentials: 'include',
-      headers: { 'content-type': 'application/json', ...init.headers },
+      headers: { 'content-type': 'application/json', ...(legacyToken ? { authorization: `Bearer ${legacyToken}` } : {}), ...init.headers },
     });
   } catch {
     log.warn('portal_request_failed', { path, reason: 'network' });
@@ -137,6 +147,29 @@ export function requestPasswordReset(email: string): Promise<void> {
 
 export function resetPassword(token: string, newPassword: string): Promise<void> {
   return request(`${ACCOUNT_BASE}/reset-password`, { method: 'POST', body: JSON.stringify({ token, newPassword }) }, () => undefined);
+}
+
+/** Whether this university seeds the demo students (`SEED_DEMO`), from its public health. */
+export async function demoAvailable(): Promise<boolean> {
+  try {
+    const response = await fetch('/health', { credentials: 'omit', cache: 'no-store' });
+    const body = (await response.json().catch(() => null)) as { demo?: unknown } | null;
+    return response.ok && body?.demo === true;
+  } catch {
+    return false;
+  }
+}
+
+/** POST /v1/auth/login: the legacy password sign-in the demo students use. */
+export async function demoSignIn(email: string, password: string): Promise<void> {
+  const token = await request(`${ACCOUNT_BASE}/login`, { method: 'POST', body: JSON.stringify({ email, password }) }, (raw) => (raw as { token?: unknown } | null)?.token);
+  if (typeof token !== 'string' || !token) throw new PortalError('The university server returned a sign-in this app cannot read.', 0, 'contract_mismatch');
+  legacyToken = token;
+}
+
+/** A legacy token has no server-side session to end; forgetting it is the sign-out. */
+export function demoSignOut(): void {
+  legacyToken = null;
 }
 
 export function signOut(): Promise<void> {

@@ -15,7 +15,7 @@ export const SIGN_IN_LINKS: Array<{ mode: PortalMode; label: string }> = [
   { mode: 'recover', label: 'Forgot your password' },
 ];
 
-export function SignInView({ onAuthenticated, go, banner }: { onAuthenticated: () => void; go: (mode: PortalMode) => void; banner: Banner | null }) {
+export function SignInView({ onAuthenticated, go, banner, demo = false }: { onAuthenticated: () => void; go: (mode: PortalMode) => void; banner: Banner | null; demo?: boolean }) {
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   const { busy, error, run } = useSubmit();
@@ -43,6 +43,11 @@ export function SignInView({ onAuthenticated, go, banner }: { onAuthenticated: (
       <div className="mt-5 border-t border-white/[0.07] pt-4">
         <ModeLinks current="sign-in" go={go} links={SIGN_IN_LINKS} />
       </div>
+      {demo && (
+        <div className="mt-4 border-t border-white/[0.07] pt-4">
+          <ModeLinks current="sign-in" go={go} links={[{ mode: 'demo-sign-in', label: 'Sign in as a demo student' }]} />
+        </div>
+      )}
     </PortalShell>
   );
 }

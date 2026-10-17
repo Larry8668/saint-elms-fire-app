@@ -3,6 +3,7 @@ import { test } from 'node:test';
 import type { Pool } from 'pg';
 import type { AccountAuth } from './account-auth';
 import { createApp } from './app';
+import { config } from './config';
 import type { UniDeps } from './deps';
 
 /**
@@ -74,4 +75,10 @@ test('onError keeps internals out of client responses on non-auth paths too', as
   const body = (await res.json()) as Record<string, unknown>;
   assert.deepEqual(body, { error: 'internal_error' });
   assert.ok(!JSON.stringify(body).includes('hunter2'), 'database internals stay server-side');
+});
+
+test('/health says whether demo students are seeded, and nothing about their password', async () => {
+  const body = (await (await createApp(minDeps()).request('/health')).json()) as Record<string, unknown>;
+  assert.equal(body.demo, config.seedDemo);
+  assert.equal(JSON.stringify(body).includes(config.demoPassword), false);
 });
