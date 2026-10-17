@@ -3,7 +3,7 @@ import { mkdtemp } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { test } from 'node:test';
-import type { DeviceProfile } from '@sef/shared';
+import type { AuthSessionList, DeviceProfile } from '@sef/shared';
 
 const dataDir = await mkdtemp(path.join(tmpdir(), 'sef-http-remote-'));
 process.env.ENGINE_DATA_DIR = dataDir;
@@ -146,4 +146,47 @@ test('a hosted seat closes the profile picker and the password-less offline unlo
 
   const local = await harness();
   assert.ok(((await (await local.call('/api/auth/profiles')).json()) as unknown[]).length > 0, 'a loopback engine keeps the picker');
+});
+
+test('sessions: list own (current marked, no secrets), revoke own, never another profile’s', async () => {
+  const { call, registry, sessions } = await harness();
+  await registry.ensure({ id: 'owner', name: 'O', email: 'o@test', cohortId: 'c' }, 'pw');
+  await registry.ensure({ id: 'other', name: 'X', email: 'x@test', cohortId: 'c' }, 'pw');
+  const mine = await sessions.create('owner', 'online', { mode: 'full' }, 'Laptop');
+  const lost = await sessions.create('owner', 'offline', { mode: 'full' }, 'Phone');
+  const theirs = await sessions.create('other', 'online');
+  const as = (token: string) => ({ authorization: `Bearer ${token}` });
+
+  assert.equal((await call('/api/auth/sessions')).status, 401);
+  const listed = await call('/api/auth/sessions', { headers: as(mine) });
+  assert.equal(listed.status, 200);
+  const raw = await listed.text();
+  for (const secret of [mine, lost, theirs]) assert.ok(!raw.includes(secret), 'no token in the listing');
+  assert.ok(!/[0-9a-f]{64}/.test(raw), 'no token hash in the listing');
+  const list = (JSON.parse(raw) as AuthSessionList).sessions;
+  assert.equal(list.length, 2, 'only the owner’s sessions');
+  assert.deepEqual(list.map((s) => [s.deviceLabel, s.current]).sort(), [['Laptop', true], ['Phone', false]]);
+
+  const theirId = ((await (await call('/api/auth/sessions', { headers: as(theirs) })).json()) as AuthSessionList).sessions[0]!.id;
+  assert.equal((await call(`/api/auth/sessions/${theirId}`, { method: 'DELETE', headers: as(mine) })).status, 404);
+  assert.equal((await call('/api/auth/me', { headers: as(theirs) })).status, 200, 'the other profile’s session survives');
+
+  const phoneId = list.find((s) => s.deviceLabel === 'Phone')!.id;
+  assert.equal((await call(`/api/auth/sessions/${phoneId}`, { method: 'DELETE', headers: as(mine) })).status, 204);
+  assert.equal((await call('/api/auth/me', { headers: as(lost) })).status, 401, 'the lost device is signed out');
+  assert.equal((await call('/api/auth/me', { headers: as(mine) })).status, 200, 'the current one is not');
+});
+
+test('a sign-in records the device label it was given, else a User-Agent hint', async () => {
+  const { call, registry } = await harness();
+  await registry.ensure({ id: 'label-user', name: 'L', email: 'label@example.test', cohortId: 'c' }, 'pw');
+  const named = await call('/api/auth/login', {
+    method: 'POST',
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify({ email: 'label@example.test', password: 'pw', deviceLabel: 'Library PC\u0007' }),
+  });
+  const { token } = (await named.json()) as { token: string };
+  await login(call, 'label@example.test', 'pw', { 'user-agent': 'Mozilla/5.0 (Macintosh; Intel Mac OS X 14_0) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.0 Safari/605.1.15' });
+  const list = ((await (await call('/api/auth/sessions', { headers: { authorization: `Bearer ${token}` } })).json()) as AuthSessionList).sessions;
+  assert.deepEqual(list.map((s) => s.deviceLabel).sort(), ['Library PC', 'Safari on macOS']);
 });

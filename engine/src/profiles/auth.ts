@@ -1,6 +1,7 @@
 import { createHash, randomBytes, timingSafeEqual } from 'node:crypto';
 import type {
   AdmissionMe,
+  AuthSessionSummary,
   DevicePollResult,
   DeviceProfile,
   DeviceSignInStart,
@@ -43,6 +44,7 @@ export interface DevicePollOptions {
   flowKey?: string;
   /** A hosted engine refuses polls without the starting client's key; loopback keeps it optional. */
   requireFlowKey?: boolean;
+  deviceLabel?: string;
 }
 
 const sha256 = (value: string) => createHash('sha256').update(value).digest();
@@ -82,7 +84,7 @@ export class AuthService {
     private readonly deviceId: () => Promise<string> = () => defaultDeviceId(),
   ) {}
 
-  async login(email: string, password: string): Promise<EngineLoginResponse> {
+  async login(email: string, password: string, deviceLabel?: string): Promise<EngineLoginResponse> {
     const { uniServerUrl } = await this.settings.get();
     try {
       const res = await uniFetch<LoginResponse>(uniServerUrl, '/v1/auth/login', {
@@ -96,7 +98,7 @@ export class AuthService {
         throw new AuthError('staff_use_portal', 'Staff accounts sign in at the university’s /admin portal, not in the study app.');
       }
       const profile = await this.registry.recordOnline(res.account, password, res.token, res.expiresAt);
-      return { role: 'student', profile, mode: 'online', access: FULL, token: await this.sessions.create(profile.id, 'online') };
+      return { role: 'student', profile, mode: 'online', access: FULL, token: await this.sessions.create(profile.id, 'online', FULL, deviceLabel) };
     } catch (error) {
       if (error instanceof UniHttpError && error.status === 401) {
         throw new AuthError('invalid_credentials', 'That email and password do not match.');
@@ -113,7 +115,7 @@ export class AuthService {
       );
     }
     log.info('offline_login', { profileId: profile.id });
-    return { role: 'student', profile, mode: 'offline', access: FULL, token: await this.sessions.create(profile.id, 'offline') };
+    return { role: 'student', profile, mode: 'offline', access: FULL, token: await this.sessions.create(profile.id, 'offline', FULL, deviceLabel) };
   }
 
   /** Begins an RFC 8628 device grant with the uni. Online only — errors propagate as unreachable. */
@@ -185,7 +187,7 @@ export class AuthService {
     // files, so their full session stays confined to /api/auth/* by the approved gate.
     const access = accessFor(limitedReason(profile, false));
     if (access.mode === 'limited') log.info('device_signin_limited', { profileId: profile.id, reason: access.reason });
-    const token = await this.sessions.create(profile.id, 'online', access);
+    const token = await this.sessions.create(profile.id, 'online', access, options.deviceLabel);
     return { status: 'approved', role: 'student', profile, mode: 'online', access, token };
   }
 
@@ -216,7 +218,7 @@ export class AuthService {
    * or withdrawn — still unlocks private read/export as a limited session: the
    * student's own files stay theirs. Nothing network-facing can run offline anyway.
    */
-  async unlockOffline(profileId: string): Promise<EngineLoginResponse | null> {
+  async unlockOffline(profileId: string, deviceLabel?: string): Promise<EngineLoginResponse | null> {
     const profile = await this.registry.get(profileId);
     if (!profile) return null;
     const token = await this.registry.entitlement(profileId);
@@ -232,7 +234,7 @@ export class AuthService {
     else log.info('offline_unlock', { profileId });
     const access = accessFor(limitedReason(profile, !verified.ok));
     if (access.mode === 'limited') log.info('offline_unlock_limited', { profileId, reason: access.reason });
-    return { role: 'student', profile, mode: 'offline', access, token: await this.sessions.create(profile.id, 'offline', access) };
+    return { role: 'student', profile, mode: 'offline', access, token: await this.sessions.create(profile.id, 'offline', access, deviceLabel) };
   }
 
   async resolve(token: string): Promise<EngineMe | null> {
@@ -262,6 +264,18 @@ export class AuthService {
     await this.sessions.revokeForProfile(session.profileId);
     await this.registry.forgetCredentials(session.profileId);
     log.info('logout', { profileId: session.profileId });
+  }
+
+  /** The profile's own sessions only; `currentToken` marks the one asking. */
+  listSessions(profileId: string, currentToken: string): Promise<AuthSessionSummary[]> {
+    return this.sessions.list(profileId, currentToken);
+  }
+
+  /** Revokes one of the profile's sessions; another profile's id is reported as not found. */
+  async revokeSession(profileId: string, sessionId: string): Promise<boolean> {
+    const revoked = await this.sessions.revokeById(profileId, sessionId);
+    if (revoked) log.info('session_revoked', { profileId, sessionId });
+    return revoked;
   }
 
   profiles(): Promise<DeviceProfile[]> {
