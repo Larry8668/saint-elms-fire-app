@@ -77,7 +77,7 @@ The orchestrator also needs `UNI_DATABASE_URL` and migration 5 (`pnpm --filter @
 
 ### What the VM gets (exec `envs` of session-start.sh)
 
-`ENGINE_PUBLIC_HOST` (the host of the published URL, which is why publishing comes before session-start), `ENGINE_SEAT_OWNER` and `VAULT_SYNC_ACCOUNT` (the account id), `UNI_SERVER_URL`, `MODEL_GATEWAY_URL`, `MODEL_GATEWAY_TOKEN`, `SYNC_FLUSH_TOKEN` (32 random bytes per session) and the `OBJECT_STORE_*` values. The command line is a fixed string with no values, because the command line shows up in the box's process list and in API logs.
+`ENGINE_PUBLIC_HOST` (the host of the published URL, which is why publishing comes before session-start), `ENGINE_SEAT_OWNER` and `VAULT_SYNC_ACCOUNT` (the same account id: with sync on, the engine refuses to boot unless the sync account is a seat owner), `UNI_SERVER_URL`, `MODEL_GATEWAY_URL`, `MODEL_GATEWAY_TOKEN`, `SYNC_FLUSH_TOKEN` (32 random bytes per session, base64url: 43 characters, over the engine's 24-character minimum) and the `OBJECT_STORE_*` values. The command line is a fixed string with no values, because the command line shows up in the box's process list and in API logs.
 
 **Which account id:** the engine pins the seat (PR-37d) to the id that the student's own sign-in produces. For a legacy password login that is the legacy `account.id` (for example `ananya`). For a better-auth device sign-in it is `user.id`. The orchestrator uses the same id: the token's `sub` for a legacy caller, and the session's `user.id` otherwise.
 
@@ -100,7 +100,7 @@ The orchestrator mints with `mintGatewayToken` from `packages/shared/src/node/ga
 | uni restart mid-spawn | On boot, `spawning` rows are driven again from their persisted step. A missing machine id is recovered by listing `app:sef-session, session:<id>`. Nothing is created blindly: an existing machine is adopted, and only if none exists is the stored key replayed. The box is started again if it stopped meanwhile. |
 | uni restart mid-teardown | `stopping` rows are finished on boot and by every reaper tick. |
 | A step fails (machine in error, ports off, session-start.sh fails twice, health never ready, `sync.state:'error'`) | `stopping` → the machine is deleted **without a flush** (the URL was never handed out, so the student cannot have changed anything) → `failed`. A new `POST` starts over. |
-| The flush fails | Retried once, then logged at error level (`session_flush_failed`, "VAULT CHANGES SINCE THE LAST PUSH MAY BE LOST"), and the teardown carries on and deletes the VM. The engine's own debounced pushes (PR-41b) bound the loss. |
+| The flush fails | session-stop.sh prints the engine's answer. `{ok:false, error:'push_failed'|'timeout'}`, or an answer that can't be read, is retried once. `conflict` and `not_restored` are not retried. Every failure is logged at error level (`session_flush_failed`, "VAULT CHANGES SINCE THE LAST PUSH MAY BE LOST"), recorded in `last_error`, and the teardown carries on and deletes the VM. The engine's own debounced pushes (PR-41b) bound the loss. |
 | `session-stop.sh` is not on the image (snapshots from before PR-41b) | Exit 127, logged `session_flush_unavailable`, no retry. |
 | Delete fails | The row stays `stopping` (still holding its lease and its capacity slot), and the reaper retries. |
 | Orphans | Each tick lists `app:sef-session` machines and deletes those that no live row owns, either by machine id or, for a create that is still in flight, by its `session` label. |

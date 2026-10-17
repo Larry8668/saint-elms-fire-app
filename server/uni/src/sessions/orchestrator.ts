@@ -67,6 +67,23 @@ async function defaultProbe(url: string): Promise<HealthProbe> {
   return { status: response.status, body };
 }
 
+const FLUSH_RETRYABLE = new Set(['push_failed', 'timeout']);
+
+/** The `error` of the last JSON line session-stop.sh printed, when it is a known short code. */
+export function flushErrorCode(stdout: string): string | null {
+  const lines = stdout.trim().split('\n').reverse();
+  for (const line of lines) {
+    try {
+      const body = JSON.parse(line) as { ok?: unknown; error?: unknown };
+      if (body && body.ok === false && typeof body.error === 'string' && /^[a-z_]{1,40}$/.test(body.error)) return body.error;
+      return null;
+    } catch {
+      // Not the JSON line: keep looking upwards.
+    }
+  }
+  return null;
+}
+
 /** Last lines of a script's output for the log. session-start.sh/session-stop.sh print names, never values. */
 const tail = (text: string | undefined, max = 600) => (text ?? '').trim().slice(-max);
 
@@ -514,8 +531,13 @@ export class SessionOrchestrator {
           log.warn('session_flush_unavailable', { sessionId: row.id, note: 'session-stop.sh is not on this image (pre PR-41b); nothing to flush', err: tail(result.stderr, 200) });
           return 'flush: session-stop.sh not found on the image';
         }
-        problem = `session-stop.sh exited ${result.exitCode}`;
-        log.error('session_flush_attempt_failed', { sessionId: row.id, attempt, exitCode: result.exitCode, out: tail(result.stdout), err: tail(result.stderr) });
+        // session-stop.sh prints the engine's answer: {ok:false, error} with error one of
+        // conflict | push_failed | timeout | not_restored (PR-41b). Only push_failed and timeout
+        // may succeed on a second try; an answer we cannot read is treated as transient too.
+        const code = flushErrorCode(result.stdout);
+        problem = code ? `engine refused the flush: ${code}` : `session-stop.sh exited ${result.exitCode}`;
+        log.error('session_flush_attempt_failed', { sessionId: row.id, attempt, exitCode: result.exitCode, code, out: tail(result.stdout), err: tail(result.stderr) });
+        if (code && !FLUSH_RETRYABLE.has(code)) break;
       } catch (error) {
         problem = describe(error);
         log.error('session_flush_attempt_failed', { sessionId: row.id, attempt, error: problem });
