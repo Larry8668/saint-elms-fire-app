@@ -27,10 +27,21 @@ export const GATEWAY_PROVIDER_ID = 'uni';
  * gateway. Its URL and token come from the environment on every read and are never written to
  * disk, so a rotated per-session token or a moved gateway takes effect on the next engine start.
  */
-export function withGateway<T extends { providers: ProviderConfig[] }>(settings: T, gateway: ModelGateway | null = config.modelGateway): T {
+export function withGateway<T extends { providers: ProviderConfig[]; roles?: StoredSettings['roles'] }>(
+  settings: T,
+  gateway: ModelGateway | null = config.modelGateway,
+): T {
   if (!gateway) return settings;
   const managed = (p: ProviderConfig): ProviderConfig => ({ ...p, kind: 'openai-compatible', baseUrl: gateway.url, apiKey: gateway.token });
-  return { ...settings, providers: settings.providers.map((p) => (p.id === GATEWAY_PROVIDER_ID ? managed(p) : p)) };
+  const providers = settings.providers.map((p) => (p.id === GATEWAY_PROVIDER_ID ? managed(p) : p));
+  if (!providers.some((p) => p.id === GATEWAY_PROVIDER_ID)) providers.push(managed({ id: GATEWAY_PROVIDER_ID, kind: 'openai-compatible', label: 'University model' }));
+  // A session box runs no Ollama: a role stored on it (a restored profile, say) uses the gateway.
+  const roles = settings.roles
+    ? (Object.fromEntries(
+        Object.entries(settings.roles).map(([role, value]) => [role, value?.provider === 'ollama' ? { ...value, provider: GATEWAY_PROVIDER_ID } : value]),
+      ) as StoredSettings['roles'])
+    : undefined;
+  return { ...settings, providers, ...(roles ? { roles } : {}) };
 }
 
 function defaultSettings(): StoredSettings {

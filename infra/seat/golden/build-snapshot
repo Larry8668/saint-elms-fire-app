@@ -34,7 +34,10 @@ phase() {
 COMMIT=$(state $FILE COMMIT)
 if [[ -z $COMMIT ]]; then
   rm -f "$STATE_DIR/build.timings"
-  if [[ $REF =~ ^[0-9a-f]{40}$ ]]; then COMMIT=$REF; else COMMIT=$(git ls-remote "$REPO_URL" "$REF" | head -n 1 | cut -f 1); fi
+  # A branch, or a tag peeled to its commit (`^{}`); never a tag object or another ref.
+  if [[ $REF =~ ^[0-9a-f]{40}$ ]]; then COMMIT=$REF; else
+    COMMIT=$(git ls-remote "$REPO_URL" "refs/heads/$REF" "refs/tags/$REF^{}" | awk -v h="refs/heads/$REF" -v t="refs/tags/$REF^{}" '$2 == h || $2 == t { print $1; exit }')
+  fi
   [[ $COMMIT =~ ^[0-9a-f]{40}$ ]] || die "could not resolve $REF on $REPO_URL"
   state $FILE COMMIT "$COMMIT"
 fi

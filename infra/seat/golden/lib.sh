@@ -65,7 +65,8 @@ wait_op() {
         return 1
         ;;
     esac
-    [[ $STATUS == 200 ]] || sleep 3
+    # The long poll normally holds the request; never spin if it answers early.
+    sleep $([[ $STATUS == 200 ]] && echo 1 || echo 3)
   done
   die "operation $id did not finish in 10 minutes"
 }
@@ -92,6 +93,7 @@ create_machine() {
         fi
         log "create accepted: machine $mid, operation $op"
         if wait_op "$op"; then
+          state "$file" CREATE_KEY ""
           printf '%s\n' "$mid"
           return 0
         fi
@@ -139,12 +141,14 @@ machine_state() {
 }
 
 # box_exec ID CMD [STDIN] [ENVS-JSON] [TIMEOUT]: prints stdout, returns the command's exit code.
-# Exec is not idempotent, so callers only send commands that are safe to repeat.
+# Under set -e a non-zero remote exit stops the script, so every caller adds `|| die` or
+# `|| true`. Exec is not idempotent, so callers only send commands that are safe to repeat.
 box_exec() {
   local body envs=${4:-}
   [[ -n $envs ]] || envs='{}'
-  body=$(jq -nc --arg cmd "$2" --arg stdin "${3:-}" --argjson envs "$envs" --argjson t "${5:-50}" \
-    '{cmd: $cmd, envs: $envs, timeoutSeconds: $t} + (if $stdin == "" then {} else {stdin: $stdin} end)')
+  # Values travel through jq's environment, not its argv, so session tokens stay out of `ps`.
+  body=$(EXEC_ENVS=$envs EXEC_STDIN=${3:-} jq -nc --arg cmd "$2" --argjson t "${5:-50}" \
+    '{cmd: $cmd, envs: (env.EXEC_ENVS | fromjson), timeoutSeconds: $t} + (if env.EXEC_STDIN == "" then {} else {stdin: env.EXEC_STDIN} end)')
   api POST "/v1/machines/$1/exec" "$body"
   [[ $STATUS == 200 ]] || die "exec: HTTP $STATUS $(err_text)"
   jq -r .stdout "$RESP"
@@ -163,6 +167,13 @@ list_by_app() {
 wait_running() {
   local mid=$1 file=$2 s deadline=$(($(now) + 180))
   s=$(machine_state "$mid")
+  # Let a transition finish first, so a stopping box is started rather than waited on.
+  while [[ $s == creating || $s == starting || $s == stopping || $s == suspending || $s == resuming ]]; do
+    (($(now) < deadline)) || die "machine $mid is stuck $s"
+    sleep 2
+    s=$(machine_state "$mid")
+  done
+  [[ $s == running || $s == stopped || $s == suspended ]] || die "machine $mid is $s"
   case $s in
     stopped) machine_op "$mid" start "$file" ;;
     suspended) machine_op "$mid" resume "$file" ;;

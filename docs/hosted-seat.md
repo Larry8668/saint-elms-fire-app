@@ -38,7 +38,7 @@ What the Instabox edge sends to the box, measured on a real machine:
 | `ENGINE_STATIC_DIR` | unset | the absolute path of the built `apps/desktop/dist` | Serves the student UI from the engine's own origin (see below). The engine's loopback origin is then allowed as well. |
 | `UNI_SERVER_URL` | `http://localhost:4200` | the university's HTTPS URL | First-run default for the uni server. Settings can change it later. |
 | `OLLAMA_URL` | `http://localhost:11434` | `http://ollama:11434` (compose) or loopback | Model runtime on the box. |
-| `MODEL_GATEWAY_URL` | unset | the operator's model gateway (central-model and session VMs) | Set, the `uni` provider ("University model", OpenAI-compatible) becomes this gateway and every role defaults to it. Its URL is re-applied on every settings read, so a stored settings file never points at an old gateway. |
+| `MODEL_GATEWAY_URL` | unset | the operator's model gateway (central-model and session VMs) | Set, the `uni` provider ("University model", OpenAI-compatible) becomes this gateway and every role defaults to it. Its URL and token are applied on every settings read, and roles stored on the on-box `ollama` provider read as the gateway, so the engine never calls an old gateway even if a settings file still names one. |
 | `MODEL_GATEWAY_TOKEN` | unset | the session's short-lived gateway token | Sent as the `uni` provider's bearer token. Read from the environment only and never written to `settings.json` or a profile's `private-settings.json`. |
 
 ### Running the engine in Docker

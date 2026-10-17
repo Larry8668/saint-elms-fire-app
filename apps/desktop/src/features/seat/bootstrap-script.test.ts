@@ -212,6 +212,14 @@ test('scrub removes every session trace and keeps the image', () => {
   assert.match(run.output, /scrub ok/);
 });
 
+test('scrub refuses to run on a student seat', () => {
+  const home = freshHome();
+  assert.equal(bootstrap(home, GOOD).code, 0);
+  const run = bootstrap(home, {}, SCRIPT, ['scrub']);
+  assert.equal(run.code, 1, run.output);
+  assert.match(run.output, /scrub is for golden images only/);
+});
+
 test('scrub fails the snapshot when a key-like value is still on the image', () => {
   const home = freshHome();
   assert.equal(bootstrap(home, GOLDEN).code, 0);

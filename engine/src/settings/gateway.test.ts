@@ -3,6 +3,7 @@ import { mkdtemp, readFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { test } from 'node:test';
+import type { ProviderConfig } from '@sef/shared';
 
 // A hosted session: the gateway comes from the environment the session start script wrote.
 process.env.ENGINE_DATA_DIR = await mkdtemp(path.join(tmpdir(), 'sef-gateway-settings-'));
@@ -28,11 +29,16 @@ test('every role defaults to the gateway, with the token only in what the engine
   }
 });
 
-test('a stored provider from an older session is re-pointed at the current gateway', () => {
+test('a stored provider or an on-box role from an older session is re-pointed at the current gateway', () => {
   const stale = { providers: [{ id: 'uni', kind: 'ollama' as const, label: 'University model', baseUrl: 'https://old.example.test', apiKey: 'old' }] };
   const fresh = withGateway(stale, { url: 'https://new.example.test/v1', token: 'new' }).providers[0];
   assert.deepEqual([fresh?.kind, fresh?.baseUrl, fresh?.apiKey], ['openai-compatible', 'https://new.example.test/v1', 'new']);
   assert.equal(withGateway(stale, null), stale, 'no gateway leaves settings untouched');
+  type Roles = NonNullable<Parameters<typeof withGateway>[0]['roles']>;
+  const roles = { tutor: { provider: 'ollama', model: 'gemma4:e2b' }, brain: { provider: 'mine', model: 'x' } } as unknown as Roles;
+  const restored = withGateway({ providers: [] as ProviderConfig[], roles }, { url: 'https://gw.test' });
+  assert.deepEqual([restored.roles?.tutor?.provider, restored.roles?.brain?.provider], ['uni', 'mine']);
+  assert.deepEqual(restored.providers.map((p) => [p.id, p.baseUrl]), [['uni', 'https://gw.test']], 'a missing gateway provider is added');
 });
 
 test('the gateway URL is parsed fail-closed', () => {

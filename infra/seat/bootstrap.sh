@@ -104,6 +104,8 @@ REF_RE='^[A-Za-z0-9][A-Za-z0-9._/-]{0,99}$'
 HOST_RE='^[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?(\.[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?)+$'
 URL_RE='^https?://[A-Za-z0-9.-]+(:[0-9]{1,5})?(/[A-Za-z0-9._~/-]*)?$'
 MODEL_RE='^[a-z0-9][a-z0-9._:/-]{0,99}$'
+# Variables that belong to one session: never in a golden image's seat.env.
+SESSION_KEYS_RE='^(ENGINE_PUBLIC_HOST|ENGINE_SEAT_OWNER|UNI_SERVER_URL|MODEL_GATEWAY_[A-Z_]+|OBJECT_STORE_[A-Z_]+)='
 
 load_inputs() {
   local saved_ref="" saved_host="" saved_uni="" saved_chat="" saved_embed="" saved_mode="" saved_model_mode=""
@@ -198,7 +200,7 @@ configure() {
   # session.env), golden keeps no per-session value (session-start.sh writes them).
   local drop=()
   [[ $SEAT_MODEL_MODE == central ]] && drop+=(-e '/^OLLAMA_URL=/d')
-  [[ $SEAT_MODE == golden ]] && drop+=(-e '/^ENGINE_PUBLIC_HOST=/d' -e '/^UNI_SERVER_URL=/d')
+  [[ $SEAT_MODE == golden ]] && drop+=(-E -e "/$SESSION_KEYS_RE/d")
   # Values passed the patterns above, so none of them contains `|`, `&` or a newline.
   sed ${drop[@]+"${drop[@]}"} -e "s|@@PUBLIC_HOST@@|$SEAT_PUBLIC_HOST|g" \
     -e "s|@@UNI_SERVER_URL@@|$SEAT_UNI_URL|g" \
@@ -280,6 +282,8 @@ models_and_build() {
 # The engine's image must be on the box, so a session start never waits on a registry.
 verify_image() {
   local image
+  # The build and the engine share the one node image (the x-node anchor), so the first
+  # `image: node:` line is the engine's. build_app always writes `built`.
   image=$(sed -n 's/^  image: \(node:[^ ]*\)$/\1/p' "$SEAT_HOME/docker-compose.yml" | head -n 1)
   [[ -n $image ]] || die "no node image in docker-compose.yml"
   run docker image inspect --format '{{.Id}}' "$image"
@@ -291,6 +295,7 @@ verify_image() {
 # Before a snapshot: every session's data goes, and the image is checked for anything secret.
 # Leaves the code, the build, the compose and env files, the package caches and the logs.
 scrub() {
+  [[ $SEAT_MODE == golden ]] || die "scrub is for golden images only; this box is a $SEAT_MODE"
   compose rm --stop --force engine
   rm -rf "$SEAT_HOME/engine-data" "$SEAT_HOME/cache/home"
   mkdir -p "$SEAT_HOME/engine-data" "$SEAT_HOME/cache/home"
@@ -298,9 +303,15 @@ scrub() {
   rm -f "$HOME/.bash_history" "$HOME/.git-credentials" "$HOME/.npmrc" "$HOME/.docker/config.json"
   local found
   [[ -z $(ls -A "$SEAT_HOME/engine-data") ]] || die "engine-data is not empty"
-  ! grep -Eq '^(ENGINE_PUBLIC_HOST|ENGINE_SEAT_OWNER|UNI_SERVER_URL|MODEL_GATEWAY_[A-Z]+|OBJECT_STORE_[A-Z_]+)=' "$SEAT_HOME/seat.env" ||
-    die "seat.env holds a per-session value"
+  # configure already dropped these; a hit means a template or a hand edit put one back.
+  ! grep -Eq "$SESSION_KEYS_RE" "$SEAT_HOME/seat.env" || die "seat.env holds a per-session value"
+  # src/ is the public repo (with its own .env.example) plus ignored build output, so it is
+  # checked for drift instead: nothing modified or untracked, and no .env file anywhere.
   found=$(grep -rIlE 'ibk_[A-Za-z0-9]|(TOKEN|SECRET_KEY|PASSWORD)=[^[:space:]]' "$SEAT_HOME" --exclude-dir=src --exclude-dir=cache 2>/dev/null || true)
+  if [[ $DRY_RUN != 1 ]]; then
+    [[ -z $(git -C "$SRC" status --porcelain) ]] || die "the checkout in src/ has local changes"
+    found+=$(find "$SRC" -path "$SRC/node_modules" -prune -o -name '.env*' ! -name .env.example -print -quit)
+  fi
   [[ -z $found ]] || die "secret-looking values in: $found"
   log "scrub ok: $(cd "$SEAT_HOME" && ls -A | tr '\n' ' ')"
 }

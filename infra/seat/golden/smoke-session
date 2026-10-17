@@ -26,10 +26,11 @@ lap() {
 }
 
 MID=$(state $FILE MACHINE)
-[[ -n $MID ]] || MID=$(list_by_app $APP | head -n 1)
+# A leftover VM is reused only if it came from this snapshot (it carries the id in metadata).
+[[ -n $MID ]] || MID=$(list_by_app "$APP&metadata=snapshot:$SID" | head -n 1)
 if [[ -z $MID ]]; then
   MID=$(create_machine $FILE "$(jq -nc --arg app $APP --arg sid "$SID" '{name: ("sef-smoke-" + (now | strftime("%H%M%S"))),
-    snapshotId: $sid, vault: false, metadata: {app: $app}, autoSuspendAfterSeconds: 600}')")
+    snapshotId: $sid, vault: false, metadata: {app: $app, snapshot: $sid}, autoSuspendAfterSeconds: 600}')")
 fi
 state $FILE MACHINE "$MID"
 log "session VM: $MID ($(machine_state "$MID"))"
@@ -49,6 +50,7 @@ api POST "/v1/machines/$MID/ports" '{"port":4100,"name":"engine"}'
 URL=$(jq -r .url "$RESP")
 HOST=${URL#https://}
 HOST=${HOST%/}
+[[ $HOST =~ ^[a-z0-9]([a-z0-9.-]{0,251}[a-z0-9])?$ ]] || die "publish returned an unexpected URL: $URL"
 lap publish
 
 envs=$(jq -nc --arg host "$HOST" '{ENGINE_PUBLIC_HOST: $host, ENGINE_SEAT_OWNER: "smoke-owner",
