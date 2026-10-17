@@ -37,7 +37,11 @@ export class SessionReaper {
     await this.running;
   }
 
-  /** One pass. Overlapping ticks join the one in flight. */
+  /**
+   * One pass. Overlapping ticks join the pass in flight. The pass starts the spawns and
+   * teardowns it resumes but does not wait for them: a shutdown may cut one off, and the
+   * next boot (or tick) resumes it from its persisted row.
+   */
   tick(): Promise<void> {
     this.running ??= this.pass()
       .catch((error) => log.error('session_reaper_failed', errorFields(error)))
