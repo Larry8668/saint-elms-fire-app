@@ -141,3 +141,33 @@ test('a corrupt or tampered plan file is skipped, not trusted', async () => {
   await writeFile(path.join(dir, 'plan_000000000098.json'), JSON.stringify({ id: 'plan_000000000098', status: 'active', steps: [{ state: 'done' }] }));
   assert.deepEqual(await service.list(), []);
 });
+
+test('a signal that clears between proposal and approval is dropped, not counted as done', async () => {
+  const draft = async (): Promise<PlannerDraft> => ({
+    steps: [
+      { title: 'Sort the problem set', kind: 'resolve_signal', entityRefs: ['signal:deadline:log-1:48h'] },
+      { title: 'Review entropy', kind: 'review_page', entityRefs: ['page:entropy'] },
+    ],
+  });
+  const { service, world } = await harness(draft);
+  const r = await service.propose({ goal: 'Revise thermodynamics' });
+  assert.ok(r.ok && r.plan.steps.length === 2);
+  world.signals.clear();
+  const approved = await service.approve(r.plan.id);
+  assert.ok(approved.ok);
+  assert.deepEqual(approved.plan.steps.map((s) => s.kind), ['review_page']);
+  assert.match(approved.plan.notes.at(-1)!, /Sort the problem set/);
+  assert.equal((await service.get(r.plan.id))!.steps.filter((s) => s.state === 'done').length, 0);
+  assert.equal((await service.list()).filter((p) => p.revisionOf).length, 0, 'no revision churn on approval');
+});
+
+test('when everything a proposal pointed at is gone, approval refuses with nothing_left', async () => {
+  const { service, world } = await harness();
+  const r = await service.propose({ goal: 'Revise thermodynamics' });
+  assert.ok(r.ok);
+  world.pages.clear();
+  world.lessons.clear();
+  const result = await service.approve(r.plan.id);
+  assert.ok(!result.ok && result.code === 'nothing_left');
+  assert.equal((await service.get(r.plan.id))!.status, 'proposed');
+});

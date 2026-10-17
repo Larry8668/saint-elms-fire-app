@@ -3,7 +3,7 @@ import { CONTRACT_VERSION, CreatePlanRequestSchema, type PlansResponse } from '@
 import { requireProfile, type EngineDeps, type EngineEnv } from '../context';
 import type { PlanActionResult } from '../../plans/service';
 
-const ACTION_STATUS = { not_found: 404, not_proposed: 409, not_open: 409, too_many_active: 409 } as const;
+const ACTION_STATUS = { not_found: 404, not_proposed: 409, not_open: 409, too_many_active: 409, nothing_left: 409 } as const;
 const PROPOSE_STATUS = { planner_unavailable: 503, no_valid_steps: 422, too_many_proposals: 409 } as const;
 
 /** Study plans. Proposing calls the planner; approving only starts tracking — nothing is ever run. */

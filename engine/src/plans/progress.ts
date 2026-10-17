@@ -4,7 +4,10 @@ import type { PlanWorld } from './world';
 
 const after = (iso: string, since: string) => Date.parse(iso) > Date.parse(since);
 const firstAfter = (times: string[], since: string) => times.filter((t) => after(t, since)).sort()[0] ?? null;
-const primaryId = (step: PlanStep) => step.entityRefs[0]!.slice(step.entityRefs[0]!.indexOf(':') + 1);
+const primaryId = (step: PlanStep) => {
+  const ref = step.entityRefs[0] ?? '';
+  return ref.slice(ref.indexOf(':') + 1);
+};
 
 /** When the evidence says this step happened, or null. Pure reads — the student did the work. */
 export function evidenceOfDone(step: PlanStep, since: string, world: PlanWorld): string | null {
@@ -22,9 +25,26 @@ export function evidenceOfDone(step: PlanStep, since: string, world: PlanWorld):
     case 'read_lesson':
       return firstAfter(world.lessonActivity.filter((a) => a.lessonId === id).map((a) => a.at), since);
     case 'resolve_signal':
-      // A signal that is no longer live has been dealt with (or no longer applies).
+      // Ledgers keep no clearance time, so this is when the change was first observed. A
+      // signal already gone at approval never reaches here: approval marks that step stale.
       return world.signals.has(id) ? null : world.now.toISOString();
   }
+}
+
+/**
+ * Drops pending steps that stopped making sense between proposal and approval — their entity
+ * is gone or their signal already cleared — and discloses each. Without this a cleared signal
+ * would be credited as done work the moment tracking began.
+ */
+export function pruneAtApproval(plan: StudyPlan, world: PlanWorld): StudyPlan {
+  const notes = [...plan.notes];
+  const steps = plan.steps.filter((step) => {
+    if (step.state !== 'pending') return true;
+    const gone = step.kind === 'resolve_signal' ? !world.signals.has(primaryId(step)) : Boolean(staleReason(step, { ...plan, basis: undefined }, world));
+    if (gone) notes.push(`Dropped “${step.title}”: what it referred to changed before the plan started.`.slice(0, 300));
+    return !gone;
+  });
+  return { ...plan, steps, notes: notes.slice(-20) };
 }
 
 /** Why a pending step can no longer be done as written, or null. */
@@ -92,7 +112,8 @@ export function proposeRevision(plan: StudyPlan, id: string, now: Date): StudyPl
     approvedAt: undefined,
     basis: undefined,
     revisionOf: plan.id,
-    steps: kept.map((s, i) => ({ ...s, id: `st_${i + 1}` })),
+    // Step ids are kept, so a done step's id names the same step in the original and the revision.
+    steps: kept,
     notes: [`Revised: ${dropped} step${dropped === 1 ? '' : 's'} removed because what they referred to changed. Approve to replace the current plan.`],
   };
 }

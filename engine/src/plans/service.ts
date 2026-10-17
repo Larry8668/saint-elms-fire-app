@@ -2,7 +2,7 @@ import { randomUUID } from 'node:crypto';
 import { CONTRACT_VERSION, MAX_ACTIVE_PLANS, MAX_PROPOSED_PLANS, type CreatePlanRequest, type PlanStep, type StudyPlan } from '@sef/shared';
 import { log } from '../config';
 import { PLANNER_INSTRUCTIONS, plannerPrompt, type PlanDrafter } from './planner';
-import { proposeRevision, recompute } from './progress';
+import { proposeRevision, pruneAtApproval, recompute } from './progress';
 import type { PlanStore } from './store';
 import { validateDraft } from './validate';
 import type { PlanWorld } from './world';
@@ -13,7 +13,7 @@ const STATUS_ORDER: Record<StudyPlan['status'], number> = { active: 0, proposed:
 
 type Failure<C extends string> = { ok: false; code: C; message: string; notes?: string[] };
 export type ProposeResult = { ok: true; plan: StudyPlan } | Failure<'planner_unavailable' | 'no_valid_steps' | 'too_many_proposals'>;
-export type PlanActionResult = { ok: true; plan: StudyPlan } | Failure<'not_found' | 'not_proposed' | 'not_open' | 'too_many_active'>;
+export type PlanActionResult = { ok: true; plan: StudyPlan } | Failure<'not_found' | 'not_proposed' | 'not_open' | 'too_many_active' | 'nothing_left'>;
 
 export interface PendingPlanStep {
   planId: string;
@@ -103,7 +103,11 @@ export class PlanService {
       }
       const world = await this.deps.world();
       const stamp = this.now().toISOString();
-      const approved: StudyPlan = { ...plan, status: 'active', approvedAt: stamp, updatedAt: stamp, basis: world.courseVersions };
+      const checked = pruneAtApproval(plan, world);
+      if (!checked.steps.some((s) => s.state === 'pending')) {
+        return { ok: false, code: 'nothing_left', message: 'Everything this plan pointed at has changed since it was proposed. Ask for a new plan.' };
+      }
+      const approved: StudyPlan = { ...checked, status: 'active', approvedAt: stamp, updatedAt: stamp, basis: world.courseVersions };
       if (replaced) {
         await this.deps.store.put({ ...replaced, status: 'abandoned', updatedAt: stamp, notes: [...replaced.notes, 'Replaced by an approved revision.'].slice(-20) });
       }

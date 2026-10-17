@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
 import { CONTRACT_VERSION, StudyPlanSchema, type PlanStep, type StudyPlan } from '@sef/shared';
-import { proposeRevision, recompute } from './progress';
+import { proposeRevision, pruneAtApproval, recompute } from './progress';
 import { makeWorld, NOW } from './testing/world';
 
 const APPROVED = '2026-10-14T00:00:00.000Z';
@@ -85,7 +85,20 @@ test('a revision drops stale steps, keeps done and pending, and waits for approv
   assert.equal(revision.status, 'proposed');
   assert.equal(revision.revisionOf, p.id);
   assert.equal(revision.approvedAt, undefined);
-  assert.deepEqual(revision.steps.map((x) => [x.id, x.state]), [['st_1', 'done'], ['st_2', 'pending']]);
+  assert.deepEqual(revision.steps.map((x) => [x.id, x.state]), [['st_1', 'done'], ['st_3', 'pending']], 'step ids survive a revision');
   StudyPlanSchema.parse(revision);
   assert.equal(proposeRevision(plan([{ ...s('st_1', 'review_page', 'page:a'), state: 'stale' }]), 'plan_cccccccccccc', NOW), null, 'nothing left to do → no revision');
+});
+
+test('approval drops steps whose signal already cleared or whose entity vanished — never credits them', () => {
+  const p = plan([s('st_1', 'resolve_signal', 'signal:deadline:log-1:48h'), s('st_2', 'review_page', 'page:entropy'), s('st_3', 'review_page', 'page:gone')], { status: 'proposed', approvedAt: undefined });
+  const pruned = pruneAtApproval(p, makeWorld({ signals: new Map() }));
+  assert.deepEqual(pruned.steps.map((x) => x.id), ['st_2']);
+  assert.equal(pruned.notes.length, 2);
+  assert.ok(pruned.steps.every((x) => x.state === 'pending'));
+});
+
+test('a step with no usable ref is inert rather than a crash', () => {
+  const broken = plan([{ ...s('st_1', 'review_page', 'page:entropy'), entityRefs: [] as unknown as [string] }]);
+  assert.doesNotThrow(() => recompute(broken, makeWorld()));
 });
