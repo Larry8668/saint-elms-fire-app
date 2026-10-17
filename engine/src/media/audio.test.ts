@@ -1,11 +1,20 @@
 import assert from 'node:assert/strict';
 import { readFileSync, writeFileSync } from 'node:fs';
-import { mkdtemp, readdir } from 'node:fs/promises';
+import { mkdtemp, readdir, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
-import { test } from 'node:test';
+import { after, test } from 'node:test';
 import type { StoredSettings } from '../settings/store';
 import { AudioTranscriber, AudioTranscribeError, chunkPlan, parseFfmpegDuration, trimSeamOverlap, wavWrap, type RunCommand } from './audio';
+
+/** Each test's temp root, removed once the file finishes so runs leave nothing behind in tmpdir. */
+const madeDirs: string[] = [];
+const tempDir = async () => {
+  const dir = await mkdtemp(path.join(tmpdir(), 'sef-audio-test-'));
+  madeDirs.push(dir);
+  return dir;
+};
+after(() => Promise.all(madeDirs.map((dir) => rm(dir, { recursive: true, force: true }))));
 
 /** Settings with an Ollama vision role — resolved but never contacted by the fakes. */
 const settings = (providerKind: 'ollama' | 'anthropic' = 'ollama') =>
@@ -85,7 +94,7 @@ test('wavWrap produces a playable RIFF header over the PCM slice', () => {
 });
 
 test('probe reports the stream duration and refuses non-audio by name', async () => {
-  const dir = await mkdtemp(path.join(tmpdir(), 'sef-audio-test-'));
+  const dir = await tempDir();
   const { run } = fakeRun(95);
   const transcriber = new AudioTranscriber(settings(), { run, tmpRoot: dir });
   assert.equal((await transcriber.probe(bytes, 'audio/wav')).seconds, 95);
@@ -97,7 +106,7 @@ test('probe reports the stream duration and refuses non-audio by name', async ()
 });
 
 test('a multi-chunk recording joins transcripts with absolute timestamps', async () => {
-  const dir = await mkdtemp(path.join(tmpdir(), 'sef-audio-test-'));
+  const dir = await tempDir();
   const { run, calls } = fakeRun(120);
   const { fetchFn, calls: posts } = fakeFetch((n) => JSON.stringify({ text: `words of chunk ${n}` }));
   const transcriber = new AudioTranscriber(settings(), { run, fetchFn, tmpRoot: dir });
@@ -117,7 +126,7 @@ test('a multi-chunk recording joins transcripts with absolute timestamps', async
 });
 
 test('ffmpeg reads a seekable staged file holding the bytes, and every staging folder is removed', async () => {
-  const dir = await mkdtemp(path.join(tmpdir(), 'sef-audio-test-'));
+  const dir = await tempDir();
   const { run, staged } = fakeRun(60);
   const { fetchFn } = fakeFetch(() => JSON.stringify({ text: 'ok' }));
   const transcriber = new AudioTranscriber(settings(), { run, fetchFn, tmpRoot: dir });
@@ -144,7 +153,7 @@ test('seam overlap: the repeated run at a chunk boundary is dropped once, case a
 });
 
 test('adjacent chunks are joined without repeating the overlapped words', async () => {
-  const dir = await mkdtemp(path.join(tmpdir(), 'sef-audio-test-'));
+  const dir = await tempDir();
   const { run } = fakeRun(120);
   const answers = ['the second law says force equals', 'force equals mass times acceleration and', 'acceleration and that is all'];
   const { fetchFn } = fakeFetch((n) => JSON.stringify({ text: answers[n] }));
@@ -155,7 +164,7 @@ test('adjacent chunks are joined without repeating the overlapped words', async 
 });
 
 test('a chunk after a failed one is not trimmed against text it never touched', async () => {
-  const dir = await mkdtemp(path.join(tmpdir(), 'sef-audio-test-'));
+  const dir = await tempDir();
   const { run } = fakeRun(120);
   const answers = ['alpha beta gamma delta', null, 'gamma delta epsilon'];
   const { fetchFn } = fakeFetch((n) => (answers[n] === null ? null : JSON.stringify({ text: answers[n] })));
@@ -166,7 +175,7 @@ test('a chunk after a failed one is not trimmed against text it never touched', 
 });
 
 test('verbose_json segments keep their own timestamps, offset by the chunk window', async () => {
-  const dir = await mkdtemp(path.join(tmpdir(), 'sef-audio-test-'));
+  const dir = await tempDir();
   const { run } = fakeRun(60);
   const { fetchFn } = fakeFetch(() => JSON.stringify({ text: 'all', segments: [{ start: 1, end: 4, text: 'first words' }, { start: 6, end: 9, text: 'second words' }] }));
   const transcriber = new AudioTranscriber(settings(), { run, fetchFn, tmpRoot: dir });
@@ -180,7 +189,7 @@ test('verbose_json segments keep their own timestamps, offset by the chunk windo
 });
 
 test('a failed chunk leaves a partial transcript that says so', async () => {
-  const dir = await mkdtemp(path.join(tmpdir(), 'sef-audio-test-'));
+  const dir = await tempDir();
   const { run } = fakeRun(120);
   const { fetchFn } = fakeFetch((n) => (n === 1 ? null : JSON.stringify({ text: `chunk ${n}` })));
   const transcriber = new AudioTranscriber(settings(), { run, fetchFn, tmpRoot: dir });
@@ -193,7 +202,7 @@ test('a failed chunk leaves a partial transcript that says so', async () => {
 });
 
 test('an endpoint that never answers stops early rather than grinding through every chunk', async () => {
-  const dir = await mkdtemp(path.join(tmpdir(), 'sef-audio-test-'));
+  const dir = await tempDir();
   const { run } = fakeRun(200); // five windows — enough to see the early stop
   const { fetchFn, calls } = fakeFetch(() => null);
   const transcriber = new AudioTranscriber(settings(), { run, fetchFn, tmpRoot: dir });
@@ -208,7 +217,7 @@ test('an endpoint that never answers stops early rather than grinding through ev
 });
 
 test('a stream that hid its length from the probe is still refused on the decoded duration', async () => {
-  const dir = await mkdtemp(path.join(tmpdir(), 'sef-audio-test-'));
+  const dir = await tempDir();
   // MediaRecorder-style output: an audio stream but no Duration line, so probe answers NaN.
   const noDuration = `Input #0, matroska,webm, from 'pipe:0':\n  Stream #0:0: Audio: opus, 48000 Hz, mono\nAt least one output file must be specified\n`;
   const { run } = fakeRun(120, { probeStderr: noDuration });
@@ -222,7 +231,7 @@ test('a stream that hid its length from the probe is still refused on the decode
 });
 
 test('a missing ffmpeg is a named failure, and Anthropic is honest about having no endpoint', async () => {
-  const dir = await mkdtemp(path.join(tmpdir(), 'sef-audio-test-'));
+  const dir = await tempDir();
   const missing = new AudioTranscriber(settings(), {
     run: async () => {
       throw new AudioTranscribeError('ffmpeg is not installed on this device — audio sources need it (brew install ffmpeg).', 'ffmpeg_missing');
