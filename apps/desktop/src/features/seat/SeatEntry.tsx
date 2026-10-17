@@ -1,7 +1,7 @@
 import { Cloud } from 'lucide-react';
 import { useState } from 'react';
 import { ENGINE_URL } from '@/lib/api';
-import { forgetSeat, readSeat } from '@/lib/seat';
+import { forgetSeat, readSeat, seatHost } from '@/lib/seat';
 import { ClaimSeatDialog } from './ClaimSeatDialog';
 
 /** The sign-in screen's way into a hosted seat, or back out of one. */
@@ -14,7 +14,7 @@ export function SeatEntry() {
   if (seat) {
     return (
       <p className="mt-4 border-t border-white/[0.06] pt-3 text-[11.5px] text-night-500">
-        Signing in to your seat at <span className="font-mono text-night-300">{new URL(seat.engineUrl).host}</span>.{' '}
+        Signing in to your seat at <span className="font-mono text-night-300">{seatHost(seat.engineUrl) ?? seat.engineUrl}</span>.{' '}
         <button
           type="button"
           className="cursor-pointer text-night-300 underline underline-offset-2"
