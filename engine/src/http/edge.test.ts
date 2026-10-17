@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
 import { Hono } from 'hono';
-import { edgePolicy, parseProxyList, parsePublicHost } from './edge';
+import { edgePolicy, edgeStartupCheck, parseProxyEntries, parseProxyList, parsePublicHost } from './edge';
 
 /** The node-server binding getConnInfo reads; `null` models an in-process request with no socket. */
 const socketFrom = (remoteAddress: string | null) => (remoteAddress ? { incoming: { socket: { remoteAddress, remotePort: 50000, remoteFamily: remoteAddress.includes(':') ? 'IPv6' : 'IPv4' } } } : {});
@@ -125,6 +125,30 @@ test('malformed trusted-proxy entries are dropped, never widening the set', () =
   assert.equal(list.check('::1', 'ipv6'), true);
 });
 
+test('a trailing slash or a bad prefix never becomes /0', () => {
+  const v4 = ['172.17.0.1/', '172.17.0.1/ ', '172.17.0.1/abc', '172.17.0.1/33', '172.17.0.1/-1', '172.17.0.1/+8', '172.17.0.1/8.0', '172.17.0.1/0x8', '172.17.0.1/8/0'];
+  const v6 = ['::1/', '::1/ ', '::1/abc', '::1/129', '::1/1e2'];
+  for (const entry of [...v4, ...v6]) {
+    const { list, dropped } = parseProxyEntries(entry);
+    assert.deepEqual(dropped, [entry.trim()], `${entry} is dropped`);
+    assert.equal(list.check('198.51.100.7', 'ipv4'), false, `${entry} trusts no stranger`);
+    assert.equal(list.check('2001:db8::7', 'ipv6'), false, `${entry} trusts no stranger`);
+  }
+  // Valid prefixes still work, at both ends of the range.
+  assert.equal(parseProxyList('10.0.0.0/8').check('10.9.9.9', 'ipv4'), true);
+  assert.equal(parseProxyList('10.0.0.1/32').check('10.0.0.2', 'ipv4'), false);
+  assert.equal(parseProxyList('fd00::/8').check('fd12::1', 'ipv6'), true);
+  assert.equal(parseProxyList('::1/128').check('::1', 'ipv6'), true);
+});
+
+test('startup names every dropped trusted-proxy entry', () => {
+  const { warnings, errors } = edgeStartupCheck({ ENGINE_TRUSTED_PROXIES: '127.0.0.1, 172.17.0.1/, ::1/129, not-an-ip' });
+  assert.deepEqual(errors, []);
+  for (const entry of ['172.17.0.1/', '::1/129', 'not-an-ip']) assert.ok(warnings.some((w) => w.includes(`"${entry}"`)), entry);
+  assert.equal(warnings.length, 3);
+  assert.deepEqual(edgeStartupCheck({}).warnings, []);
+});
+
 test('Origin allowlist: built-ins always, the seat origin derived, extras from env, never a wildcard', () => {
   const builtIn = ['http://localhost:5173', 'http://127.0.0.1:5173', 'tauri://localhost', 'http://tauri.localhost', 'https://tauri.localhost'];
   const local = edgePolicy({});
@@ -142,4 +166,49 @@ test('Origin allowlist: built-ins always, the seat origin derived, extras from e
   const served = edgePolicy({ ENGINE_STATIC_DIR: '/srv/ui' }, 4520);
   assert.ok(served.origins.has('http://127.0.0.1:4520'), 'the engine-served UI may call its own origin');
   assert.equal(edgePolicy({}, 4520).origins.has('http://127.0.0.1:4520'), false, 'only when it serves the UI');
+});
+
+test('startup refuses configs that would run device mode on a reachable engine', () => {
+  const refused = (env: NodeJS.ProcessEnv, bind?: string) => edgeStartupCheck(env, bind).errors;
+  assert.deepEqual(refused({}), [], 'the loopback default');
+  assert.deepEqual(refused({}, '127.0.0.1'), []);
+  assert.deepEqual(refused({}, '::1'), []);
+  assert.deepEqual(refused({}, 'localhost'), []);
+  assert.equal(refused({}, '0.0.0.0').length, 1, 'a public bind without a public host');
+  assert.match(refused({}, '::')[0]!, /ENGINE_PUBLIC_HOST/);
+  assert.equal(refused({ ENGINE_ALLOWED_ORIGINS: 'https://seat.example.test' }).length, 1, 'the fail-open seat from the review');
+  assert.equal(refused({ ENGINE_ALLOWED_ORIGINS: 'https://seat.example.test' }, '0.0.0.0').length, 2);
+  assert.deepEqual(refused({ ENGINE_ALLOWED_ORIGINS: 'http://localhost:4173,https://tauri.localhost,http://[::1]:5173' }), [], 'loopback origins are fine');
+  assert.equal(refused({ ENGINE_PUBLIC_HOST: 'localhost' }).length, 1, 'a public host that parses to nothing is not silently device mode');
+
+  // A hosted seat may bind and serve publicly.
+  assert.deepEqual(refused({ ENGINE_PUBLIC_HOST: 'seat.example.test', ENGINE_ALLOWED_ORIGINS: 'https://app.example.edu' }, '0.0.0.0'), []);
+  // A container publishing its port on loopback declares its gateway instead (docker-compose.yml), and is warned.
+  const container = edgeStartupCheck({ ENGINE_DEVICE_PEERS: '172.16.0.0/12' }, '0.0.0.0');
+  assert.deepEqual(container.errors, []);
+  assert.match(container.warnings.join(' '), /beyond loopback/);
+  // A non-loopback http origin is not refused, but is said out loud.
+  const lan = edgeStartupCheck({ ENGINE_ALLOWED_ORIGINS: 'http://192.168.1.5:5173' });
+  assert.deepEqual(lan.errors, []);
+  assert.equal(lan.warnings.length, 1);
+});
+
+test('remote(): hosted, forwarded or non-loopback', async () => {
+  const policy = (env: NodeJS.ProcessEnv) => edgePolicy(env);
+  const remoteOf = async (env: NodeJS.ProcessEnv, peer: string | null, headers: Record<string, string> = {}) => {
+    const p = policy(env);
+    const app = new Hono();
+    app.get('/', (c) => c.json(p.remote(c)));
+    return (await app.request('/', { headers: { host: '127.0.0.1:4100', ...headers } }, socketFrom(peer))).json();
+  };
+  assert.equal(await remoteOf({}, '127.0.0.1'), false);
+  assert.equal(await remoteOf({}, '::1'), false);
+  assert.equal(await remoteOf({}, '127.0.0.1', { 'x-forwarded-for': '1.2.3.4' }), true);
+  assert.equal(await remoteOf({}, '127.0.0.1', { 'x-forwarded-host': 'x' }), true);
+  assert.equal(await remoteOf({}, '127.0.0.1', { 'x-forwarded-proto': 'https' }), true);
+  assert.equal(await remoteOf({}, '127.0.0.1', { forwarded: 'for=1.2.3.4' }), true);
+  assert.equal(await remoteOf({}, '192.168.1.9'), true);
+  assert.equal(await remoteOf({ ENGINE_PUBLIC_HOST: SEAT }, '127.0.0.1'), true, 'hosted is always remote');
+  assert.equal(await remoteOf({ ENGINE_DEVICE_PEERS: '192.168.0.0/16' }, '192.168.1.9'), false);
+  assert.equal(await remoteOf({ ENGINE_DEVICE_PEERS: '192.168.1.9/' }, '8.8.8.8'), true, 'a malformed device peer never widens to /0');
 });
