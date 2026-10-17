@@ -1,0 +1,126 @@
+# Render Blueprint for the hosted backends (docs/deploy-render.md).
+# Four services + one database: uni (accounts, portal, session orchestrator), gateway (central
+# model proxy), MinIO (vault object store) and Postgres. Values marked `sync: false` are set by
+# the operator in the dashboard (or the API); nothing secret is committed here.
+databases:
+  - name: sef-uni-db
+    plan: basic-256mb
+    region: singapore
+    databaseName: sef_uni
+    user: sef
+    postgresMajorVersion: "17"
+    ipAllowList: [] # private network only
+
+services:
+  - type: web
+    name: sef-uni
+    runtime: docker
+    plan: starter # never sleeps: the session reaper runs in-process
+    region: singapore
+    dockerfilePath: ./infra/docker/node-service.Dockerfile
+    dockerContext: .
+    # The uni does not migrate on boot; migrations are idempotent, so run them before every start.
+    # (Render does not run dockerCommand through a shell, hence a package script, not `sh -c`.)
+    dockerCommand: pnpm --filter @sef/uni-server start:migrate
+    healthCheckPath: /ready
+    disk:
+      name: uni-data # signing keys, legacy accounts, releases, shares, audit
+      mountPath: /data
+      sizeGB: 1
+    envVars:
+      - key: SERVICE # Dockerfile build arg (Render passes env vars as build args)
+        value: "@sef/uni-server"
+      - key: PORT
+        value: "4200"
+      - key: UNI_PORT
+        value: "4200"
+      - key: UNI_DATA_DIR
+        value: /data
+      - key: KEYS_DIR
+        value: /data/keys
+      - key: UNI_DATABASE_URL
+        fromDatabase: { name: sef-uni-db, property: connectionString }
+      - key: UNI_PUBLIC_URL # this service's https URL, e.g. https://sef-uni.onrender.com
+        sync: false
+      - key: BETTER_AUTH_SECRET
+        generateValue: true
+      # Demo logins need no mail; any well-formed SMTP URL satisfies the production check.
+      # Swap for a real relay before enabling self sign-up or password resets.
+      - key: MAIL_SMTP_URL
+        value: smtp://127.0.0.1:1025
+      - key: SEED_DEMO
+        value: "true"
+      - key: DEMO_PASSWORD # production refuses the public default
+        sync: false
+      # Session orchestrator (docs/session-orchestrator.md)
+      - key: INSTABOX_API_KEY
+        sync: false
+      - key: SEF_GOLDEN_SNAPSHOT_ID
+        value: sn_agquw3rpykrsqophbvuy3hnlpy
+      - key: SESSION_MAX_CONCURRENT
+        value: "3"
+      - key: MODEL_GATEWAY_URL # the gateway's https URL + /v1
+        sync: false
+      - key: GATEWAY_TOKEN_SECRET
+        generateValue: true
+      - key: OBJECT_STORE_ENDPOINT # the MinIO service's https URL
+        sync: false
+      - key: OBJECT_STORE_BUCKET
+        value: sef-vaults
+      - key: OBJECT_STORE_REGION
+        value: us-east-1
+      - key: OBJECT_STORE_FORCE_PATH_STYLE
+        value: "true"
+      - key: OBJECT_STORE_ACCESS_KEY
+        value: sef-engine
+      - key: OBJECT_STORE_SECRET_KEY # created by the one-time MinIO init
+        sync: false
+
+  - type: web
+    name: sef-gateway
+    runtime: docker
+    plan: starter
+    region: singapore
+    dockerfilePath: ./infra/docker/node-service.Dockerfile
+    dockerContext: .
+    healthCheckPath: /health
+    envVars:
+      - key: SERVICE
+        value: "@sef/gateway"
+      - key: PORT
+        value: "4300"
+      - key: GATEWAY_PORT
+        value: "4300"
+      - key: GATEWAY_HOST
+        value: 0.0.0.0
+      - key: GATEWAY_TOKEN_SECRET
+        fromService: { type: web, name: sef-uni, envVarKey: GATEWAY_TOKEN_SECRET }
+      - key: GATEWAY_MODELS
+        value: gemma4:e2b,gemma4:e4b,embeddinggemma,shieldgemma:2b
+      - key: GATEWAY_UPSTREAMS # comma list of Ollama/vLLM workers; the one var to swap
+        sync: false
+
+  - type: web
+    name: sef-minio
+    runtime: image
+    plan: starter
+    region: singapore
+    image:
+      # Same digest as docker-compose.yml; bump both together.
+      url: cgr.dev/chainguard/minio@sha256:c93745c56fccdaf0e5dcb88999a96a65a136428beb045ef5d546255a80d747a7
+    # S3 API only, on the one port Render exposes; no console.
+    dockerCommand: /usr/bin/minio server /data --address :9000
+    healthCheckPath: /minio/health/live
+    disk:
+      name: minio-data
+      mountPath: /data
+      sizeGB: 5
+    envVars:
+      - key: PORT
+        value: "9000"
+      - key: MINIO_BROWSER
+        value: "off"
+      - key: MINIO_ROOT_USER
+        value: sef-minio-admin
+      - key: MINIO_ROOT_PASSWORD
+        generateValue: true

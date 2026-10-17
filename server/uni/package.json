@@ -6,6 +6,7 @@
   "scripts": {
     "dev": "tsx watch src/index.ts",
     "start": "tsx src/index.ts",
+    "start:migrate": "tsx src/scripts/db-migrate.ts && tsx src/index.ts",
     "keys": "tsx src/scripts/print-public-key.ts",
     "typecheck": "tsc --noEmit -p .",
     "test": "node --test --import tsx 'src/**/*.test.ts'",
