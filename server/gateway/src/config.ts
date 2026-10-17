@@ -1,5 +1,4 @@
-import { envInt, envPort } from '@sef/shared/node';
-import { parseDevTokens, type DevToken } from './tokens';
+import { envInt, envPort, parseGatewayDevTokens, type GatewayDevToken } from '@sef/shared/node';
 
 export type UpstreamKind = 'ollama' | 'vllm';
 
@@ -14,7 +13,7 @@ export interface GatewayConfig {
   port: number;
   host: string;
   tokenSecret?: string;
-  devTokens: DevToken[];
+  devTokens: GatewayDevToken[];
   metricsToken?: string;
   upstreams: UpstreamSpec[];
   /** Optional bearer sent to every upstream (a RunPod/vLLM worker started with --api-key). */
@@ -56,7 +55,7 @@ export function parseUpstreams(raw: string, defaultMax: number): UpstreamSpec[] 
 export function loadConfig(env: NodeJS.ProcessEnv = process.env): GatewayConfig {
   const tokenSecret = text(env, 'GATEWAY_TOKEN_SECRET');
   if (tokenSecret && tokenSecret.length < 32) throw new Error('GATEWAY_TOKEN_SECRET must be at least 32 characters');
-  const devTokens = parseDevTokens(env.GATEWAY_DEV_TOKENS);
+  const devTokens = parseGatewayDevTokens(env.GATEWAY_DEV_TOKENS);
   if (!tokenSecret && !devTokens.length) throw new Error('Set GATEWAY_TOKEN_SECRET and/or GATEWAY_DEV_TOKENS: the gateway never runs open');
   const upstreams = parseUpstreams(text(env, 'GATEWAY_UPSTREAMS') ?? 'http://127.0.0.1:11434', envInt('GATEWAY_UPSTREAM_MAX_INFLIGHT', 4, {}, env));
   if (!upstreams.length) throw new Error('GATEWAY_UPSTREAMS lists no upstream');

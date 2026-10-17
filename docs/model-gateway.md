@@ -89,12 +89,19 @@ never runs open.
 
 ## Tokens (for the PR-42 orchestrator)
 
-A token looks like `sefgw1.<base64url(JSON claims)>.<base64url(HMAC-SHA256)>`. The claims
-are `{ "sub": accountId, "vm"?: machineId, "exp": unixSeconds }`, and the MAC covers
-`sefgw1.<claims>`. The orchestrator mints one token per session VM with the shared secret,
-calling `mintToken(secret, { sub, vm, ttlSeconds })` from `server/gateway/src/tokens.ts`
-(or reimplementing those ~10 lines), and passes it to the VM as `OLLAMA_API_KEY` together
-with `OLLAMA_URL`.
+The format and helpers live in `packages/shared/src/node/gateway-token.ts`
+(`@sef/shared/node`), so the minter and the verifier share one implementation:
+
+```
+token  = "sefgw1." + base64url(claimsJson) + "." + base64url(mac)      (unpadded base64url)
+claims = {"sub": accountId, "vm"?: machineId, "exp": unixSeconds}
+mac    = HMAC-SHA256(key = GATEWAY_TOKEN_SECRET, data = "sefgw1." + base64url(claimsJson))
+```
+
+The orchestrator mints one token per session VM with
+`mintGatewayToken(secret, { sub, vm, ttlSeconds })` and hands it to the VM's engine (see
+"Pointing an engine at the gateway"). The gateway checks it with `verifyGatewayToken`. A
+known-answer test vector in `gateway-token.test.ts` pins the exact bytes.
 
 - Lifetime: match the lease, e.g. the maximum session length. The ceiling is 7 days, and
   a token claiming a later `exp` is refused even when correctly signed.

@@ -4,7 +4,7 @@ import { Hono, type Context } from 'hono';
 import type { GatewayConfig, UpstreamKind } from './config';
 import { SubjectLimits } from './limits';
 import { UpstreamPool, type Upstream } from './pool';
-import { verifyToken, type GatewayClaims } from './tokens';
+import { verifyGatewayToken, type GatewayClaims } from '@sef/shared/node';
 import { UsageMeter } from './usage';
 
 interface Route {
@@ -86,7 +86,7 @@ export function createGatewayApp({ config, pool, limits, log }: GatewayDeps) {
   app.all('*', async (c) => {
     const started = Date.now();
     const path = c.req.path;
-    const auth = verifyToken(c.req.header('authorization'), { secret: config.tokenSecret, devTokens: config.devTokens });
+    const auth = verifyGatewayToken(c.req.header('authorization'), { secret: config.tokenSecret, devTokens: config.devTokens });
     if (!auth.ok) {
       log.info('gw_unauthorized', { path, reason: auth.reason });
       return fail(c, 401, 'unauthorized', 'a valid gateway token is required');

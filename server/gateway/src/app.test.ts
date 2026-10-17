@@ -8,7 +8,7 @@ import { createGatewayApp } from './app';
 import type { GatewayConfig } from './config';
 import { SubjectLimits } from './limits';
 import { UpstreamPool } from './pool';
-import { mintToken, parseDevTokens } from './tokens';
+import { mintGatewayToken, parseGatewayDevTokens } from '@sef/shared/node';
 
 const SECRET = 's'.repeat(40);
 const DEV = 'dev-token-for-tests-0001';
@@ -48,7 +48,7 @@ async function gateway(upstreams: string[], overrides: Partial<GatewayConfig> = 
     port: 0,
     host: '127.0.0.1',
     tokenSecret: SECRET,
-    devTokens: parseDevTokens(`${DEV}:dev-student`),
+    devTokens: parseGatewayDevTokens(`${DEV}:dev-student`),
     metricsToken: 'metrics-token-0001',
     upstreams: upstreams.map((url) => ({ url, kind: 'ollama', maxInFlight: 4 })),
     models: ['gemma4:e2b', 'embeddinggemma'],
@@ -71,7 +71,7 @@ async function gateway(upstreams: string[], overrides: Partial<GatewayConfig> = 
   });
   closers.push(() => server.close());
   const base = `http://127.0.0.1:${(server.address() as AddressInfo).port}`;
-  const token = mintToken(SECRET, { sub: 'acct_test', vm: 'm_vm1', ttlSeconds: 600 });
+  const token = mintGatewayToken(SECRET, { sub: 'acct_test', vm: 'm_vm1', ttlSeconds: 600 });
   const call = (path: string, init: RequestInit & { json?: unknown; token?: string | null } = {}) =>
     fetch(`${base}${path}`, {
       method: init.json !== undefined ? 'POST' : (init.method ?? 'GET'),
@@ -95,7 +95,7 @@ test('requests without a valid token get 401 and never reach a worker', async ()
   const gw = await gateway([up.url]);
   assert.equal((await gw.call('/api/chat', { json: { model: 'gemma4:e2b' }, token: null })).status, 401);
   assert.equal((await gw.call('/api/chat', { json: { model: 'gemma4:e2b' }, token: 'nope' })).status, 401);
-  assert.equal((await gw.call('/api/tags', { token: mintToken('x'.repeat(40), { sub: 'a', ttlSeconds: 60 }) })).status, 401);
+  assert.equal((await gw.call('/api/tags', { token: mintGatewayToken('x'.repeat(40), { sub: 'a', ttlSeconds: 60 }) })).status, 401);
   assert.equal((await gw.call('/api/chat', { json: { model: 'gemma4:e2b' }, token: DEV })).status, 200, 'dev tokens work');
   assert.equal(up.seen.length, 1);
   assert.equal((await gw.call('/health', { token: null })).status, 200);
