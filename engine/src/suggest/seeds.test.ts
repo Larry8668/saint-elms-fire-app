@@ -63,3 +63,30 @@ test('a connection seed needs both pages to exist', () => {
   const seeds = extractSeeds({ now: NOW, pages: [{ id: 'x', kind: 'concept', title: 'X', updatedAt: daysFromNow(-1), links: [] }], findings: [{ id: 'f', kind: 'missing_connection', pageIds: ['x', 'ghost'] }] });
   assert.deepEqual(seeds, []);
 });
+
+test('plan steps: the next pending step per plan, Guide only, signal steps left to attention', () => {
+  const step = (planId: string, id: string, kind: 'quiz' | 'read_lesson' | 'resolve_signal', subject: string) => ({
+    planId,
+    goal: 'Revise thermodynamics',
+    deadlineAt: planId === 'plan_soon' ? daysFromNow(2) : null,
+    step: { id, kind, subject, entityRefs: [kind === 'read_lesson' ? 'lesson:l1' : 'page:entropy'] },
+  });
+  const seeds = extractSeeds({
+    now: NOW,
+    planSteps: [
+      step('plan_soon', 'st_1', 'resolve_signal', 'Problem set due'),
+      step('plan_soon', 'st_2', 'quiz', 'Entropy'),
+      step('plan_soon', 'st_3', 'read_lesson', 'Heat engines'),
+      step('plan_later', 'st_1', 'read_lesson', 'Enthalpy'),
+    ],
+  });
+  assert.deepEqual(seeds.map((s) => [s.key, s.variant, s.urgency]), [
+    ['plan_step:plan_soon:st_2', 'quiz', 0.9],
+    ['plan_step:plan_later:st_1', 'read_lesson', 0.7],
+  ]);
+  assert.deepEqual(seeds[0]!.slots, { subject: 'Entropy' });
+  assert.deepEqual(seeds[0]!.refs, ['plan:plan_soon', 'page:entropy']);
+  assert.equal(seedsFor('guide', seeds).length, 2);
+  assert.equal(seedsFor('friend', seeds).length, 0);
+  assert.equal(seedsFor('philosopher', seeds).length, 0);
+});

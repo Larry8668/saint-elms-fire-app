@@ -116,6 +116,14 @@ export class SignalService {
     return this.view();
   }
 
+  /** Signals still in play — raised and not dismissed — regardless of the nudges switch or quiet hours. */
+  async live(): Promise<Array<{ key: string; kind: string; title: string }>> {
+    const ledger = await this.deps.store.read();
+    return Object.values(ledger.items)
+      .filter((item) => item.state !== 'dismissed')
+      .map(({ key, kind, title }) => ({ key, kind, title }));
+  }
+
   async view(): Promise<AttentionResponse> {
     const [ledger, settings] = await Promise.all([this.deps.store.read(), this.deps.proactivity()]);
     const { items, quiet } = attentionView(Object.values(ledger.items), settings, this.now());
