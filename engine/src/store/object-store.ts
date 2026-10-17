@@ -38,8 +38,9 @@ export interface ListPage {
 
 export interface ObjectStore {
   put(key: string, body: ObjectBody, options?: PutOptions): Promise<{ etag: string }>;
-  /** The object, or null when the key does not exist. */
+  /** The object, or null when the key does not exist. A missing bucket throws, never reads as empty. */
   get(key: string): Promise<StoredObject | null>;
+  /** Metadata, or null. A HEAD 404 carries no body, so call ping() first to rule out a missing bucket. */
   head(key: string): Promise<ObjectInfo | null>;
   /** One page of keys under `prefix`, in lexicographic key order. */
   list(prefix: string, options?: ListOptions): Promise<ListPage>;

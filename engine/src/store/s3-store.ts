@@ -117,7 +117,9 @@ export class S3ObjectStore implements ObjectStore {
   async get(key: string): Promise<StoredObject | null> {
     const response = await this.send('GET', this.url(key));
     if (response.status === 404) {
-      await response.body?.cancel();
+      // A missing bucket must never read as an empty vault: a restore would start from nothing.
+      const failure = await this.failure(response, `GET ${key}`);
+      if (failure.code === 'NoSuchBucket') throw failure;
       return null;
     }
     if (!response.ok) throw await this.failure(response, `GET ${key}`);
