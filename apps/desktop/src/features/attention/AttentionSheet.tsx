@@ -1,11 +1,12 @@
 import type { AttentionItem, SignalKind } from '@sef/shared';
-import { AlarmClock, BellOff, BookOpen, CalendarClock, Cpu, FileCheck, HelpCircle, Megaphone, RefreshCw, Users, WifiOff, Wrench, X, type LucideIcon } from 'lucide-react';
+import { AlarmClock, BellOff, BookOpen, CalendarClock, Cpu, FileCheck, HelpCircle, Megaphone, Newspaper, RefreshCw, Users, WifiOff, Wrench, X, type LucideIcon } from 'lucide-react';
 import { useEffect, useState } from 'react';
 import { Button } from '@/components/ui/button';
 import { Sheet, Tooltip } from '@/components/ui/overlays';
 import { Badge } from '@/components/ui/primitives';
 import { RowListSkeleton } from '@/components/ui/skeletons';
 import { cn } from '@/lib/cn';
+import { metrics, useReportShown } from '@/lib/metrics';
 import { useNav } from '@/lib/nav';
 import { useAttention, useAttentionActions } from '@/lib/queries';
 import { destination, dueLabel, KIND_LABEL, SNOOZE_OPTIONS, unseenKeys } from './attention';
@@ -20,6 +21,7 @@ const KIND_ICON: Record<SignalKind, LucideIcon> = {
   maintenance_finding: Wrench,
   model_unavailable: Cpu,
   connectivity: WifiOff,
+  feed_item: Newspaper,
 };
 
 const URGENCY_TONE = { urgent: 'rose', soon: 'gold', info: 'neutral' } as const;
@@ -28,6 +30,7 @@ export function AttentionSheet({ open, onOpenChange }: { open: boolean; onOpenCh
   const attention = useAttention();
   const actions = useAttentionActions();
   const items = attention.data?.items ?? [];
+  useReportShown('nudge_shown', items.map((item) => ({ ref: item.key, tag: item.kind })), open && attention.data?.nudges === true);
 
   // Opening the rail is looking at it: whatever was new is now seen, but keeps its
   // "new" mark for this visit so the student can still tell which items arrived.
@@ -110,6 +113,7 @@ function AttentionRow({ item, isNew, onNavigate }: { item: AttentionItem; isNew:
                 size="sm"
                 variant="outline"
                 onClick={() => {
+                  metrics.report('nudge_clicked', item.key, item.kind);
                   go(target.view, target.params);
                   onNavigate();
                 }}

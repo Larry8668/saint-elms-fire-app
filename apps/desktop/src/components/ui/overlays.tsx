@@ -114,13 +114,27 @@ export function Tooltip({ content, children, side = 'top' }: { content: ReactNod
 
 export const TooltipProvider = TooltipPrimitive.Provider;
 
-export function Switch({ checked, onCheckedChange, id }: { checked: boolean; onCheckedChange: (v: boolean) => void; id?: string }) {
+export function Switch({
+  checked,
+  onCheckedChange,
+  id,
+  disabled,
+  'aria-label': ariaLabel,
+}: {
+  checked: boolean;
+  onCheckedChange: (v: boolean) => void;
+  id?: string;
+  disabled?: boolean;
+  'aria-label'?: string;
+}) {
   return (
     <SwitchPrimitive.Root
       id={id}
       checked={checked}
       onCheckedChange={onCheckedChange}
-      className="relative h-6 w-11 cursor-pointer rounded-full border border-white/10 bg-white/10 transition data-[state=checked]:bg-beacon-500"
+      disabled={disabled}
+      aria-label={ariaLabel}
+      className="relative h-6 w-11 cursor-pointer rounded-full border border-white/10 bg-white/10 transition disabled:cursor-not-allowed disabled:opacity-50 data-[state=checked]:bg-beacon-500"
     >
       <SwitchPrimitive.Thumb className="block size-5 translate-x-0.5 rounded-full bg-white shadow transition data-[state=checked]:translate-x-[22px]" />
     </SwitchPrimitive.Root>

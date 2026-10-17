@@ -1,4 +1,5 @@
 import { randomUUID } from 'node:crypto';
+import { readdir } from 'node:fs/promises';
 import path from 'node:path';
 import {
   CONTRACT_VERSION,
@@ -570,6 +571,15 @@ export class BrainService {
       model: quiz.model,
       questions: quiz.questions.map(({ question, options }) => ({ question, options })),
     };
+  }
+
+  /** Every stored quiz result as (concept page, when) — the evidence a plan's quiz step waits for. */
+  async quizResults(): Promise<Array<{ pageId: string; at: string }>> {
+    const names = await readdir(this.quizzesDir).catch(() => [] as string[]);
+    const results = await Promise.all(
+      names.filter((n) => n.startsWith('res_') && n.endsWith('.json')).map((n) => readJson<QuizResult | null>(path.join(this.quizzesDir, n), null)),
+    );
+    return results.flatMap((r) => (r?.key && r.at ? [{ pageId: r.key, at: r.at }] : []));
   }
 
   async submitQuiz(id: string, answers: number[], attemptId?: string) {

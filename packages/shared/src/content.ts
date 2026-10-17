@@ -1,4 +1,5 @@
 import { z } from 'zod';
+import { MAX_UNI_FEEDS_PER_COURSE, SubjectFeedRefSchema } from './feeds';
 
 /** Version of the signed course-package contract. See `PackageManifestSchema`. */
 export const CONTENT_SCHEMA_VERSION = 2 as const;
@@ -46,6 +47,8 @@ export const CourseSummarySchema = z.object({
   version: z.string(),
   /** University-support corpus used by the Friend, not an academic course. */
   support: z.boolean().default(false),
+  /** Institution-curated subject news feeds; signed with the rest of the metadata. */
+  subjectFeeds: z.array(SubjectFeedRefSchema).max(MAX_UNI_FEEDS_PER_COURSE).optional(),
 });
 export type CourseSummary = z.infer<typeof CourseSummarySchema>;
 
@@ -84,6 +87,7 @@ export const CourseMetadataSchema = z.object({
   prerequisites: z.array(z.string()).optional(),
   lessonCount: z.number().int(),
   support: z.boolean().default(false),
+  subjectFeeds: z.array(SubjectFeedRefSchema).max(MAX_UNI_FEEDS_PER_COURSE).optional(),
 });
 export type CourseMetadata = z.infer<typeof CourseMetadataSchema>;
 
@@ -108,6 +112,7 @@ export function courseMetadataOf(summary: CourseSummary): CourseMetadata {
     prerequisites: summary.prerequisites,
     lessonCount: summary.lessonCount,
     support: summary.support,
+    subjectFeeds: summary.subjectFeeds,
   });
 }
 

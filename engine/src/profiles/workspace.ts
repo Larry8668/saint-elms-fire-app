@@ -26,6 +26,15 @@ import { PeerShareStore } from '../shares/store';
 import { gatherSignalInputs } from '../signals/inputs';
 import { SignalService } from '../signals/service';
 import { SignalStore } from '../signals/store';
+import { FeedService } from '../feeds/service';
+import { FeedStore } from '../feeds/store';
+import { listProposalRecords } from '../brain/proposals';
+import { MetricsLog } from '../eval/log';
+import { MetricsService } from '../eval/service';
+import { modelPlanner } from '../plans/planner';
+import { PlanService } from '../plans/service';
+import { PlanStore } from '../plans/store';
+import { gatherPlanWorld } from '../plans/world';
 import { modelRephrase } from '../suggest/draft';
 import { gatherSeedInputs } from '../suggest/inputs';
 import { SuggestionService } from '../suggest/service';
@@ -61,6 +70,12 @@ export interface Workspace {
   signals: SignalService;
   /** Per-teacher suggested questions; code picks them, a model may only rephrase (opt-in). */
   suggestions: SuggestionService;
+  /** Consented subject feeds — the only egress the agentic series adds. */
+  feeds: FeedService;
+  /** Student-approved study plans; a model proposes, code validates, evidence moves steps. */
+  plans: PlanService;
+  /** Local-only evaluation counters; never exported, never sent. */
+  metrics: MetricsService;
 }
 
 export class WorkspaceManager {
@@ -133,8 +148,24 @@ export class WorkspaceManager {
     });
     const maintenance = new MaintenanceService({ wiki, content, settings, identity, similarPages: embeddings.pairsFor('pages') });
     const logistics = new LogisticsStore(path.join(paths.root, 'logistics.json'));
+    const sessions = new SessionStore(paths.sessions);
+    // Counters sit beside the other operational stores, outside the vault and its exports.
+    const metrics = new MetricsService({
+      log: new MetricsLog(path.join(paths.root, 'eval-events.jsonl')),
+      turns: () => sessions.turnOutcomes(),
+      proposals: async () => {
+        const decided = (await listProposalRecords(wiki.root)).filter((r) => r.decidedBy === 'student');
+        return { accepted: decided.filter((r) => r.state === 'accepted').length, rejected: decided.filter((r) => r.state === 'rejected').length };
+      },
+    });
+    const feeds = new FeedService({
+      store: new FeedStore(path.join(paths.root, 'feeds.json')),
+      courses: async () =>
+        Object.values(await content.installed()).map((c) => ({ courseId: c.id, signedMetadata: c.signedMetadata === true, subjectFeeds: c.subjectFeeds })),
+    });
     const signals = new SignalService({
       store: new SignalStore(path.join(paths.root, 'signals.json')),
+      record: metrics.record,
       proactivity: async () => (await settings.get()).proactivity,
       inputs: () =>
         gatherSignalInputs({
@@ -144,9 +175,26 @@ export class WorkspaceManager {
           events: () => wiki.listEvents(),
           maintenance: () => maintenance.report(),
           health: async () => probeHealth(await settings.get()),
+          feeds: () => feeds.snapshot(),
         }),
     });
-    const sessions = new SessionStore(paths.sessions);
+    const brain = new BrainService(content, vault, settings, paths.quizzes, { wiki, sources, identity });
+    // Plans are operational state: kept under the profile root, outside the vault and its exports.
+    const plans = new PlanService({
+      store: new PlanStore(path.join(paths.root, 'plans')),
+      draft: modelPlanner(() => settings.get()),
+      record: metrics.record,
+      world: () =>
+        gatherPlanWorld({
+          pages: () => wiki.listPages(),
+          events: () => wiki.listEvents(),
+          lessons: () => content.academicLessons(),
+          installed: () => content.installed(),
+          signals: () => signals.entries(),
+          quizzes: () => brain.quizResults(),
+          lessonActivity: () => sessions.lessonActivity(),
+        }),
+    });
     const suggestions = new SuggestionService({
       store: new SuggestionStore(paths.root),
       proactivity: async () => (await settings.get()).proactivity,
@@ -161,6 +209,8 @@ export class WorkspaceManager {
           concepts: async () => [...(await vault.all()).values()],
           lessons: () => content.academicLessons(),
           studiedLessonIds: () => sessions.studiedLessonIds(),
+          feedItems: async () => (await feeds.snapshot()).items,
+          planSteps: () => plans.pendingSteps(),
         }),
     });
     const workspace: Workspace = {
@@ -184,7 +234,7 @@ export class WorkspaceManager {
           }
         },
       }),
-      brain: new BrainService(content, vault, settings, paths.quizzes, { wiki, sources, identity }),
+      brain,
       embeddings,
       sessions,
       sync: new ContentSync(settings, content, async () => {
@@ -197,6 +247,9 @@ export class WorkspaceManager {
       logistics,
       signals,
       suggestions,
+      feeds,
+      plans,
+      metrics,
       youtube: new YouTube(),
       peerShares: new PeerShareService({
         wiki,

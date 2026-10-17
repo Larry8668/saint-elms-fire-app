@@ -11,6 +11,7 @@ export const KIND_LABEL: Record<SignalKind, string> = {
   maintenance_finding: 'Wiki maintenance',
   model_unavailable: 'Model health',
   connectivity: 'Connectivity',
+  feed_item: 'Subject news',
 };
 
 /** Which teacher's context an item belongs to, for the "new since last visit" badges. */
@@ -22,6 +23,7 @@ export const KIND_TEACHER: Partial<Record<SignalKind, TeacherId>> = {
   maintenance_finding: 'guide',
   vault_question: 'philosopher',
   share_incoming: 'philosopher',
+  feed_item: 'philosopher',
 };
 
 export const SNOOZE_OPTIONS: ReadonlyArray<{ hours: number; label: string }> = [
@@ -54,6 +56,8 @@ export function destination(item: AttentionItem): { view: View; params?: Omit<Na
       return { view: 'settings' };
     case 'connectivity':
       return null;
+    case 'feed_item':
+      return { view: 'settings' };
   }
 }
 

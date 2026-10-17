@@ -103,6 +103,7 @@ export async function loadCourseware(root: string): Promise<CoursewareIndex> {
         optionGroup: row?.optionGroup,
         prerequisites: row?.prerequisites,
         description: row?.notes,
+        subjectFeeds: row?.subjectFeeds,
         lessonCount: files.length,
         version: sha256(files.map((f) => `${f.path}:${f.sha256}`).join('\n')).slice(0, 16),
         support,
