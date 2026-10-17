@@ -1,5 +1,5 @@
 import { z } from 'zod';
-import type { HealthResponse } from './api';
+import type { HealthResponse, VaultSyncState } from './api';
 import { LoginRequestSchema } from './auth';
 
 /**
@@ -42,6 +42,10 @@ export interface AuthSessionList {
 /**
  * GET /api/health — unauthenticated, so it carries liveness plus one bare boolean: whether the
  * university server answers (the sign-in screen needs it before there is a session). No URL,
- * version, model or error text. The full report is /api/health/detail.
+ * version, model or error text. The full report is /api/health/detail. A session VM with vault
+ * sync adds `sync.state` alone, so its orchestrator can wait for the restore.
  */
-export type HealthLiveness = Pick<HealthResponse, 'ok' | 'engine'> & { uni: Pick<HealthResponse['uni'], 'reachable'> };
+export type HealthLiveness = Pick<HealthResponse, 'ok' | 'engine'> & {
+  uni: Pick<HealthResponse['uni'], 'reachable'>;
+  sync?: { state: VaultSyncState };
+};
