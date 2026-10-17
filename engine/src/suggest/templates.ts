@@ -21,5 +21,7 @@ export function templateText(seed: Seed, teacher: TeacherId): string {
       return `I linked ${s.a} and ${s.b} — how does ${s.a} change when ${s.b} fails?`;
     case 'missing_connection':
       return `How are ${s.a} and ${s.b} connected?`;
+    case 'feed_item':
+      return `In the news — “${s.title}”. What's the bigger idea behind it?`;
   }
 }

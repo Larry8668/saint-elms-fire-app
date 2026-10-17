@@ -26,6 +26,8 @@ import { PeerShareStore } from '../shares/store';
 import { gatherSignalInputs } from '../signals/inputs';
 import { SignalService } from '../signals/service';
 import { SignalStore } from '../signals/store';
+import { FeedService } from '../feeds/service';
+import { FeedStore } from '../feeds/store';
 import { modelRephrase } from '../suggest/draft';
 import { gatherSeedInputs } from '../suggest/inputs';
 import { SuggestionService } from '../suggest/service';
@@ -61,6 +63,8 @@ export interface Workspace {
   signals: SignalService;
   /** Per-teacher suggested questions; code picks them, a model may only rephrase (opt-in). */
   suggestions: SuggestionService;
+  /** Consented subject feeds — the only egress the agentic series adds. */
+  feeds: FeedService;
 }
 
 export class WorkspaceManager {
@@ -133,6 +137,11 @@ export class WorkspaceManager {
     });
     const maintenance = new MaintenanceService({ wiki, content, settings, identity, similarPages: embeddings.pairsFor('pages') });
     const logistics = new LogisticsStore(path.join(paths.root, 'logistics.json'));
+    const feeds = new FeedService({
+      store: new FeedStore(path.join(paths.root, 'feeds.json')),
+      courses: async () =>
+        Object.values(await content.installed()).map((c) => ({ courseId: c.id, signedMetadata: c.signedMetadata === true, subjectFeeds: c.subjectFeeds })),
+    });
     const signals = new SignalService({
       store: new SignalStore(path.join(paths.root, 'signals.json')),
       proactivity: async () => (await settings.get()).proactivity,
@@ -144,6 +153,7 @@ export class WorkspaceManager {
           events: () => wiki.listEvents(),
           maintenance: () => maintenance.report(),
           health: async () => probeHealth(await settings.get()),
+          feeds: () => feeds.snapshot(),
         }),
     });
     const sessions = new SessionStore(paths.sessions);
@@ -161,6 +171,7 @@ export class WorkspaceManager {
           concepts: async () => [...(await vault.all()).values()],
           lessons: () => content.academicLessons(),
           studiedLessonIds: () => sessions.studiedLessonIds(),
+          feedItems: async () => (await feeds.snapshot()).items,
         }),
     });
     const workspace: Workspace = {
@@ -197,6 +208,7 @@ export class WorkspaceManager {
       logistics,
       signals,
       suggestions,
+      feeds,
       youtube: new YouTube(),
       peerShares: new PeerShareService({
         wiki,

@@ -1,4 +1,5 @@
 import { errorFields, log } from '../config';
+import type { FeedService } from '../feeds/service';
 import type { SignalService } from './service';
 
 export const TICK_MS = 15 * 60_000;
@@ -6,6 +7,7 @@ export const TICK_MS = 15 * 60_000;
 export interface OpenWorkspace {
   profile: { id: string };
   signals: Pick<SignalService, 'evaluate'>;
+  feeds?: Pick<FeedService, 'poll'>;
 }
 
 /** One pass over the open workspaces. Never throws: each failure is logged and the rest still run. */
@@ -19,6 +21,9 @@ export async function runSignalTick(openWorkspaces: () => Promise<OpenWorkspace[
   }
   let failed = 0;
   for (const ws of workspaces) {
+    // Feeds first, so fresh headlines are visible to this same evaluation. A feed problem
+    // never blocks signals.
+    await ws.feeds?.poll().catch((error) => log.warn('feed_poll_failed', { profileId: ws.profile.id, ...errorFields(error) }));
     try {
       await ws.signals.evaluate();
     } catch (error) {

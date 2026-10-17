@@ -2,7 +2,7 @@ import type { LearningEvent, LogisticsRecord, MaintenanceReport, WikiJob } from 
 import type { PageSnapshot } from '../brain/wiki-store';
 import { attempt } from '../lib/attempt';
 import type { HealthProbe } from '../system/health';
-import type { FindingSummary, QuestionPage, SignalInputs } from './detectors';
+import type { FeedSnapshot, FindingSummary, QuestionPage, SignalInputs } from './detectors';
 
 /** The existing stores a workspace already holds — signals only ever read them. */
 export interface SignalSources {
@@ -12,6 +12,7 @@ export interface SignalSources {
   events: () => Promise<LearningEvent[]>;
   maintenance: () => Promise<MaintenanceReport>;
   health: () => Promise<HealthProbe>;
+  feeds?: () => Promise<FeedSnapshot>;
 }
 
 /** A failed read stays undefined so its detector preserves, rather than clears, what it knew. */
@@ -33,13 +34,14 @@ export function questionPages(pages: PageSnapshot[], events: LearningEvent[]): Q
 }
 
 export async function gatherSignalInputs(sources: SignalSources): Promise<Omit<SignalInputs, 'now' | 'observations'>> {
-  const [logistics, jobs, pages, events, report, health] = await Promise.all([
+  const [logistics, jobs, pages, events, report, health, feeds] = await Promise.all([
     read('logistics', sources.logistics),
     read('jobs', sources.jobs),
     read('pages', sources.pages),
     read('events', sources.events),
     read('maintenance', sources.maintenance),
     read('health', sources.health),
+    sources.feeds ? read('feeds', sources.feeds) : undefined,
   ]);
   const findings: FindingSummary[] | undefined = report?.findings.map((f) => ({ id: f.id, title: f.title, pageIds: f.pageIds }));
   return {
@@ -48,5 +50,6 @@ export async function gatherSignalInputs(sources: SignalSources): Promise<Omit<S
     questions: pages && events ? questionPages(pages, events) : undefined,
     findings,
     health,
+    feeds,
   };
 }

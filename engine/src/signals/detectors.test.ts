@@ -4,6 +4,7 @@ import type { LogisticsRecord, WikiJob } from '@sef/shared';
 import {
   connectivityDetector,
   deadlineDetector,
+  feedDetector,
   maintenanceDetector,
   modelDetector,
   noticeDetector,
@@ -129,4 +130,15 @@ test('model and connectivity detectors report state without reconfiguring anythi
   ]);
   assert.equal(connectivityDetector.detect(inputs({ health }))![0]!.key, 'connectivity:uni:offline');
   assert.deepEqual(connectivityDetector.detect(inputs({ health: { ...health, uni: true } })), []);
+});
+
+test('feed items: at most three fresh headlines, plus a quiet note per dead feed', () => {
+  const now = new Date('2026-10-17T10:00:00Z');
+  const item = (id: string, fetchedAt: string) => ({ id, feedId: 'f1', feedTitle: 'NASA', title: `Story ${id}`, summary: '', fetchedAt });
+  const fresh = ['a', 'b', 'c', 'd'].map((id) => item(id, '2026-10-17T09:00:00Z'));
+  const stale = item('old', '2026-10-10T09:00:00Z');
+  const signals = feedDetector.detect({ now, observations: {}, feeds: { items: [...fresh, stale], dead: [{ id: 'f2', title: 'Dead feed' }] } })!;
+  assert.deepEqual(signals.map((s) => s.key), ['feed_item:a', 'feed_item:b', 'feed_item:c', 'feed_item:dead:f2']);
+  assert.ok(signals.every((s) => s.urgency === 'info'));
+  assert.equal(feedDetector.detect({ now, observations: {} }), null, 'unreadable feeds keep what we had');
 });
