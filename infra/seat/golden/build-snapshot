@@ -1,0 +1,143 @@
+#!/usr/bin/env bash
+# Builds the golden snapshot that session VMs are created from (golden/README.md).
+#
+#   INSTABOX_API_KEY=... GOLDEN_REF=<full commit sha or branch> infra/seat/golden/build-snapshot
+#
+# builder box -> bootstrap.sh in golden mode (detached, polled) -> verify -> scrub -> stop ->
+# snapshot -> delete the builder -> rotate old sef-golden-* snapshots -> print the id.
+# Resumable: run it again after any failure. The builder is found by its metadata, every
+# Idempotency-Key and the snapshot name are kept in $GOLDEN_STATE_DIR/build.state until the
+# build finishes, and every remote step converges.
+#   GOLDEN_KEEP          sef-golden-* snapshots to keep, newest first (default 2; quota is 10)
+here=$(cd "$(dirname "$0")" && pwd)
+. "$here/lib.sh"
+
+REPO_URL=https://github.com/Larry8668/saint-elms-fire-app
+APP=sef-golden
+FILE=build.state
+KEEP=${GOLDEN_KEEP:-2}
+REF=${GOLDEN_REF:?set GOLDEN_REF to the commit (or branch) the image runs}
+[[ $REF =~ ^[A-Za-z0-9][A-Za-z0-9._/-]{0,99}$ && $REF != *..* ]] || die "GOLDEN_REF is not a plain git ref"
+[[ $KEEP =~ ^[1-9]$ ]] || die "GOLDEN_KEEP must be 1-9"
+
+started=$(now)
+phase_start=$started
+phase() {
+  local t
+  t=$(now)
+  log "-- $1 done in $((t - phase_start))s"
+  printf '%s\t%s\n' "$1" "$((t - phase_start))" >>"$STATE_DIR/build.timings"
+  phase_start=$t
+}
+
+# The snapshot pins one engine version, so a branch is resolved to its commit once.
+COMMIT=$(state $FILE COMMIT)
+if [[ -z $COMMIT ]]; then
+  rm -f "$STATE_DIR/build.timings"
+  if [[ $REF =~ ^[0-9a-f]{40}$ ]]; then COMMIT=$REF; else COMMIT=$(git ls-remote "$REPO_URL" "$REF" | head -n 1 | cut -f 1); fi
+  [[ $COMMIT =~ ^[0-9a-f]{40}$ ]] || die "could not resolve $REF on $REPO_URL"
+  state $FILE COMMIT "$COMMIT"
+fi
+[[ $REF =~ ^[0-9a-f]{40}$ && $REF != "$COMMIT" ]] && die "a build of $COMMIT is in progress; finish it or remove $STATE_DIR/$FILE"
+log "building the golden image for $COMMIT"
+
+# 1. Builder box: reuse the one this build made, else create one.
+MID=$(state $FILE MACHINE)
+if [[ -z $MID ]]; then
+  ids=$(list_by_app $APP)
+  (($(grep -c . <<<"$ids") <= 1)) || die "several $APP machines exist; delete the extras first"
+  MID=$ids
+fi
+if [[ -z $MID ]]; then
+  MID=$(create_machine $FILE "$(jq -nc --arg app $APP '{name: "sef-golden-builder", templateId: "universal",
+    vault: false, metadata: {app: $app}, autoSuspendAfterSeconds: 1800}')")
+fi
+state $FILE MACHINE "$MID"
+log "builder: $MID"
+if [[ -z $(state $FILE SNAPSHOT) ]]; then
+  wait_running "$MID" $FILE
+  phase builder
+
+  # 2. Bootstrap in golden mode: detached, then polled (exec is cut at ~60 s).
+  # A launch while a run holds the lock exits at once, so only a finished build is skipped. The
+  # script is replaced by rename: bash reads a running script lazily, so it must not be rewritten.
+  remote=$(box_exec "$MID" "cat $SEAT_HOME/state 2>/dev/null; grep -h '^SEAT_REF=' $SEAT_HOME/bootstrap.inputs 2>/dev/null; true")
+  if [[ $remote != "done"*"SEAT_REF=$COMMIT"* ]]; then
+    box_exec "$MID" "mkdir -p $SEAT_HOME && cat > $SEAT_HOME/bootstrap.sh.new && mv -f $SEAT_HOME/bootstrap.sh.new $SEAT_HOME/bootstrap.sh" \
+      "$(cat "$here/../bootstrap.sh")" >/dev/null
+    box_exec "$MID" "cd $SEAT_HOME && setsid nohup bash bootstrap.sh >> bootstrap.log 2>&1 < /dev/null & echo launched" "" \
+      "$(jq -nc --arg ref "$COMMIT" '{SEAT_MODE: "golden", SEAT_MODEL_MODE: "central", SEAT_REF: $ref}')" >/dev/null
+    log "bootstrap launched"
+    sleep 3
+  fi
+  deadline=$(($(now) + 1500))
+  while :; do
+    s=$(box_exec "$MID" "cat $SEAT_HOME/state 2>/dev/null; tail -n 1 $SEAT_HOME/status 2>/dev/null; true" || true)
+    case $s in
+      done*) break ;;
+      failed*)
+        box_exec "$MID" "tail -n 30 $SEAT_HOME/bootstrap.log" >&2 || true
+        die "bootstrap failed (${s%%$'\n'*}); fix the cause and run build-snapshot again"
+        ;;
+    esac
+    (($(now) < deadline)) || die "bootstrap still running after 25 min"
+    log "bootstrap: $(tail -n 1 <<<"$s")"
+    sleep 10
+  done
+  box_exec "$MID" "grep 'seconds=' $SEAT_HOME/status" >&2 || true
+  phase bootstrap
+
+  # 3. Verify: the image, the dependencies and the UI build are on the box, nothing is running.
+  box_exec "$MID" "set -e; cd $SEAT_HOME; docker image inspect --format 'image {{.RepoTags}} {{.Size}}' node:24-slim
+    test -x src/engine/node_modules/.bin/tsx; test -f src/apps/desktop/dist/index.html; test -f session-start.sh
+    test -z \"\$(docker ps -q)\"; cat golden.json; du -sh /data 2>/dev/null | cut -f1" >&2 || die "verification failed"
+  phase verify
+
+  # 4. Scrub once more right before the snapshot (bootstrap already did; it is idempotent).
+  box_exec "$MID" "bash $SEAT_HOME/bootstrap.sh scrub 2>&1 | tail -n 3" >&2 || die "scrub failed"
+  phase scrub
+
+  # 5. Stop: a stopped machine snapshots synchronously and consistently.
+  [[ $(machine_state "$MID") == stopped ]] || machine_op "$MID" stop $FILE
+  phase stop
+
+  # 6. Snapshot, under a name and a key fixed on the first attempt.
+  NAME=$(state $FILE SNAP_NAME)
+  [[ -n $NAME ]] || { NAME="sef-golden-${COMMIT:0:7}-$(date -u +%Y%m%d%H%M)"; state $FILE SNAP_NAME "$NAME"; }
+  KEY=$(state $FILE SNAP_KEY)
+  [[ -n $KEY ]] || { KEY=$(uuidgen | tr 'A-Z' 'a-z'); state $FILE SNAP_KEY "$KEY"; }
+  api POST "/v1/machines/$MID/snapshots" "$(jq -nc --arg n "$NAME" --arg c "$COMMIT" \
+    '{name: $n, description: ("Saint Elms Fire session image, engine " + $c)}')" "$KEY"
+  [[ $STATUS == 201 || $STATUS == 202 || $STATUS == 200 ]] || die "snapshot refused: HTTP $STATUS $(err_text)"
+  SID=$(jq -r .id "$RESP")
+  until [[ $(jq -r .status "$RESP") == ready ]]; do
+    [[ $(jq -r .status "$RESP") != failed ]] || die "snapshot $SID failed: $(jq -r .error "$RESP")"
+    sleep 5
+    api GET "/v1/snapshots/$SID"
+  done
+  log "snapshot $SID ($NAME): $(jq -r '"data \(.dataSizeBytes // 0) B, root \(.rootSizeBytes) B"' "$RESP")"
+  state $FILE SNAPSHOT "$SID"
+  phase snapshot
+fi
+SID=$(state $FILE SNAPSHOT)
+NAME=$(state $FILE SNAP_NAME)
+
+# 7. Delete the builder (snapshots outlive their machine).
+delete_machine "$MID" $FILE
+phase delete
+
+# 8. Rotate: keep the newest $KEEP ready sef-golden-* snapshots, never the one just made.
+api GET /v1/snapshots
+[[ $STATUS == 200 ]] || die "list snapshots: HTTP $STATUS"
+for old in $(jq -r --arg sid "$SID" --argjson keep "$KEEP" '[.snapshots[] | select((.name | startswith("sef-golden-")) and .status == "ready")]
+    | sort_by(.createdAt) | reverse | .[$keep:][] | select(.id != $sid) | .id' "$RESP"); do
+  api DELETE "/v1/snapshots/$old" "" "$(uuidgen | tr 'A-Z' 'a-z')"
+  [[ $STATUS == 204 || $STATUS == 404 ]] || die "deleting snapshot $old: HTTP $STATUS $(err_text)"
+  log "rotated out snapshot $old"
+done
+phase rotate
+
+printf '%s\t%s\t%s\t%s\n' "$(date -u +%Y-%m-%dT%H:%M:%SZ)" "$SID" "$NAME" "$COMMIT" >>"$STATE_DIR/snapshots.tsv"
+mv -f "$STATE_DIR/$FILE" "$STATE_DIR/build.$SID.state"
+log "golden snapshot ready in $(($(now) - started))s (this run); recorded in $STATE_DIR/snapshots.tsv"
+printf 'SNAPSHOT_ID=%s\nSNAPSHOT_NAME=%s\nCOMMIT=%s\n' "$SID" "$NAME" "$COMMIT"

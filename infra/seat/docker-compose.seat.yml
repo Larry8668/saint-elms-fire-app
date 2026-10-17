@@ -29,6 +29,9 @@ x-node: &node
 
 services:
   ollama:
+    # Local-model seats only (bootstrap passes --profile local-model); a central-model or
+    # golden-image box never starts it.
+    profiles: ["local-model"]
     # Pinned: a floating tag would change the model runtime under a running seat.
     image: ollama/ollama:0.40.3
     restart: unless-stopped
@@ -69,7 +72,12 @@ services:
     # ENGINE_TRUSTED_PROXIES expects (docs/hosted-seat.md, "Running the engine in Docker").
     network_mode: host
     working_dir: /seat/src/engine
-    env_file: [seat.env]
+    # session.env is the per-session half (host, owner, uni, model gateway, object store),
+    # written by session-start.sh; a seat bootstrapped with its values in seat.env has none.
+    env_file:
+      - seat.env
+      - path: session.env
+        required: false
     # tsx straight from node_modules, not through corepack: a restart after a stop/start must
     # not depend on downloading pnpm again.
     command: ["./node_modules/.bin/tsx", "src/index.ts"]
@@ -79,4 +87,3 @@ services:
       timeout: 5s
       retries: 5
       start_period: 60s
-    depends_on: [ollama]
