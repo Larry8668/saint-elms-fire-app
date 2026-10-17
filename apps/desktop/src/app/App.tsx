@@ -10,6 +10,7 @@ import { PeersView } from '@/features/peers/PeersView';
 import { SettingsView } from '@/features/settings/SettingsView';
 import { SkyView } from '@/features/sky/SkyView';
 import { TeachersView } from '@/features/teachers/TeachersView';
+import { WorkspaceSession } from '@/features/workspace/WorkspaceSession';
 import { WorkspaceWakeNotice } from '@/features/workspace/WorkspaceWakeNotice';
 import { log } from '@/lib/log';
 import { useNav, type View } from '@/lib/nav';
@@ -35,6 +36,7 @@ export function App() {
       <Sidebar onOpenAttention={() => setRailOpen(true)} />
       <main className="relative flex min-w-0 flex-1 flex-col">
         <WorkspaceWakeNotice className="mx-6 mt-4" />
+        <WorkspaceSession />
         <AttentionBanner onOpenRail={() => setRailOpen(true)} />
         <AnimatePresence mode="wait">
           <motion.div key={view} className="min-h-0 flex-1" initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }} transition={{ duration: 0.18 }}>

@@ -16,7 +16,7 @@ export class UniHttpError extends Error {
 
 interface UniRequest {
   token?: string;
-  method?: 'GET' | 'POST';
+  method?: 'GET' | 'POST' | 'DELETE';
   body?: unknown;
   timeoutMs?: number;
 }

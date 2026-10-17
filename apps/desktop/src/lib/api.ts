@@ -19,7 +19,10 @@ import type {
   GraphResponse,
   AttentionResponse,
   DeviceCapability,
+  AuthSessionList,
   HealthLiveness,
+  WorkspaceEndResult,
+  WorkspaceInfo,
   HealthResponse,
   IngestResult,
   JobList,
@@ -224,6 +227,13 @@ export const api = {
   login: (email: string, password: string) => post<EngineLoginResponse>('/api/auth/login', { email, password }),
   me: () => request<EngineMe>('/api/auth/me'),
   logout: () => post<void>('/api/auth/logout'),
+  /** This engine's own sign-ins (PR-37b); tokens and their hashes never leave the engine. */
+  authSessions: () => request<AuthSessionList>('/api/auth/sessions'),
+  revokeAuthSession: (id: string) => request<void>(`/api/auth/sessions/${encodeURIComponent(id)}`, { method: 'DELETE' }),
+  /** Whether this engine is a hosted workspace; the lease calls below are relayed to the university by the engine. */
+  workspace: () => request<WorkspaceInfo>('/api/workspace'),
+  workspaceHeartbeat: () => post<WorkspaceEndResult>('/api/workspace/heartbeat'),
+  endWorkspace: () => request<WorkspaceEndResult>('/api/workspace', { method: 'DELETE' }),
 
   /** First-time sign-in: the engine asks the university for a device grant to show. */
   startDeviceSignIn: () => post<DeviceSignInStart>('/api/auth/device/start'),

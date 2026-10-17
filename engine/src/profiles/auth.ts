@@ -363,6 +363,11 @@ export class AuthService {
     log.info('logout', { profileId: session.profileId });
   }
 
+  /** The profile's university credential, for calls the engine makes on the student's behalf. Never leaves the engine. */
+  uniToken(profileId: string): Promise<string | undefined> {
+    return this.registry.uniToken(profileId);
+  }
+
   /** The profile's own sessions only; `currentToken` marks the one asking. */
   listSessions(profileId: string, currentToken: string): Promise<AuthSessionSummary[]> {
     return this.sessions.list(profileId, currentToken);

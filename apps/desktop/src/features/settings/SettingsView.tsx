@@ -15,6 +15,7 @@ import { RecommendationCard } from './RecommendationCard';
 import { TeacherMetricsCard } from './TeacherMetricsCard';
 import { applySuggestions, suggestionFor } from './recommendation';
 import { VaultPanel } from './VaultPanel';
+import { WorkspacePanel } from '@/features/workspace/WorkspacePanel';
 
 const ROLE_INFO: Record<ModelRole, { label: string; hint: string; icon: typeof Cpu }> = {
   tutor: { label: 'Teachers', hint: 'Chat for the Friend, Guide and Philosopher. Needs tool calling.', icon: Cpu },
@@ -63,6 +64,7 @@ export function SettingsView() {
 
         <div className="space-y-6">
           <ProfilePanel />
+          <WorkspacePanel />
           <VaultPanel />
 
           <Panel className="grid gap-4 p-6 md:grid-cols-2">

@@ -49,3 +49,16 @@ export type HealthLiveness = Pick<HealthResponse, 'ok' | 'engine'> & {
   uni: Pick<HealthResponse['uni'], 'reachable'>;
   sync?: { state: VaultSyncState };
 };
+
+/** GET /api/workspace: whether this engine is an ephemeral hosted workspace (PR-42/45), and where its portal is. */
+export interface WorkspaceInfo {
+  hosted: boolean;
+  /** The university portal, to open a new workspace from. Null on a local engine. */
+  portalUrl: string | null;
+}
+
+/** POST /api/workspace/heartbeat and DELETE /api/workspace: the lease's state as the university reports it. */
+export interface WorkspaceEndResult {
+  ok: true;
+  state: string;
+}
