@@ -16,26 +16,45 @@ Laptop installs are unaffected: a local engine keeps talking to its local Ollama
                             limits · metering                   ──▶ GPU worker N (vLLM, /v1 only)
 ```
 
-## Protocol: the Ollama native API, passed through
+## Protocol: both Ollama surfaces, passed through
 
-The engine already speaks the Ollama native API for every role: chat and vision through
-`ollama-ai-provider-v2` (`/api/chat`), structured brain output (`/api/chat` with a
-`format` grammar), embeddings (`/api/embed`), the shieldgemma safety screen
-(`/api/chat`) and health (`/api/tags`). It also sends Ollama-only options such as
-`num_ctx`, which the OpenAI-compatible `/v1` surface ignores. Without `num_ctx`, Ollama
-falls back to a 4K context and silently truncates brain prompts. So the gateway passes
-the native API through unchanged, and an engine is pointed at it purely through config:
+The gateway serves two surfaces unchanged. It never translates between them:
+
+- the **OpenAI-compatible** surface (`/v1/*`), which Ollama and vLLM both serve; and
+- the **Ollama native** API (`/api/*`), which is what a laptop engine's `ollama` provider
+  speaks.
+
+### Pointing an engine at the gateway
+
+Hosted session engines use the hook from PR-44 (#77). With
 
 ```sh
-OLLAMA_URL=https://gateway.example.edu     # or http://127.0.0.1:4300 locally
-OLLAMA_API_KEY=<gateway token>             # PR-43b: sent as Authorization: Bearer
+MODEL_GATEWAY_URL=https://gateway.example.edu/v1   # or http://127.0.0.1:4300/v1 locally
+MODEL_GATEWAY_TOKEN=<gateway token>                # minted per VM by PR-42
 ```
 
-`OLLAMA_API_KEY` is read from the environment only, so it is never written to
-`settings.json`. It is sent only when a provider's base URL is exactly `OLLAMA_URL`, so a
-student-configured Ollama somewhere else never receives it. The OpenAI-compatible routes
-are also served, for `openai-compatible` providers and vLLM workers: the provider's
-`baseUrl` is `<gateway>/v1` and its API key is the token.
+the engine's `uni` provider (`openai-compatible`) becomes the gateway for every role,
+sending `Authorization: Bearer <token>`. The token is read from the environment on every
+settings read and is never written to disk. That hook calls `/v1/chat/completions`,
+`/v1/embeddings` and `/v1/models`, all of which the gateway serves. The engine needs no
+change in PR-43.
+
+Things to know about the `/v1` path in front of Ollama workers:
+
+- **Context size:** `/v1` cannot carry Ollama's `num_ctx`, so a worker falls back to its
+  own default (4K on older Ollama), which truncates brain prompts. Start every Ollama
+  worker with `OLLAMA_CONTEXT_LENGTH=12288` (the engine's `OLLAMA_NUM_CTX` default).
+- **Thinking:** the engine can switch gemma4's thinking off only through the native
+  `think` option. On `/v1`, gemma4 thinks by default. In local runs, a short answer with
+  a 160-token cap came back as reasoning only, and a grounded Guide turn took about 44 s,
+  against about 26 s through the native API.
+- **Token counts:** Ollama sends `usage` on a `/v1` stream only when the client asks for
+  it (`stream_options.include_usage`), and the engine does not. Streamed chat is
+  therefore metered by estimate, while embeddings carry real counts.
+
+The native surface stays available. If those trade-offs matter, a later engine change
+could point an `ollama`-kind provider at the gateway root and send the same bearer token.
+The gateway needs nothing new for that.
 
 ### Allowed endpoints
 
@@ -63,8 +82,8 @@ docker compose --profile gateway up -d gateway
 docker compose --profile gateway --profile ollama up -d   # with GATEWAY_UPSTREAMS=http://ollama:11434
 ```
 
-To send the compose engine through the gateway, set `OLLAMA_URL=http://gateway:4300` and
-`OLLAMA_API_KEY=<token>` in `.env`.
+To send the compose engine through the gateway, set `MODEL_GATEWAY_URL=http://gateway:4300/v1`
+and `MODEL_GATEWAY_TOKEN=<token>` (PR-44's hook) in `.env`.
 
 | Variable | Default | Meaning |
 |---|---|---|
@@ -172,13 +191,15 @@ from `/v1`. There is no buffering, and `cache-control: no-cache` and
 `x-accel-buffering: no` are set so an nginx in front does not buffer either. When the
 client disconnects, the upstream request is aborted, so the GPU stops generating.
 
-Measured on a laptop (Apple Silicon, `gemma4:e4b`, warm, 131 output tokens, 3 runs each,
-through the engine's own provider code):
+Measured on a laptop (Apple Silicon, `gemma4:e4b`, warm, about 132 streamed deltas,
+3 runs each, through the engine's own provider code):
 
 | Path | Generation | Time to first token |
 |---|---|---|
-| direct to Ollama | 42.4–45.7 tok/s | 91–105 ms |
-| through the gateway | 43.9–45.8 tok/s | 81–82 ms |
+| native `/api/chat`, direct to Ollama | 42.4–45.7 tok/s | 91–105 ms |
+| native `/api/chat`, through the gateway | 43.9–45.8 tok/s | 81–82 ms |
+| `/v1/chat/completions`, direct to Ollama | 49.2–49.7 deltas/s | 179–185 ms |
+| `/v1/chat/completions`, through the gateway | 49.4–49.6 deltas/s | 183–191 ms |
 
 The gateway's overhead is within run-to-run noise.
 
@@ -198,6 +219,8 @@ network or TLS, and should never be published without the gateway in front.
 
 ## Follow-ups
 
+- Thinking control, `num_ctx` and stream usage on the `/v1` path (see "Pointing an engine
+  at the gateway"); `include_usage` would make streamed chat budgets exact.
 - Audio transcription (`/v1/audio/transcriptions`, multipart) is not routed yet.
 - A shared limit store (Redis or Postgres) for multiple gateway replicas.
 - Hot-reloading `GATEWAY_UPSTREAMS` (or registering workers through an admin API), so
