@@ -32,7 +32,8 @@ const PROMISES = [
 export function SignInView() {
   const health = useHealth();
   const engineDown = health.isError;
-  const uniOffline = health.data ? !health.data.uni.reachable : false;
+  // Signed out, the engine reports liveness only; an unreachable uni then surfaces when device sign-in starts.
+  const uniOffline = health.data?.uni ? !health.data.uni.reachable : false;
 
   return (
     <div className="sky-backdrop relative flex min-h-screen items-center justify-center overflow-y-auto px-6 py-12">

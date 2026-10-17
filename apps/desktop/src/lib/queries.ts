@@ -1,5 +1,5 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
-import type { LogisticsWriteInput, TeacherId, WikiJob } from '@sef/shared';
+import type { HealthLiveness, HealthResponse, LogisticsWriteInput, TeacherId, WikiJob } from '@sef/shared';
 import { toast } from 'sonner';
 import { api, type StoredSettings } from './api';
 
@@ -99,7 +99,17 @@ export function useInvalidateSource(id: string) {
   };
 }
 
-export const useHealth = () => useQuery({ queryKey: keys.health, queryFn: api.health, refetchInterval: 15_000, retry: false });
+/** Liveness is all a signed-out client may see; the model/uni/web detail arrives once signed in. */
+export type HealthSnapshot = HealthLiveness & Partial<Omit<HealthResponse, keyof HealthLiveness>>;
+export const useHealth = () => {
+  const detail = activeProfile !== null;
+  return useQuery<HealthSnapshot>({
+    queryKey: [...keys.health, detail ? 'detail' : 'liveness'],
+    queryFn: detail ? api.healthDetail : api.health,
+    refetchInterval: 15_000,
+    retry: false,
+  });
+};
 /** Hardware does not change under a running engine; one fetch per app session is enough. */
 export const useCapability = () => useQuery({ queryKey: keys.capability, queryFn: api.capability, staleTime: Infinity, retry: false });
 export const useSettings = () => useQuery({ queryKey: keys.scoped.settings(profile()), queryFn: api.settings });

@@ -1,6 +1,6 @@
 import { useQueryClient } from '@tanstack/react-query';
 import { type DevicePollResult, type DeviceProfile, type DeviceSignInStart, type EngineLoginResponse, type SessionAccess, type SessionMode } from '@sef/shared';
-import { createContext, useCallback, useContext, useEffect, useMemo, useState, type ReactNode } from 'react';
+import { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 import { toast } from 'sonner';
 import { api, setEngineSession } from './api';
 import { log } from './log';
@@ -56,6 +56,8 @@ const store = (session: Session | null) => {
 export function SessionProvider({ children }: { children: ReactNode }) {
   const queryClient = useQueryClient();
   const [state, setState] = useState<SessionState>({ status: 'checking' });
+  /** Binds polls to the grant this client started; a hosted engine refuses polls without it. */
+  const flowKey = useRef<string | undefined>(undefined);
 
   const clear = useCallback(
     (reason: string) => {
@@ -128,12 +130,13 @@ export function SessionProvider({ children }: { children: ReactNode }) {
 
   const startDeviceSignIn = useCallback(async () => {
     const grant = await api.startDeviceSignIn();
+    flowKey.current = grant.flowKey;
     log.info('device_signin_started', { expiresInSeconds: grant.expiresInSeconds });
     return grant;
   }, []);
 
   const pollDeviceSignIn = useCallback(async () => {
-    const result = await api.pollDeviceSignIn();
+    const result = await api.pollDeviceSignIn(flowKey.current);
     if (result.status === 'approved') activate(studentSession(result));
     return result;
   }, [activate, studentSession]);
