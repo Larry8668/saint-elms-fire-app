@@ -42,8 +42,10 @@ const KIND_PREFIX: Record<PlanStepKind, (typeof REF_PREFIXES)[number]> = {
 export function repairRef(ref: string, kind: PlanStepKind, world: PlanWorld): string {
   const trimmed = ref.trim().replace(/^[`"'“”‘’]+|[`"'“”‘’]+$/g, '');
   if (resolveRef(trimmed, world)) return trimmed;
-  const prefixed = REF_PREFIXES.find((p) => trimmed.startsWith(`${p}:`));
-  const id = prefixed ? trimmed.slice(prefixed.length + 1) : trimmed;
+  // `lesson:x`, and the path-like `lessons/x` / `Lesson:x` spellings models also produce.
+  const match = /^(page|lesson|signal)s?[:/](.+)$/i.exec(trimmed);
+  const prefixed = match ? match[1]!.toLowerCase() : undefined;
+  const id = match ? match[2]! : trimmed;
   const hits = REF_PREFIXES.map((p) => `${p}:${id}`).filter((candidate) => resolveRef(candidate, world));
   const preferred = `${KIND_PREFIX[kind]}:${id}`;
   const repaired = hits.length === 1 ? hits[0]! : hits.includes(preferred) ? preferred : null;

@@ -50,6 +50,19 @@ test('bare or mis-prefixed ids are re-anchored to the one real thing they name',
   );
 });
 
+test('path-like and capitalised prefixes (`lessons/x`, `Page:x`) are re-anchored too', () => {
+  // Seen live on gemma4:e4b: every lesson ref came back as `lessons/<id>`.
+  const { steps, notes } = validateDraft(
+    { steps: [step('read_lesson', ['lessons/l-heat-engines']), step('review_page', ['Page:entropy']), step('quiz', ['pages/thermo-first-law'])] },
+    world,
+  );
+  assert.deepEqual(notes, []);
+  assert.deepEqual(
+    steps.map((s) => s.entityRefs[0]),
+    ['lesson:l-heat-engines', 'page:entropy', 'page:thermo-first-law'],
+  );
+});
+
 test('a bare id that names nothing real is still dropped, never guessed', () => {
   const { steps, notes } = validateDraft({ steps: [step('read_lesson', ['l-nonexistent']), step('review_page', ['admin-secrets'])] }, world);
   assert.equal(steps.length, 0);
