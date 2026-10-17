@@ -92,6 +92,25 @@ export class SessionStore {
     return [...new Set((await this.all()).flatMap((s) => s.lessonIds))];
   }
 
+  /** Teacher turns, and how many were refused by policy — the refusal rate's evidence. */
+  async turnOutcomes(): Promise<{ total: number; refused: number }> {
+    const answers = (await this.all()).flatMap((s) => s.turns.filter((t) => t.role === 'assistant'));
+    return { total: answers.length, refused: answers.filter((t) => t.verification?.lane === 'refused').length };
+  }
+
+  /**
+   * When conversations drew on each lesson — the evidence a plan's read-lesson step waits for.
+   * Each answer that cited a lesson counts at its own time; a lesson no stored answer cites
+   * falls back to the session's start, so late unrelated turns never credit it.
+   */
+  async lessonActivity(): Promise<Array<{ lessonId: string; at: string }>> {
+    return (await this.all()).flatMap((s) => {
+      const cited = s.turns.flatMap((t) => (t.role === 'assistant' ? (t.verification?.sources ?? []).filter((src) => src.kind === 'lesson').map((src) => ({ lessonId: src.id, at: t.at })) : []));
+      const seen = new Set(cited.map((c) => c.lessonId));
+      return [...cited, ...s.lessonIds.filter((id) => !seen.has(id)).map((lessonId) => ({ lessonId, at: s.startedAt }))];
+    });
+  }
+
   /** Newest first. `limit` is clamped to 1–MAX_LIST; non-numeric input falls back to 30. */
   async list({ teacher, limit = 30 }: { teacher?: TeacherId; limit?: number } = {}): Promise<SessionSummary[]> {
     const take = Number.isFinite(limit) ? Math.min(MAX_LIST, Math.max(1, Math.floor(limit))) : 30;

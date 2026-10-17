@@ -11,6 +11,9 @@ import { edgePolicy } from './edge';
 import { errorStatus, friendlyError } from './errors';
 import { anchorRoutes } from './routes/anchors';
 import { attentionRoutes } from './routes/attention';
+import { feedRoutes } from './routes/feeds';
+import { metricsRoutes } from './routes/metrics';
+import { planRoutes } from './routes/plans';
 import { suggestRoutes } from './routes/suggest';
 import { authRoutes } from './routes/auth';
 import { logisticsRoutes } from './routes/logistics';
@@ -129,6 +132,9 @@ export function createApp(deps: EngineDeps) {
   app.route('/api', logisticsRoutes(deps));
   app.route('/api', attentionRoutes(deps));
   app.route('/api', suggestRoutes(deps));
+  app.route('/api', feedRoutes(deps));
+  app.route('/api', planRoutes(deps));
+  app.route('/api', metricsRoutes(deps));
 
   // A hosted seat serves the built UI itself; registered last so it can never shadow /api.
   const staticDir = process.env.ENGINE_STATIC_DIR?.trim();
