@@ -11,7 +11,8 @@ import { api } from '@/lib/api';
 import { cn } from '@/lib/cn';
 import { log } from '@/lib/log';
 import { useNav } from '@/lib/nav';
-import { useAnchors, useInvalidateBrain } from '@/lib/queries';
+import { useAnchors, useAttention, useInvalidateBrain } from '@/lib/queries';
+import { newCountByTeacher } from '@/features/attention/attention';
 import { ProposalReviewDialog } from '@/features/contribute/ProposalReviewDialog';
 import { useStickToBottom } from '@/lib/use-stick-to-bottom';
 import { AnchorBar } from './AnchorBar';
@@ -29,6 +30,7 @@ export function TeachersView() {
   const { threads, send, retry, stop, reset, handoff, setAnchor, setWebConsent, clearAnchorChoices } = useChat();
   const thread = threads[teacher];
   const anchors = useAnchors(teacher === 'philosopher');
+  const newByTeacher = newCountByTeacher(useAttention().data?.items ?? []);
   const [draft, setDraft] = useState(nav.draft ?? '');
   const [attachments, setAttachments] = useState<Attachments>([]);
   const [reflectStartedAt, setReflectStartedAt] = useState<number>();
@@ -163,6 +165,11 @@ export function TeachersView() {
                   <span className="block truncate text-[11.5px] text-night-400">{t.role}</span>
                 </span>
                 {threads[id].busy && <PixelLoader className={cn('ml-1', l.accent)} />}
+                {newByTeacher[id] > 0 && (
+                  <span className="absolute -top-1.5 -right-1.5 rounded-full border border-beacon-400/30 bg-night-900 px-1.5 text-[10.5px] text-beacon-200" title="New in this teacher’s context since your last look">
+                    {newByTeacher[id]} new
+                  </span>
+                )}
               </button>
             );
           })}

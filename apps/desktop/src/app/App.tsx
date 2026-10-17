@@ -1,5 +1,7 @@
 import { AnimatePresence, motion } from 'motion/react';
-import { Component, type ErrorInfo, type ReactNode } from 'react';
+import { Component, useState, type ErrorInfo, type ReactNode } from 'react';
+import { AttentionBanner } from '@/features/attention/AttentionBanner';
+import { AttentionSheet } from '@/features/attention/AttentionSheet';
 import { BrainView } from '@/features/brain/BrainView';
 import { ContributeView } from '@/features/contribute/ContributeView';
 import { LibraryView } from '@/features/library/LibraryView';
@@ -25,19 +27,22 @@ const VIEWS: Record<View, () => ReactNode> = {
 
 export function App() {
   const { view } = useNav();
+  const [railOpen, setRailOpen] = useState(false);
   const Current = VIEWS[view];
   return (
     <div className="flex h-screen overflow-hidden bg-night-950 text-night-100">
-      <Sidebar />
-      <main className="relative min-w-0 flex-1">
+      <Sidebar onOpenAttention={() => setRailOpen(true)} />
+      <main className="relative flex min-w-0 flex-1 flex-col">
+        <AttentionBanner onOpenRail={() => setRailOpen(true)} />
         <AnimatePresence mode="wait">
-          <motion.div key={view} className="h-full" initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }} transition={{ duration: 0.18 }}>
+          <motion.div key={view} className="min-h-0 flex-1" initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }} transition={{ duration: 0.18 }}>
             <ViewBoundary view={view}>
               <Current />
             </ViewBoundary>
           </motion.div>
         </AnimatePresence>
       </main>
+      <AttentionSheet open={railOpen} onOpenChange={setRailOpen} />
     </div>
   );
 }

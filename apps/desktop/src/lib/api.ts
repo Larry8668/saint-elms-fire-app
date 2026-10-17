@@ -17,6 +17,7 @@ import type {
   EngineMe,
   EngineSettings,
   GraphResponse,
+  AttentionResponse,
   DeviceCapability,
   HealthResponse,
   IngestResult,
@@ -177,6 +178,12 @@ export const api = {
   saveSettings: (patch: Partial<StoredSettings>) => request<StoredSettings>('/api/settings', { method: 'PUT', body: JSON.stringify(patch) }),
   providerModels: (id: string) => request<{ models: string[]; error?: string }>(`/api/providers/${encodeURIComponent(id)}/models`),
   capability: () => request<DeviceCapability>('/api/system/capability'),
+
+  attention: () => request<AttentionResponse>('/api/attention'),
+  evaluateAttention: () => post<AttentionResponse>('/api/attention/evaluate'),
+  markAttentionSeen: (keys: string[]) => post<{ updated: number }>('/api/attention/seen', { keys }),
+  dismissAttention: (key: string) => post<{ ok: true }>(`/api/attention/${encodeURIComponent(key)}/dismiss`),
+  snoozeAttention: (key: string, hours: number) => post<{ ok: true }>(`/api/attention/${encodeURIComponent(key)}/snooze`, { hours }),
 
   syncStatus: () => request<SyncStatus>('/api/sync/status'),
   /** The full published curriculum for an approved student; refusals arrive as typed errors. */
