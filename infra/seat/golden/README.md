@@ -29,11 +29,15 @@ The orchestrator runs `bash /data/home/sef-seat/session-start.sh` in one exec, p
 | `ENGINE_PUBLIC_HOST` | yes | the publish-port response, `4100-<id>.instabox.tech` |
 | `ENGINE_SEAT_OWNER` | yes | the student's uni account id (a session VM is never unpinned) |
 | `UNI_SERVER_URL` | yes | the uni |
-| `MODEL_GATEWAY_URL` | yes on this image | the central model gateway (PR-43) |
-| `MODEL_GATEWAY_TOKEN` | no | a short-lived per-VM token from the orchestrator |
+| `MODEL_GATEWAY_URL` | yes on this image | the central model gateway (PR-43): its root, or the `/v1` URL the orchestrator passes (the engine drops the `/v1` and speaks the native `/api/*` surface) |
+| `MODEL_GATEWAY_TOKEN` | no | a short-lived per-VM token from the orchestrator, sent as `Authorization: Bearer` |
 | `OBJECT_STORE_ENDPOINT`, `_BUCKET`, `_ACCESS_KEY`, `_SECRET_KEY`, `_REGION`, `_FORCE_PATH_STYLE` | no | vault sync (PR-41) |
+| `VAULT_SYNC_ACCOUNT` | no | the uni account whose vault syncs (PR-41b). It must be one of `ENGINE_SEAT_OWNER`, or the script refuses: the engine would refuse to boot with sync on |
+| `SYNC_FLUSH_TOKEN` | no | the bearer for the engine's flush endpoint (PR-41b's `session-stop.sh`). At least 24 characters, or the script refuses: a shorter one keeps the endpoint shut |
 
-Each value is checked against a narrow pattern, written to `session.env` (mode 600, read by compose as the second `env_file`), and the engine container is recreated with `--pull never`. The script waits until loopback `/api/health` answers (`SESSION_WAIT_SECONDS`, default 45) and writes `session.state` (`ready <epoch>` or `failed <reason>`). It prints variable names only, never values. The engine container restarts by itself after a stop/start (`restart: unless-stopped`), so the script runs once per session.
+Without `VAULT_SYNC_ACCOUNT` and `SYNC_FLUSH_TOKEN`, sync stays off on the session VM.
+
+Each value is checked against a narrow pattern, written to `session.env` (mode 600, read by compose as the second `env_file`; a refused value leaves no `session.env` or half-written temp file), and the engine container is recreated with `--pull never`. The script waits until loopback `/api/health` answers (`SESSION_WAIT_SECONDS`, default 45) and writes `session.state` (`ready <epoch>` or `failed <reason>`). It prints variable names only, never values. The engine container restarts by itself after a stop/start (`restart: unless-stopped`), so the script runs once per session.
 
 ## Build
 
@@ -45,6 +49,8 @@ GOLDEN_REF=<full commit sha or branch> infra/seat/golden/build-snapshot
 It prints `SNAPSHOT_ID=sn_...` and appends it to `~/.local/state/sef-golden/snapshots.tsv` (`GOLDEN_STATE_DIR` to move it). The snapshot is named `sef-golden-<commit7>-<yyyymmddhhmm>` and pins that commit: an upgrade is a new snapshot, and new sessions use it.
 
 **Resuming.** Run the same command again after any failure. The builder is found by `metadata app:sef-golden` (or the stored id). The create, stop, snapshot and delete Idempotency-Keys and the snapshot name are stored in `build.state` before each call, and are reused until that step succeeds. The bootstrap is relaunched only if it has not finished for this commit, and a relaunch while it runs is a no-op (its lock). A `no_capacity` create is retried with backoff, first with the same key. If Instabox replays the same failed operation, a new key is used.
+
+**Rebuild after these merge.** A snapshot holds the engine at the commit it was built from. Rebuild it after any engine change that sessions need. In particular, the vault-sync PRs (#82, which ships `infra/seat/session-stop.sh`, and #83, the sync engine code) are not in a snapshot built before they merge: until it is rebuilt, `session-start.sh` accepts and writes the sync values, but that engine ignores them and there is no `session-stop.sh` on the image.
 
 **Rotation.** After the new snapshot is ready, `sef-golden-*` snapshots beyond the newest `GOLDEN_KEEP` (default 2) are deleted. The quota is 10 snapshots per account, and other snapshots are never touched.
 
