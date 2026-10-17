@@ -2,7 +2,7 @@ import assert from 'node:assert/strict';
 import { test } from 'node:test';
 import type { EngineSettings, ProviderConfig, SharePayload } from '@sef/shared';
 import type { SettingsReader } from '../settings/store';
-import { defaultScore, FLAG_THRESHOLD, POLICIES, screeningPrompt, screeningText, ShareScreener, verdictFromText, yesProbability, type SafetyScore } from './screen';
+import { defaultScore, FLAG_THRESHOLD, POLICIES, scored, screeningPrompt, screeningText, ShareScreener, verdictFromText, yesProbability, type SafetyScore } from './screen';
 
 const payload = (over: Partial<SharePayload> = {}): SharePayload => ({
   title: 'Tidal locking',
@@ -67,6 +67,14 @@ test('P(Yes) is normalised over the Yes/No pair, whitespace and case aside', () 
   assert.equal(verdictFromText('Yes, it does.'), 1);
   assert.equal(verdictFromText('No.'), 0);
   assert.equal(verdictFromText('I cannot say.'), null);
+});
+
+test('returned logprobs decide on their own; prose is read only when a provider sends none', () => {
+  assert.equal(scored([{ token: 'Maybe', logprob: -0.1 }], 'Yes'), null, 'logprobs without Yes/No are unreadable, not re-scored from the text');
+  assert.equal(scored([{ token: 'No', logprob: -0.01 }], 'Yes'), 0);
+  assert.equal(scored(undefined, 'Yes, it does.'), 1);
+  assert.equal(scored([], 'No'), 0, 'an empty candidate list counts as none returned');
+  assert.equal(scored(undefined, undefined), null);
 });
 
 test('every policy is asked separately; a clean screen names the model', async () => {

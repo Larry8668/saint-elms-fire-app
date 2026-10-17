@@ -118,8 +118,12 @@ async function postJson(url: string, body: unknown, headers: Record<string, stri
   return res.json();
 }
 
-/** Logprobs first; the text verdict only when a provider returns none. */
-const scored = (top: readonly TokenLogprob[] | undefined, text: string | undefined) => (top?.length ? yesProbability(top) : null) ?? (typeof text === 'string' ? verdictFromText(text) : null);
+/**
+ * Logprobs decide whenever a provider returns them — candidates without a Yes/No token are
+ * unreadable, not re-scored from prose. The text verdict is only for providers that return none.
+ */
+export const scored = (top: readonly TokenLogprob[] | undefined, text: string | undefined): number | null =>
+  top?.length ? yesProbability(top) : typeof text === 'string' ? verdictFromText(text) : null;
 
 export const defaultScore: SafetyScore = async (provider, model, prompt) => {
   const auth: Record<string, string> = provider.apiKey ? { authorization: `Bearer ${provider.apiKey}` } : {};
