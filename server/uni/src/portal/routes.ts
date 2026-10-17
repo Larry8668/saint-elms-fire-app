@@ -42,13 +42,14 @@ const inlineCsp = (scriptNonce: string): string =>
  * with no inline code. React sets element styles through the `style` attribute, which
  * `style-src-attr` governs separately — inline <style> blocks stay blocked.
  */
-const bundleCsp = (): string =>
+const bundleCsp = (workspaceOrigins: readonly string[] = []): string =>
   [
     "default-src 'none'",
     "script-src 'self'",
     "style-src 'self'",
     "style-src-attr 'unsafe-inline'",
-    "connect-src 'self'",
+    // The hand-off reads a workspace VM's public health before leaving (PR-45); nothing else is cross-origin.
+    ['connect-src', "'self'", ...workspaceOrigins].join(' '),
     "img-src 'self' data:",
     "font-src 'self'",
     "form-action 'none'",
@@ -100,7 +101,7 @@ export function portalRoutes(deps: UniDeps) {
       log.warn('portal_asset_missing', { path: requested });
       return c.json({ error: 'not_found' }, 404);
     }
-    return sendAsset(c, asset);
+    return sendAsset(c, asset, deps.sessions?.config.workspaceOrigins);
   });
 
   /**
@@ -126,7 +127,7 @@ export function portalRoutes(deps: UniDeps) {
   return app;
 }
 
-async function sendAsset(c: Context, asset: ResolvedAsset) {
+async function sendAsset(c: Context, asset: ResolvedAsset, workspaceOrigins?: readonly string[]) {
   let bytes: Uint8Array<ArrayBuffer>;
   try {
     // Copied into a plain ArrayBuffer view: a pooled Node Buffer is not a Hono `Data`.
@@ -140,7 +141,7 @@ async function sendAsset(c: Context, asset: ResolvedAsset) {
   return c.body(bytes, 200, {
     ...hardened({
       'content-type': contentTypeFor(asset.file),
-      'content-security-policy': bundleCsp(),
+      'content-security-policy': bundleCsp(workspaceOrigins),
       'cache-control': cacheControlFor(asset.relative),
       etag,
     }),

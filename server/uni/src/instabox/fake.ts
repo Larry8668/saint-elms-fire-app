@@ -69,10 +69,12 @@ export class FakeInstabox {
   onExec: ExecHandler = () => ({ stdout: '', stderr: '', exitCode: 0, timedOut: false, truncated: false });
   /** The engine's public `/api/health` body per machine; a number answers with that status (502 = nothing listening). */
   health: (machineId: string) => unknown | number = () => ({ ok: true, engine: '0.2.0', uni: { reachable: true } });
+  /** The URL a publish returns. By default the fake serves it itself; the e2e stack points it at a real local engine. */
+  publishedUrl: (machineId: string) => string = (machineId) => `${this.base}/engine/${machineId}`;
 
-  async listen(): Promise<string> {
+  async listen(port = 0): Promise<string> {
     this.server = createServer((req, res) => void this.handle(req, res));
-    await new Promise<void>((resolve) => this.server!.listen(0, '127.0.0.1', resolve));
+    await new Promise<void>((resolve) => this.server!.listen(port, '127.0.0.1', resolve));
     this.base = `http://127.0.0.1:${(this.server.address() as AddressInfo).port}`;
     return this.base;
   }
@@ -223,7 +225,7 @@ export class FakeInstabox {
     if (seen.method === 'POST' && machinePath?.[2] === 'ports') {
       const machine = this.machines.get(machinePath[1]!);
       if (!machine) return this.error(res, 404, 'not_found');
-      return this.send(res, 201, { id: 'pv_1', machineId: machine.id, port: seen.body.port, name: seen.body.name, url: `${this.base}/engine/${machine.id}`, createdAt: new Date().toISOString(), expiresAt: null });
+      return this.send(res, 201, { id: 'pv_1', machineId: machine.id, port: seen.body.port, name: seen.body.name, url: this.publishedUrl(machine.id), createdAt: new Date().toISOString(), expiresAt: null });
     }
     return this.error(res, 404, 'not_found');
   }

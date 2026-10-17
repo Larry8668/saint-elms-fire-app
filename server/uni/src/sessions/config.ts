@@ -27,6 +27,22 @@ export interface SessionConfig {
   /** How long a spawn keeps retrying no_capacity / quota before it fails. */
   capacityWaitMs: number;
   retryBaseMs: number;
+  /**
+   * Origins the portal page may read a workspace's public health from (its CSP connect-src),
+   * so the browser can see the VM answer before it is handed there. Optional for tests.
+   */
+  workspaceOrigins?: string[];
+}
+
+/** https on any host (one leading `*.` label allowed), or http on loopback for a local engine under test. */
+const WORKSPACE_ORIGIN = /^(https:\/\/(\*\.)?[a-z0-9-]+(\.[a-z0-9-]+)*|http:\/\/(127\.0\.0\.1|localhost))(:\d{1,5})?$/i;
+
+export function parseWorkspaceOrigins(raw: string | undefined): string[] {
+  const origins = (raw ?? 'https://*.instabox.tech').split(/[\s,]+/).filter(Boolean);
+  for (const origin of origins) {
+    if (!WORKSPACE_ORIGIN.test(origin)) throw new Error(`SESSION_WORKSPACE_ORIGINS: ${JSON.stringify(origin)} is not an https origin (or http on loopback)`);
+  }
+  return origins;
 }
 
 export interface StepTimeouts {
@@ -91,5 +107,6 @@ export function parseSessionConfig(env: NodeJS.ProcessEnv = process.env, uniPubl
     },
     capacityWaitMs: envInt('SESSION_CAPACITY_WAIT_SECONDS', 600, { min: 0, max: 86_400 }, env) * 1000,
     retryBaseMs: 2_000,
+    workspaceOrigins: parseWorkspaceOrigins(value(env, 'SESSION_WORKSPACE_ORIGINS')),
   };
 }

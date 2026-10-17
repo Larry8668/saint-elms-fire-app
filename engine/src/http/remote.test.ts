@@ -91,6 +91,19 @@ test('unauthenticated health is liveness only; the detail needs a session', asyn
   assert.equal(body.web.reachable, false);
 });
 
+test('public health is readable from any origin (the portal hand-off); nothing else is', async () => {
+  const { call } = await harness({ ENGINE_PUBLIC_HOST: SEAT, ENGINE_TRUST_PROXY: '1' });
+  const portal = { ...viaEdge('198.51.100.7'), origin: 'https://uni.example.test' };
+  const live = await call('/api/health', { headers: portal }, edgeSocket);
+  assert.equal(live.status, 200);
+  assert.equal(live.headers.get('access-control-allow-origin'), '*');
+  assert.equal(live.headers.get('access-control-allow-credentials'), null, 'never with credentials');
+  const detail = await call('/api/health/detail', { headers: portal }, edgeSocket);
+  assert.equal(detail.headers.get('access-control-allow-origin'), null, 'the authed report stays same-origin');
+  const me = await call('/api/auth/me', { headers: portal }, edgeSocket);
+  assert.equal(me.headers.get('access-control-allow-origin'), null);
+});
+
 test('a hosted seat admits its edge, refuses foreign hosts and origins, and keeps loopback working', async () => {
   const { call } = await harness({ ENGINE_PUBLIC_HOST: SEAT, ENGINE_TRUST_PROXY: '1' });
   assert.equal((await call('/api/health', { headers: viaEdge('198.51.100.7') }, edgeSocket)).status, 200);

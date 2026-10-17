@@ -14,11 +14,13 @@ import { RecoverView } from './views/RecoverView';
 import { RegisterView } from './views/RegisterView';
 import { ResetPasswordView } from './views/ResetPasswordView';
 import { SignInView } from './views/SignInView';
+import { WorkspaceView } from './views/WorkspaceView';
 
 /**
  * The university-hosted onboarding shell. Same origin as the account and admission endpoints,
  * so the session is nothing but an HttpOnly cookie this app never sees. It stops at
- * admission: the student dashboard is the local engine's job, not this page's.
+ * admission and the hand-off: the student dashboard runs on the workspace VM (or the local
+ * engine), not on this page.
  */
 export function PortalApp() {
   const [route, setRoute] = useState<PortalRoute>(readPortalRoute);
@@ -27,6 +29,7 @@ export function PortalApp() {
   const [checkError, setCheckError] = useState<PortalError | null>(null);
   const [banner, setBanner] = useState<Banner | null>(null);
   const [mailbox, setMailbox] = useState<{ email: string; reason: MailReason } | null>(null);
+  const [workspace, setWorkspace] = useState(false);
 
   const probe = useCallback(async () => {
     setChecking(true);
@@ -115,8 +118,10 @@ export function PortalApp() {
     );
   }
 
+  if (me && workspace) return <WorkspaceView onBack={() => setWorkspace(false)} />;
+
   if (me) {
-    return <AdmissionView me={me} banner={banner} refreshing={checking} onRefresh={() => void probe()} onSignOut={onSignOut} />;
+    return <AdmissionView me={me} banner={banner} refreshing={checking} onRefresh={() => void probe()} onSignOut={onSignOut} onOpenWorkspace={() => setWorkspace(true)} />;
   }
 
   switch (route.mode) {

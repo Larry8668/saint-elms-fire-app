@@ -8,6 +8,7 @@ import {
   type Enrolment,
   type Programme,
   type ProgrammeSummary,
+  type StudentSessionStatus,
 } from '@sef/shared';
 import { log } from '@/lib/log';
 
@@ -55,6 +56,10 @@ const MESSAGES: Record<string, string> = {
   internal_error: 'The university server hit an error. Try again shortly.',
   not_found: 'The university server could not find what was asked for.',
   invalid_request: 'The university server rejected that request.',
+  // Hosted workspaces.
+  session_orchestrator_unavailable: 'Hosted workspaces are not set up on this university server.',
+  no_session: 'You have no workspace open right now.',
+  account_unsupported: 'This account cannot open a hosted workspace. Contact the registrar.',
 };
 
 const messageFor = (code: string, status: number): string =>
@@ -189,4 +194,50 @@ export async function getProgramme(): Promise<Programme> {
     throw new PortalError('The university server returned programme details this app cannot read.', 0, 'contract_mismatch');
   }
   return parsed.data;
+}
+const isSessionStatus = (value: unknown): value is StudentSessionStatus => {
+  const v = value as Partial<StudentSessionStatus> | null;
+  return typeof v?.id === 'string' && typeof v.state === 'string' && Array.isArray(v.steps);
+};
+
+function sessionStatus(raw: unknown): StudentSessionStatus {
+  if (!isSessionStatus(raw)) {
+    log.error('portal_session_contract_mismatch', {});
+    throw new PortalError('The university server returned a workspace status this app cannot read.', 0, 'contract_mismatch');
+  }
+  return raw;
+}
+
+/** POST /v1/session: the live workspace, or a new lease whose spawn starts on the server. */
+export function startWorkspace(): Promise<StudentSessionStatus> {
+  return request(`${API_BASE}/session`, { method: 'POST', body: '{}' }, sessionStatus);
+}
+
+/** GET /v1/session: the live workspace, else how the last one ended; null when there never was one. */
+export async function getWorkspace(): Promise<StudentSessionStatus | null> {
+  try {
+    return await request(`${API_BASE}/session`, { method: 'GET' }, sessionStatus);
+  } catch (error) {
+    if (error instanceof PortalError && error.status === 404 && error.code === 'no_session') return null;
+    throw error;
+  }
+}
+
+/** DELETE /v1/session: the university saves the notes one last time, then deletes the machine. */
+export function endWorkspace(): Promise<void> {
+  return request(`${API_BASE}/session`, { method: 'DELETE' }, () => undefined);
+}
+
+/**
+ * The workspace's public health, read from this browser: proof the edge answers for this
+ * student, not only for the university. Cross-origin and without credentials; the engine
+ * allows any origin to read this one body because it carries nothing private.
+ */
+export async function probeWorkspaceHealth(url: string): Promise<{ status: number; body: unknown } | null> {
+  try {
+    const response = await fetch(`${url}/api/health`, { credentials: 'omit', cache: 'no-store', signal: AbortSignal.timeout(8_000) });
+    return { status: response.status, body: await response.json().catch(() => null) };
+  } catch {
+    return null;
+  }
 }
