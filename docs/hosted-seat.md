@@ -96,3 +96,42 @@ Responses carry a CSP limited to the engine's own origin (`default-src 'self'`, 
 - **The university cannot reach the seat.** The box lives in the student's own account. The uni server still sees what it always saw: sign-ins, catalogue sync and shares.
 - **Anyone with the URL can reach the sign-in surface.** The protections above (host and origin gates, rate limiting, closed offline unlock, bound device polls, minimal public health) are what stand between the URL and the vault. Bearer sessions last `ENGINE_SESSION_HOURS` (14 days by default). A lost device should be revoked from the session list.
 - **No offline mode.** A hosted seat needs the network. Vault export remains the continuity path.
+
+## Claiming a seat from the desktop app
+
+The sign-in screen has a **Claim your hosted seat** link. It opens a checklist that takes a student from an Instabox API key to a running seat, without a terminal:
+
+| Step | What happens |
+| --- | --- |
+| Key | The student pastes an Instabox API key (Full access, or `machines:read`, `machines:write` and `machines:delete`). It goes into the **operating system's keychain** and is checked against the account. An account that has not redeemed its invite is told to do so. |
+| Machine | Lists the machines labelled `app:sef-seat`. An existing seat is adopted. Otherwise the app creates one: the `universal` template, the label, a 30-minute idle suspend and **no Vault**. |
+| Ready | Waits for the create to finish, and starts or resumes a machine that is stopped or paused. |
+| Publish | Publishes port 4100 and records the seat URL, `https://4100-<id>.instabox.tech`. |
+| Bootstrap | Starts `infra/seat/bootstrap.sh` on the box and shows its steps and log as they progress (see [Provisioning a seat](#provisioning-a-seat-on-instabox)). |
+| Health | Waits until `/api/health` answers over the public URL. |
+| Save | Remembers the seat URL on this device, then reloads into the normal sign-in, now talking to the seat. |
+
+**Every step can be retried, and none of them duplicates work.** A retry re-runs the failed step and continues from there:
+- A create is retried with the same idempotency key, and a list of labelled machines runs first, so a resumed flow never makes a second box.
+- A bootstrap that is already running is joined, not started again.
+- Closing the window keeps the progress, apart from the key, which is in the keychain.
+
+Instabox's own errors are shown with what to do about them: `quota_exceeded` (delete a machine), `no_capacity` (nothing was created, try again later), `insufficient_scope` (use a key with machine scopes), `invite_required` (redeem the invite), and `machine_not_running` (retry starts it).
+
+**Where the key goes.** api.instabox.sh does not accept calls from web pages (it sends no CORS headers), and its key should not sit where page scripts can read it. The desktop shell therefore makes every Instabox call itself, and the web view only asks it to run named steps:
+- The key is sent only to `api.instabox.sh`.
+- It is never stored in web storage or shown again, and never sent to the engine or the university.
+- In a plain browser, the link explains that seat setup needs the desktop app. A seat that is already running can still be used from any browser at its own URL.
+
+**Why no Vault.** Instabox can copy the account's Vault items into machines it creates, and code running on a box that holds a `machines:write` key could read them. A seat needs none of them, so it is created with `vault: false`. A student who wants Vault items on the seat can turn that on later in Instabox.
+
+**Switching back.** Under the sign-in card, "Use this computer's engine instead" forgets the seat on this device. The machine itself is not touched.
+
+## Known limitations (measured on a real seat)
+
+- **Speed.** A box has 4 vCPU, 8 GiB and no GPU. `gemma4:e2b` generates about **6 tokens per second** (prompt processing runs at 90–140 tokens per second). A 300-token answer therefore takes about a minute, and the first answer after a cold start waits about a minute more while the model loads. Answers stream as they are written. With the engine and Ollama loaded, about 2.4 GiB of memory remains free.
+- **No offline mode.** A seat needs a network connection. Vault export keeps a copy on any device.
+- **YouTube ingest is unavailable.** The engine container has no Python, which `yt-dlp` needs.
+- **Peer-share screening model.** `shieldgemma:2b` is not pulled, so screening reports it as unavailable. Screening is advisory.
+- **Long commands must run detached.** For anyone operating a box by hand: Instabox exec is blocking, and in practice a call is cut after about **60 seconds**, despite the documented 600-second limit. Anything longer must run detached, the way the bootstrap does.
+- **First-time setup takes about two minutes** when Instabox has capacity: Ollama image about 60 s, models about 30 s in parallel with the build, engine start a few seconds. When the pool is full, creates fail with `no_capacity` and the checklist says so.
