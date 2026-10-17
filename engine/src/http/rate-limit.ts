@@ -1,3 +1,4 @@
+import { isIP } from 'node:net';
 import type { MiddlewareHandler } from 'hono';
 import { log } from '../config';
 import type { EngineEnv } from './context';
@@ -71,6 +72,38 @@ export class SlidingWindowLimiter {
   }
 }
 
+/** Expands an IPv6 literal (`::`, an embedded dotted quad, a zone id) to its eight hextets. */
+const hextets = (address: string): number[] | null => {
+  let text = address.split('%')[0]!;
+  const dotted = text.match(/^(.*:)(\d+\.\d+\.\d+\.\d+)$/);
+  if (dotted) {
+    const [a, b, c, d] = dotted[2]!.split('.').map(Number) as [number, number, number, number];
+    text = `${dotted[1]}${((a << 8) | b).toString(16)}:${((c << 8) | d).toString(16)}`;
+  }
+  const [head, tail, extra] = text.split('::');
+  if (extra !== undefined) return null;
+  const left = head ? head.split(':') : [];
+  const right = tail ? tail.split(':') : [];
+  const missing = 8 - left.length - right.length;
+  if (tail === undefined ? missing !== 0 : missing < 1) return null;
+  const groups = [...left, ...Array<string>(tail === undefined ? 0 : missing).fill('0'), ...right].map((g) => Number.parseInt(g, 16));
+  return groups.length === 8 && groups.every((g) => Number.isInteger(g) && g >= 0 && g <= 0xffff) ? groups : null;
+};
+
+/**
+ * The bucket a client address falls into: an IPv6 client is keyed by its /64, since one
+ * subscriber routinely holds a whole /64 and could otherwise mint a fresh bucket per
+ * request. IPv4 and anything that is not an address are used as they are.
+ */
+export function limiterKey(address: string): string {
+  if (isIP(address.split('%')[0]!) !== 6) return address;
+  // An IPv4-mapped peer is an IPv4 client, not one /64 shared by the whole IPv4 internet.
+  const mapped = address.match(/^::ffff:(\d+\.\d+\.\d+\.\d+)$/i)?.[1];
+  if (mapped) return mapped;
+  const groups = hextets(address);
+  return groups ? `${groups.slice(0, 4).map((g) => g.toString(16)).join(':')}::/64` : address;
+}
+
 /**
  * Per-client limit on a sign-in route. A 2xx response refunds the attempt when
  * `refundSuccess` is set, so only failures (and in-flight attempts) count — signing in
@@ -78,7 +111,7 @@ export class SlidingWindowLimiter {
  */
 export function rateLimit(limiter: SlidingWindowLimiter, policy: Pick<EdgePolicy, 'client'>, refundSuccess: boolean): MiddlewareHandler<EngineEnv> {
   return async (c, next) => {
-    const address = policy.client(c);
+    const address = limiterKey(policy.client(c));
     const decision = limiter.attempt(address);
     if (!decision.ok) {
       log.warn('rate_limited', { path: c.req.path, address, retryAfter: decision.retryAfterSeconds });

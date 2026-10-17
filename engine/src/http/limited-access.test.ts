@@ -239,8 +239,8 @@ test('device sign-in with a suspended or withdrawn enrolment yields a limited se
     try {
       const { app, auth, settings } = await harness();
       await settings.update({ uniServerUrl: uni.url });
-      await auth.startDeviceSignIn();
-      const result = await auth.pollDeviceSignIn();
+      const { flowKey } = await auth.startDeviceSignIn();
+      const result = await auth.pollDeviceSignIn({ flowKey });
       assert.ok(result.status === 'approved', status);
       assert.equal(result.profile.admission, status);
       assert.deepEqual(result.access, { mode: 'limited', reason }, status);

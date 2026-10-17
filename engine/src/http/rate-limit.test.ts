@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
 import { Hono } from 'hono';
-import { rateLimit, SlidingWindowLimiter } from './rate-limit';
+import { limiterKey, rateLimit, SlidingWindowLimiter } from './rate-limit';
 
 const clock = (start = 1_000_000) => {
   let now = start;
@@ -84,4 +84,19 @@ test('the middleware answers 429 with retryAfter and a Retry-After header; succe
   assert.equal(body.code, 'rate_limited');
   assert.ok(body.retryAfter >= 1 && body.retryAfter <= 60);
   assert.equal(limited.headers.get('retry-after'), String(body.retryAfter));
+});
+
+test('IPv6 clients share a bucket per /64; IPv4 and non-addresses are keyed as they are', () => {
+  const key = limiterKey('2001:db8:1:2:aaaa::1');
+  assert.equal(key, '2001:db8:1:2::/64');
+  for (const same of ['2001:db8:1:2::1', '2001:DB8:1:2:ffff:ffff:ffff:ffff', '2001:0db8:0001:0002::', '2001:db8:1:2::9%en0']) {
+    assert.equal(limiterKey(same), key, same);
+  }
+  assert.notEqual(limiterKey('2001:db8:1:3::1'), key, 'the neighbouring /64');
+  assert.equal(limiterKey('::1'), '0:0:0:0::/64');
+  assert.equal(limiterKey('64:ff9b::198.51.100.7'), '64:ff9b:0:0::/64', 'an embedded dotted quad parses');
+  assert.equal(limiterKey('::ffff:198.51.100.7'), '198.51.100.7', 'IPv4-mapped is the IPv4 client');
+  assert.equal(limiterKey('198.51.100.7'), '198.51.100.7');
+  assert.equal(limiterKey('local'), 'local');
+  assert.equal(limiterKey('engine'), 'engine');
 });
