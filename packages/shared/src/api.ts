@@ -225,7 +225,7 @@ export interface ModelRoleConfig {
   model: string;
 }
 
-export type ModelRole = 'tutor' | 'brain' | 'vision' | 'embed';
+export type ModelRole = 'tutor' | 'brain' | 'vision' | 'embed' | 'safety';
 
 export interface ProviderConfig {
   id: string;

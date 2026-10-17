@@ -1,10 +1,11 @@
-import type { PublishShareRequest, SharedAttachment, SourceSummary } from '@sef/shared';
-import { CheckCircle2, Paperclip, Send } from 'lucide-react';
+import type { PublishShareRequest, ShareScreening, SharedAttachment, SourceSummary } from '@sef/shared';
+import { CheckCircle2, Paperclip, Send, ShieldCheck } from 'lucide-react';
 import { useEffect, useMemo, useState } from 'react';
 import { Button } from '@/components/ui/button';
 import { Dialog } from '@/components/ui/overlays';
 import { Badge, Input, Label, Panel, Select, SkeletonText, Textarea } from '@/components/ui/primitives';
 import { usePrepareShare, usePublishShare, useSharePages, useSourceList } from './peer-queries';
+import { screeningBadge } from './screening';
 
 const ATTACHABLE_MEDIA = new Set(['text/plain', 'text/markdown', 'application/pdf', 'image/png', 'image/jpeg']);
 const ATTACHABLE_KINDS = new Set(['note', 'document', 'image']);
@@ -35,6 +36,7 @@ export function ShareDialog({ open, onOpenChange, initialPageId }: { open: boole
   const [request, setRequest] = useState<PublishShareRequest | null>(null);
   const [cohortId, setCohortId] = useState<string | null>(null);
   const [excluded, setExcluded] = useState<string[]>([]);
+  const [screening, setScreening] = useState<ShareScreening | null>(null);
   const [published, setPublished] = useState<string | null>(null);
   const [ackCohort, setAckCohort] = useState(false);
   const [ackFeed, setAckFeed] = useState(false);
@@ -53,6 +55,7 @@ export function ShareDialog({ open, onOpenChange, initialPageId }: { open: boole
           setRequest(draft.request);
           setCohortId(draft.cohortId);
           setExcluded(draft.excluded);
+          setScreening(draft.screening ?? null);
           setPublished(null);
         },
       },
@@ -65,6 +68,7 @@ export function ShareDialog({ open, onOpenChange, initialPageId }: { open: boole
     setPageId(initialPageId ?? '');
     setRequest(null);
     setExcluded([]);
+    setScreening(null);
     setPublished(null);
     setAckCohort(false);
     setAckFeed(false);
@@ -77,6 +81,7 @@ export function ShareDialog({ open, onOpenChange, initialPageId }: { open: boole
     if (!request) return;
     const attachments = on ? [...request.payload.attachments, descriptor(source)] : request.payload.attachments.filter((a) => a.id !== source.id);
     setRequest({ ...request, payload: { ...request.payload, attachments } });
+    setScreening(null); // attachment names are screened too — the old verdict no longer applies
   };
 
   const markdownLength = request?.payload.markdown.length ?? 0;
@@ -125,7 +130,10 @@ export function ShareDialog({ open, onOpenChange, initialPageId }: { open: boole
                   id="share-title"
                   value={request.payload.title}
                   maxLength={160}
-                  onChange={(e) => setRequest({ ...request, payload: { ...request.payload, title: e.target.value } })}
+                  onChange={(e) => {
+                    setRequest({ ...request, payload: { ...request.payload, title: e.target.value } });
+                    setScreening(null); // the screened text changed — the old verdict no longer applies
+                  }}
                 />
               </div>
               <div>
@@ -139,7 +147,10 @@ export function ShareDialog({ open, onOpenChange, initialPageId }: { open: boole
                   id="share-markdown"
                   value={request.payload.markdown}
                   rows={10}
-                  onChange={(e) => setRequest({ ...request, payload: { ...request.payload, markdown: e.target.value } })}
+                  onChange={(e) => {
+                    setRequest({ ...request, payload: { ...request.payload, markdown: e.target.value } });
+                    setScreening(null); // the screened text changed — the old verdict no longer applies
+                  }}
                 />
                 <p className="mt-1 text-[12px] text-night-500">
                   Links in the text become citations automatically (up to 20). Links to pages you did not share stay readable as
@@ -177,6 +188,20 @@ export function ShareDialog({ open, onOpenChange, initialPageId }: { open: boole
                       <li key={i}>{item}</li>
                     ))}
                   </ul>
+                </Panel>
+              )}
+
+              {screening && (
+                <Panel className="flex items-start gap-2.5 p-3">
+                  <ShieldCheck className={`mt-0.5 size-4 shrink-0 ${screening.status === 'flagged' ? 'text-ember-300' : 'text-night-400'}`} />
+                  <span className="text-[13px] text-night-300">
+                    <Badge tone={screeningBadge(screening).tone}>{screeningBadge(screening).label}</Badge>
+                    <span className="mt-1 block text-[12px] text-night-500">
+                      {screening.status === 'flagged'
+                        ? 'This is what classmates will see flagged when they import it. You can still publish — screening never blocks.'
+                        : 'This is the on-device check classmates will run on import. Editing the text or attachments clears it.'}
+                    </span>
+                  </span>
                 </Panel>
               )}
 

@@ -385,7 +385,13 @@ relayed to the university's authenticated feed by `PeerShareService`:
 - **Import** is `POST /api/shares/:id/import`: the share freezes as a `kind: 'peer'`,
   `origin: 'peer'` source carrying `{id, revision, senderId, cohortId}` provenance,
   then runs the ordinary ingest → compile → proposal → student-review → `applyProposal`
-  pipeline — with no `autoAccept`, because importing is not reviewing. Repeating an
+  pipeline — with no `autoAccept`, because importing is not reviewing. Before the
+  freeze, the payload's text (title, body, attachment *names* — never sender or
+  cohort metadata) passes through the on-device safety screen (`shares/screen.ts`,
+  the `safety` model role): the verdict rides the source's extraction note and the
+  import result's `screening` field so the review dialog can show it. The screen is
+  advisory by construction — `flagged` still imports, `unavailable` never blocks,
+  and a replayed import is not re-screened. Repeating an
   import of the same share *and revision* replays the first (no duplicate source or
   job); a new revision freezes a new source. Peer material never touches mastery or
   the vault directly, and withdrawal stops future downloads without recalling

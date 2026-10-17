@@ -30,7 +30,7 @@ export async function listProviderModels(provider: ProviderConfig): Promise<stri
 }
 
 export async function checkRoles(settings: StoredSettings) {
-  const roles: ModelRole[] = ['tutor', 'brain', 'vision', 'embed'];
+  const roles: ModelRole[] = ['tutor', 'brain', 'vision', 'embed', 'safety'];
   const cache = new Map<string, Promise<string[]>>();
   return Promise.all(
     roles.map(async (role) => {

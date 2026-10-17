@@ -14,6 +14,8 @@ import {
   type ShareImportResult,
   type ShareablePage,
   type ShareablePageList,
+  type SharePayload,
+  type ShareScreening,
   type SharedAttachment,
   type SourceRecord,
 } from '@sef/shared';
@@ -22,9 +24,10 @@ import { jobStore } from '../brain/sources/jobs';
 import type { SourceIngestor } from '../brain/sources/ingest';
 import { legacyPageSummary } from '../brain/wiki-page-format';
 import type { PageSnapshot, WikiStore } from '../brain/wiki-store';
-import { log } from '../config';
+import { errorFields, log } from '../config';
 import { UniHttpError, UniUnreachableError, uniRequest } from '../uni/client';
 import { buildSharePayload, peerSourceDocument, shareRequest, type ShareSourcePage } from './payload';
+import { screeningNote, type Screener } from './screen';
 import type { PeerShareStore } from './store';
 
 /** A refused or failed share call. `code` is the uni's own error code where one exists. */
@@ -70,6 +73,11 @@ export interface PeerShareDeps {
   /** The profile's programme and cohort, for stamping and disclosure. */
   enrolment: () => Promise<{ programmeId: string; cohortId: string | null }>;
   call?: ShareCall;
+  /**
+   * The on-device share screen. Advisory: absent or failing screeners never block a
+   * publish or an import — the result just says `unavailable`.
+   */
+  screen?: Screener;
 }
 
 /** The uni only accepts these as attachment descriptors — anything else is refused here first. */
@@ -229,7 +237,9 @@ export class PeerShareService {
     const attachments = await this.resolveAttachments(input.attachmentSourceIds ?? []);
     const { payload, excluded } = buildSharePayload(page, attachments);
     const { programmeId, cohortId } = await this.deps.enrolment();
-    return { schemaVersion: CONTRACT_VERSION, request: shareRequest(input.pageId, programmeId, payload), cohortId, excluded };
+    // The author sees the same screen an importer would — advisory, so publish stays free.
+    const screening = await this.screenPayload(payload);
+    return { schemaVersion: CONTRACT_VERSION, request: shareRequest(input.pageId, programmeId, payload), cohortId, excluded, screening };
   }
 
   private async resolveAttachments(sourceIds: string[]): Promise<SharedAttachment[]> {
@@ -306,6 +316,7 @@ export class PeerShareService {
       };
     }
 
+    const screening = await this.screenPayload(share.payload);
     const document = peerSourceDocument(share);
     const bytes = new TextEncoder().encode(document);
     const ingested = await this.deps.sources.ingest({
@@ -314,11 +325,12 @@ export class PeerShareService {
       mediaType: 'text/markdown',
       bytes,
       share: { id: share.id, revision: share.revision, senderId: share.senderId, cohortId: share.cohortId },
-      extraction: { method: 'text', text: document },
+      // The screening verdict rides the extraction ledger — the source itself records it.
+      extraction: { method: 'text', text: document, note: screeningNote(screening) },
     });
     // No autoAccept: importing a peer's words is not the student's review.
     const compiled = await this.deps.compiler.compileJob(ingested.jobId);
-    log.info('peer_share_imported', { shareId: share.id, sourceId: ingested.source.id, jobId: ingested.jobId, stage: compiled.job.stage });
+    log.info('peer_share_imported', { shareId: share.id, sourceId: ingested.source.id, jobId: ingested.jobId, stage: compiled.job.stage, screened: screening.status });
     return {
       schemaVersion: CONTRACT_VERSION,
       shareId: share.id,
@@ -327,7 +339,20 @@ export class PeerShareService {
       proposalId: compiled.proposalId,
       stage: compiled.job.stage,
       reused: false,
+      screening,
     };
+  }
+
+  /** Screen the payload text — never throws, so screening can never break a share flow. */
+  private async screenPayload(payload: SharePayload): Promise<ShareScreening> {
+    if (!this.deps.screen) return { status: 'unavailable', categories: [], model: '' };
+    try {
+      return await this.deps.screen.screen(payload);
+    } catch (error) {
+      // A screener that throws anyway is still only advisory.
+      log.warn('peer_share_screen_threw', errorFields(error));
+      return { status: 'unavailable', categories: [], model: '' };
+    }
   }
 
   /** share.id|share.revision → the source (and job) an earlier import created. */

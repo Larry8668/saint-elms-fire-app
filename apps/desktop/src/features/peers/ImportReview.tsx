@@ -8,6 +8,7 @@ import { SkeletonText } from '@/components/ui/primitives';
 import { cn } from '@/lib/cn';
 import { useProposalPreview } from '@/lib/queries';
 import { useDecideProposal } from './peer-queries';
+import { screeningBadge } from './screening';
 
 const CHANGE_TONE = { created: 'aurora', updated: 'beacon', unchanged: 'neutral' } as const;
 
@@ -32,6 +33,19 @@ export function ImportReview({ result, onClose }: { result: ShareImportResult; o
 
   return (
     <Dialog open onOpenChange={(open) => !open && onClose()} title="Review import" description="This is what would change in your brain. Nothing is applied until you accept — untick a page to keep it out.">
+      {result.screening && (
+        <Panel className="mb-4 flex items-start gap-2.5 p-3">
+          <ShieldCheck className={cn('mt-0.5 size-4 shrink-0', result.screening.status === 'flagged' ? 'text-ember-300' : 'text-night-400')} />
+          <span className="text-[13px] text-night-300">
+            <Badge tone={screeningBadge(result.screening).tone}>{screeningBadge(result.screening).label}</Badge>
+            {result.screening.status === 'flagged' && (
+              <span className="mt-1 block text-[12px] text-night-500">
+                Advisory only — the share was imported and its source carries this flag. Accept pages only if you want them in your brain.
+              </span>
+            )}
+          </span>
+        </Panel>
+      )}
       {result.proposalId === null && (
         <Panel className="p-4 text-sm text-night-300">
           {result.reused

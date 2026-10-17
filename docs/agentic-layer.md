@@ -14,6 +14,7 @@ The guiding principle: **models propose, code decides.** A small local model (Ge
 | **Vercel AI SDK providers** | Ollama (`ollama-ai-provider-v2`), OpenAI, Anthropic, any OpenAI-compatible server | `engine/src/models/registry.ts` |
 | **Ollama + Gemma 4** | Default model for the chat roles (`gemma4:e4b`), including vision | runs locally on :11434 |
 | **Ollama + embeddinggemma** | Default for the `embed` role — the semantic search lane | runs locally on :11434 |
+| **Ollama + shieldgemma** | Default for the `safety` role — the advisory peer-share screen | runs locally on :11434 |
 | **SearXNG** | Open-source metasearch for the Philosopher | `infra/searxng`, :8888 |
 | **Zod** | Tool input schemas, structured-output schemas, request validation | throughout |
 | **Hono + SSE** | `/api/chat/turn` streams status, tool, delta, done and error events; the conversation registry owns sessions and history | `engine/src/http/routes/student.ts` |
@@ -146,7 +147,7 @@ Attribution and citation resolution are lexical, not semantic: they verify that 
 
 ## 6. Model plumbing
 
-- `models/registry.ts` resolves each **role** (`tutor`, `brain`, `vision`, `embed`) to a provider and model from Settings. The provider kinds are `ollama`, `openai-compatible` (vLLM, LM Studio, a university server), `openai` and `anthropic`. API keys stay inside the engine; the UI only sees `hasApiKey`. The `embed` role is optional by design: it is not a chat model — it feeds the vector index behind hybrid retrieval (`engine/src/embed/`), and its absence is reported as `keyword_only` search rather than an error.
+- `models/registry.ts` resolves each **role** (`tutor`, `brain`, `vision`, `embed`, `safety`) to a provider and model from Settings. The provider kinds are `ollama`, `openai-compatible` (vLLM, LM Studio, a university server), `openai` and `anthropic`. API keys stay inside the engine; the UI only sees `hasApiKey`. The `embed` role is optional by design: it is not a chat model — it feeds the vector index behind hybrid retrieval (`engine/src/embed/`), and its absence is reported as `keyword_only` search rather than an error. The `safety` role is likewise not a teacher: `shares/screen.ts` sends it a single-shot policy verdict prompt (ShieldGemma's trained Yes/No contract) over a peer share's payload text, and the parsed answer rides the import result and the source's extraction note — advisory only, so a missing or unreachable model reports `unavailable` rather than blocking or erroring.
 - Ollama runs with a fixed context window and output budget (`OLLAMA_NUM_CTX`, `OLLAMA_NUM_PREDICT`), so switching roles never triggers a model reload. Thinking mode is used only by the brain keeper, and only if Settings → *Thinking* is on.
 - `generateStructured` (`factory.ts`) parses partial JSON tolerantly (`lib/partial-json.ts`), because small models sometimes stop mid-object.
 

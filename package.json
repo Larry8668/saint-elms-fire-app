@@ -27,7 +27,7 @@
     "docker:status": "docker compose ps",
     "search:up": "docker compose up -d searxng",
     "search:down": "docker compose stop searxng",
-    "ollama:pull": "ollama pull gemma4:e4b && ollama pull embeddinggemma",
+    "ollama:pull": "ollama pull gemma4:e4b && ollama pull embeddinggemma && ollama pull shieldgemma:2b",
     "keys:uni": "pnpm --filter @sef/uni-server keys",
     "test:e2e": "playwright test",
     "test:e2e:install": "playwright install chromium"

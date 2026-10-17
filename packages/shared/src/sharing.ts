@@ -165,6 +165,21 @@ export const ShareDraftRequestSchema = z.strictObject({
 export type ShareDraftRequest = z.infer<typeof ShareDraftRequestSchema>;
 
 /**
+ * The result of the on-device safety screen that runs over a share's payload text
+ * (title + body + attachment names — never sender, cohort or programme metadata).
+ * Advisory only: `flagged` still imports and `unavailable` never blocks — the
+ * student decides in review either way.
+ */
+export const ShareScreeningSchema = z.strictObject({
+  status: z.enum(['clean', 'flagged', 'unavailable']),
+  /** The named harm categories the screen reported; empty when none or unknown. */
+  categories: z.array(z.string().max(80)).max(8),
+  /** The model that answered, e.g. "shieldgemma:2b" — '' when nothing ran. */
+  model: z.string().max(120),
+});
+export type ShareScreening = z.infer<typeof ShareScreeningSchema>;
+
+/**
  * The draft the student reviews. `request` is the exact body the engine will
  * POST to the university on publish — the preview *is* the network payload.
  */
@@ -175,6 +190,8 @@ export const ShareDraftResponseSchema = z.strictObject({
   cohortId: IdentifierSchema.nullable(),
   /** What the deterministic builder left out, in words the UI can list. */
   excluded: z.array(z.string()),
+  /** The on-device screen of what is about to publish — advisory, never a block. */
+  screening: ShareScreeningSchema.optional(),
 });
 export type ShareDraftResponse = z.infer<typeof ShareDraftResponseSchema>;
 
@@ -211,6 +228,11 @@ export const ShareImportResultSchema = z.strictObject({
   stage: z.enum(['queued', 'extracting', 'awaiting_source_review', 'compiling', 'awaiting_review', 'committed', 'no_changes', 'failed', 'cancelled']),
   /** True when this share+revision was already imported — nothing new was created. */
   reused: z.boolean(),
+  /**
+   * The on-device screen run over the payload before ingest. Absent on a `reused`
+   * import — nothing new was fetched, so nothing new was screened.
+   */
+  screening: ShareScreeningSchema.optional(),
 });
 export type ShareImportResult = z.infer<typeof ShareImportResultSchema>;
 

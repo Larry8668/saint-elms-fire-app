@@ -83,8 +83,9 @@ export interface IngestInput {
   /**
    * A reading the caller already made (e.g. the vision transcription shown to the student).
    * Recorded as this source's extraction so the compiler never pays for the same read twice.
+   * `note` rides into the extraction ledger — e.g. the advisory screening line on peer shares.
    */
-  extraction?: { method: ExtractionMethod; text: string };
+  extraction?: { method: ExtractionMethod; text: string; note?: string };
 }
 
 export interface IngestResult {
@@ -251,15 +252,19 @@ export class SourceIngestor {
    * text is counted and capped the same way, and the hash is of the source bytes, matching
    * what extract() records.
    */
-  private adopted(provided: { method: ExtractionMethod; text: string }, bytes: Uint8Array, limits: Limits): ExtractionResult {
+  private adopted(provided: { method: ExtractionMethod; text: string; note?: string }, bytes: Uint8Array, limits: Limits): ExtractionResult {
     const maxChars = limits.maxExtractedChars ?? INGEST_LIMITS.maxExtractedChars;
     const partial = countChars(provided.text) > maxChars;
+    const notes = [
+      provided.note,
+      partial ? `Only the first ${maxChars.toLocaleString('en-GB')} characters of the reading were kept.` : '',
+    ].filter(Boolean);
     return {
       method: provided.method,
       text: sliceChars(provided.text, maxChars),
       sha256: sha256(bytes),
       partial,
-      ...(partial ? { note: `Only the first ${maxChars.toLocaleString('en-GB')} characters of the reading were kept.` } : {}),
+      ...(notes.length ? { note: notes.join(' ') } : {}),
     };
   }
 
