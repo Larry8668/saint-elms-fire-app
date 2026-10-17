@@ -40,6 +40,11 @@ const migrations: MigrationSource[] = [
     name: 'published_shares',
     url: new URL('./migrations/004_published_shares.sql', import.meta.url),
   },
+  {
+    version: 5,
+    name: 'student_sessions',
+    url: new URL('./migrations/005_student_sessions.sql', import.meta.url),
+  },
 ];
 
 export interface MigrationResult {

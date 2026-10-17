@@ -22,3 +22,4 @@ export * from './seat';
 export * from './feeds';
 export * from './plans';
 export * from './metrics';
+export * from './session';
