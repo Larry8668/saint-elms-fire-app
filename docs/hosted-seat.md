@@ -50,7 +50,9 @@ Plain background processes do not survive a stop/start of the box. Containers st
 
 **Origin check.** Mutating requests with a foreign `Origin` get `403 forbidden_origin`. CORS is limited to the same allowlist, and OPTIONS preflights are answered by the engine.
 
-**Sign-in rate limit.** `POST /api/auth/login` and `/api/auth/offline-login` allow 5 attempts per minute per client, in a sliding window. A successful sign-in refunds its attempt, so only guessing is throttled. `/api/auth/device/poll` carries no secret and is capped at 30 per minute, which sits above the client's 2-second poll floor. Over the limit the engine returns `429 { code: 'rate_limited', retryAfter }` with a `Retry-After` header.
+**Sign-in rate limit.** `POST /api/auth/login` and `/api/auth/offline-login` share one budget of 5 attempts per minute per client, in a sliding window. A successful sign-in refunds its attempt, so only guessing is throttled. `/api/auth/device/poll` carries no secret and is capped at 30 per minute, which sits above the client's 2-second poll floor. Over the limit the engine returns `429 { code: 'rate_limited', retryAfter }` with a `Retry-After` header.
+
+Trusting `X-Forwarded-For` assumes the edge **appends or overwrites** it with the address it saw. An edge that passed a client's own header through unchanged would let the client choose its rate-limit key, so keep `ENGINE_TRUST_PROXY` off for any proxy whose behaviour you have not checked.
 
 The client is identified by the socket peer. Through a trusted proxy, it is the right-most `X-Forwarded-For` entry that is not itself a trusted proxy. The left-most entry is whatever the client chose to send, so it is never used. The limiter lives in memory and tracks at most 10,000 clients, dropping idle clients first and then the least recently seen. Two limits remain:
 - Memory is bounded per client, not across the whole engine.
