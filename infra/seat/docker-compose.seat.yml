@@ -24,6 +24,8 @@ x-node: &node
     COREPACK_ENABLE_DOWNLOAD_PROMPT: "0"
     npm_config_store_dir: /seat/cache/pnpm-store
     CI: "true"
+    # The output lands in bootstrap.log, which the app shows as plain text.
+    NO_COLOR: "1"
 
 services:
   ollama:

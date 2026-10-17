@@ -4,7 +4,7 @@ import { bodyLimit } from 'hono/body-limit';
 import { cors } from 'hono/cors';
 import type { HealthLiveness, HealthResponse } from '@sef/shared';
 import { config, errorFields, log } from '../config';
-import { probeHealth } from '../system/health';
+import { cachedReachability, probeHealth, uniReachable } from '../system/health';
 import { webReachable } from '../web/searxng';
 import { requireProfile, type EngineDeps, type EngineEnv } from './context';
 import { edgePolicy } from './edge';
@@ -27,6 +27,7 @@ export type { EngineDeps } from './context';
 
 export function createApp(deps: EngineDeps) {
   const app = new Hono<EngineEnv>();
+  const publicUniReachable = cachedReachability(uniReachable);
   // Origin and Host allowlists (see edge.ts): loopback by default, plus a hosted seat's own name.
   const edge = edgePolicy(process.env, config.port);
   const ALLOWED_ORIGINS = edge.origins;
@@ -93,8 +94,14 @@ export function createApp(deps: EngineDeps) {
     return c.json({ error: friendlyError(error) }, errorStatus(error));
   });
 
-  /** Public liveness: a hosted seat's URL is reachable by anyone, so it names nothing about the setup. */
-  app.get('/api/health', (c) => c.json({ ok: true, engine: config.version } satisfies HealthLiveness));
+  /**
+   * Public liveness: a hosted seat's URL is reachable by anyone, so it names nothing about the
+   * setup beyond one boolean (is the university up), cached so a public hit never probes it.
+   */
+  app.get('/api/health', async (c) => {
+    const settings = await deps.settings.get();
+    return c.json({ ok: true, engine: config.version, uni: { reachable: await publicUniReachable(settings.uniServerUrl) } } satisfies HealthLiveness);
+  });
 
   /** The full model, uni and web report, for a signed-in client. */
   app.get('/api/health/detail', requireProfile(deps), async (c) => {
