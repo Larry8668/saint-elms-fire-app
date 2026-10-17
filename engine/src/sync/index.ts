@@ -13,7 +13,7 @@ export interface VaultSyncHandle {
   flushToken: string | null;
 }
 
-/** One sync for the seat owner's profile, wired to the vault's write hook. */
+/** One sync for the seat owner's profile, wired to the vault's write and read hooks. */
 export function createVaultSync(config: VaultSyncConfig, store: ObjectStore, root: string, options: Partial<VaultSyncOptions> = {}): VaultSyncHandle {
   const sync = new VaultSync({ ...options, store, account: config.account, root });
   const inside = (absolutePath: string) => {
@@ -24,6 +24,8 @@ export function createVaultSync(config: VaultSyncConfig, store: ObjectStore, roo
     written: (absolutePath) => {
       if (inside(absolutePath)) sync.markDirty();
     },
+    materialize: (absolutePath) => (inside(absolutePath) ? sync.materialize(absolutePath) : Promise.resolve(false)),
+    materializeAll: (absoluteDirectory) => (inside(absoluteDirectory) ? sync.materializeAll(absoluteDirectory) : Promise.resolve()),
   });
   return { sync, flushToken: config.flushToken };
 }

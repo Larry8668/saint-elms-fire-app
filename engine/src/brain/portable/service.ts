@@ -21,6 +21,7 @@ import { z } from 'zod';
 import { log } from '../../config';
 import { readBytes, readText } from '../../lib/fs';
 import { sha256Hex } from '../../lib/hash';
+import { syncHooks } from '../../sync/hooks';
 import { renderIndex, type IndexEntry } from '../index-format';
 import { renderLogEntry } from '../log-format';
 import { checkMediaType } from '../sources/limits';
@@ -104,6 +105,8 @@ export class VaultPortabilityService {
   /** Everything the student owns, as one manifest-listed file set. */
   async exportVault(options: { sourceIds?: string[] } = {}): Promise<VaultExport> {
     const root = this.wiki.root;
+    // An export carries every original, so media still stubbed on a session VM is fetched first.
+    await syncHooks.materializeAll(vaultPath(root, RAW_DIRECTORY));
     const files: VaultExportFile[] = [];
     const skipped: string[] = [];
     const counts = { pages: 0, history: 0, sources: 0, events: 0, tombstones: 0 };
@@ -282,6 +285,8 @@ export class VaultPortabilityService {
    */
   private async planImport(archive: VaultExport, overwritePageIds: Set<string>): Promise<ImportPlan> {
     const root = this.wiki.root;
+    // Conflict checks compare raw bytes on disk, so stubbed media must be real first.
+    await syncHooks.materializeAll(vaultPath(root, RAW_DIRECTORY));
     const at = this.now().toISOString();
     const warnings: string[] = [];
     const conflicts: VaultImportConflict[] = [];

@@ -65,24 +65,23 @@ test('scope: the vault and resumable stores sync; credentials, counters and in-f
   }
 });
 
-test('manifest diff: uploads what changed and deletes what vanished; tombstones revive and age out', () => {
+test('manifest diff: uploads what changed, deletes what vanished, and a lazy stub is not a delete', () => {
   const base = { ...emptySyncManifest(ACCOUNT), files: { 'brain/a.md': { ...entry('a') }, 'brain/b.md': { ...entry('b') }, 'brain/raw/s/r.png': { ...entry('c', 'media') } } };
   const local = new Map([
     ['brain/a.md', entry('a')],
     ['brain/c.md', entry('d')],
-    ['brain/raw/s/r.png', entry('f', 'media')],
   ]);
-  const diff = diffManifest(base, local);
-  assert.deepEqual(diff, { upload: ['brain/c.md', 'brain/raw/s/r.png'], deleted: ['brain/b.md'] });
-  const next = nextManifest(base, local, diff, new Date('2026-10-17T00:00:00Z'));
+  const diff = diffManifest(base, local, new Set(['brain/raw/s/r.png']));
+  assert.deepEqual(diff, { upload: ['brain/c.md'], deleted: ['brain/b.md'] });
+  const next = nextManifest(base, local, new Set(['brain/raw/s/r.png']), diff, new Date('2026-10-17T00:00:00Z'));
   assert.equal(next.version, 1);
   assert.deepEqual(Object.keys(next.files).sort(), ['brain/a.md', 'brain/c.md', 'brain/raw/s/r.png']);
   assert.deepEqual(next.tombstones['brain/b.md'], { deletedAt: '2026-10-17T00:00:00.000Z', sha256: entry('b').sha256 });
 
   // Writing the path again revives it; an old tombstone ages out.
-  const revived = nextManifest(next, new Map([['brain/b.md', entry('e')]]), { upload: ['brain/b.md'], deleted: [] }, new Date('2026-10-18T00:00:00Z'));
+  const revived = nextManifest(next, new Map([['brain/b.md', entry('e')]]), new Set(), { upload: ['brain/b.md'], deleted: [] }, new Date('2026-10-18T00:00:00Z'));
   assert.equal(revived.tombstones['brain/b.md'], undefined);
-  const aged = nextManifest(next, local, { upload: [], deleted: [] }, new Date(Date.parse('2026-10-17T00:00:00Z') + TOMBSTONE_TTL_MS + 1));
+  const aged = nextManifest(next, local, new Set(), { upload: [], deleted: [] }, new Date(Date.parse('2026-10-17T00:00:00Z') + TOMBSTONE_TTL_MS + 1));
   assert.deepEqual(aged.tombstones, {});
 });
 
@@ -242,8 +241,8 @@ test('media is content-addressed: identical bytes upload once, and a re-push sen
   assert.deepEqual(store.puts, []);
 });
 
-test('media restores from its blob, verified; an erased source leaves the store too', async () => {
-  const store = new MemoryObjectStore();
+test('restored media is a stub fetched on first read, through the wiki store’s own reader', async () => {
+  const store = new CountingStore();
   const rootA = await profileRoot();
   const a = new VaultSync({ store, account: ACCOUNT, root: rootA });
   await a.restore();
@@ -252,23 +251,65 @@ test('media restores from its blob, verified; an erased source leaves the store 
   const { record, bytes } = sourceFixture('src_img', 'pretend this is an image', { mediaType: 'image/png' });
   await wikiA.putSource(record, bytes);
   await a.flush();
-  const blob = blobKey(ACCOUNT, sha256Hex(bytes));
-  assert.ok(await store.get(blob));
 
   const rootB = await profileRoot();
-  await new VaultSync({ store, account: ACCOUNT, root: rootB }).restore();
-  assert.deepEqual(await new WikiStore(path.join(rootB, 'brain')).readSourceBytes('src_img'), bytes);
+  const handle = createVaultSync({ account: ACCOUNT, flushToken: null }, store, rootB);
+  store.gets.length = 0;
+  const report = await handle.sync.restore();
+  assert.equal(report.lazy, 1);
+  const raw = path.join(rootB, 'brain/raw/src_img/rev-1.png');
+  assert.equal(await exists(raw), false, 'not downloaded by the restore');
+  assert.equal(store.gets.some((key) => key.includes('/blobs/')), false);
 
-  await wikiA.eraseSource('src_img');
-  await a.push();
+  const wikiB = new WikiStore(path.join(rootB, 'brain'));
+  assert.deepEqual(await wikiB.readSourceBytes('src_img'), bytes, 'the first read fetches it');
+  assert.equal(await exists(raw), true);
+  assert.equal(store.gets.filter((key) => key.includes('/blobs/')).length, 1);
+  await wikiB.readSourceBytes('src_img');
+  assert.equal(store.gets.filter((key) => key.includes('/blobs/')).length, 1, 'once');
+
+  // A stub is not a delete: pushing from B leaves the blob and its manifest entry alone.
+  const rootC = await profileRoot();
+  const c = createVaultSync({ account: ACCOUNT, flushToken: null }, store, rootC);
+  await c.sync.restore();
+  await put(rootC, 'brain/concepts/n.md', 'note');
+  await c.sync.push();
+  assert.ok((await remoteManifest(store)).files['brain/raw/src_img/rev-1.png']);
+
+  // Erasing the source on C (it never fetched it) removes it everywhere, blob included.
+  const wikiC = new WikiStore(path.join(rootC, 'brain'));
+  await wikiC.eraseSource('src_img');
+  assert.equal(await c.sync.materialize(path.join(rootC, 'brain/raw/src_img/rev-1.png')), false, 'an erased stub is never fetched back');
+  await c.sync.push();
   assert.equal((await remoteManifest(store)).files['brain/raw/src_img/rev-1.png'], undefined);
-  assert.equal(await store.get(blob), null, 'erasure means erasure');
+  assert.equal(await store.get(blobKey(ACCOUNT, sha256Hex(bytes))), null);
+  installSyncHooks(null);
+});
 
-  // A blob that does not match its hash fails the restore.
-  await wikiA.putSource(record, bytes);
-  await a.push();
-  await store.put(blob, 'tampered');
-  await assert.rejects(new VaultSync({ store, account: ACCOUNT, root: await profileRoot() }).restore(), /does not match its hash/);
+test('embeddings ride along as an optional cache: restored when the model matches, skipped otherwise', async () => {
+  const store = new MemoryObjectStore();
+  const rootA = await profileRoot();
+  const a = new VaultSync({ store, account: ACCOUNT, root: rootA, embeddingsEveryMs: Number.MAX_SAFE_INTEGER });
+  await a.restore();
+  await put(rootA, 'brain/concepts/a.md', 'a');
+  await put(rootA, 'brain/.meta/embeddings/pages.json', JSON.stringify({ model: 'embeddinggemma', provider: 'ollama', entries: { a: [0.1, 0.2] } }));
+  await a.flush();
+  const manifest = await remoteManifest(store);
+  assert.deepEqual(manifest.embeddings?.models, ['embeddinggemma']);
+  assert.equal(await store.get(vaultKey(ACCOUNT, 'brain/.meta/embeddings/pages.json')), null, 'never a plain synced file');
+
+  const hit = await profileRoot();
+  assert.equal((await new VaultSync({ store, account: ACCOUNT, root: hit, embedModel: async () => 'embeddinggemma' }).restore()).embeddings, 'restored');
+  assert.match(await read(hit, 'brain/.meta/embeddings/pages.json'), /"a":\[0.1,0.2\]/);
+
+  const miss = await profileRoot();
+  assert.equal((await new VaultSync({ store, account: ACCOUNT, root: miss, embedModel: async () => 'another-model' }).restore()).embeddings, 'model_mismatch');
+  assert.equal(await exists(path.join(miss, 'brain/.meta/embeddings/pages.json')), false, 'left for the existing code to rebuild');
+
+  // Unchanged vectors are not pushed again.
+  await a.flush();
+  assert.equal((await remoteManifest(store)).embeddings?.sha256, manifest.embeddings?.sha256);
+  assert.equal((await remoteManifest(store)).version, manifest.version);
 });
 
 test('vault writes schedule a debounced push through the hooks', async () => {
@@ -285,4 +326,23 @@ test('vault writes schedule a debounced push through the hooks', async () => {
   assert.ok(manifest.files['brain/.meta/sources/src_note.json']);
   handle.sync.stop();
   installSyncHooks(null);
+});
+
+test('a lazily fetched blob that does not match its hash is refused, and nothing is written', async () => {
+  const store = new MemoryObjectStore();
+  const rootA = await profileRoot();
+  const a = new VaultSync({ store, account: ACCOUNT, root: rootA });
+  await a.restore();
+  const wikiA = new WikiStore(path.join(rootA, 'brain'));
+  await wikiA.init();
+  const { record, bytes } = sourceFixture('src_bad', 'image bytes', { mediaType: 'image/png' });
+  await wikiA.putSource(record, bytes);
+  await a.flush();
+  await store.put(blobKey(ACCOUNT, sha256Hex(bytes)), 'tampered');
+  const rootB = await profileRoot();
+  const b = new VaultSync({ store, account: ACCOUNT, root: rootB });
+  await b.restore();
+  const raw = path.join(rootB, 'brain/raw/src_bad/rev-1.png');
+  await assert.rejects(b.materialize(raw), /does not match its hash/);
+  assert.equal(await exists(raw), false);
 });

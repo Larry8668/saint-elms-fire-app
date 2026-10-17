@@ -48,7 +48,7 @@ after(async () => {
   await Promise.all(roots.map((root) => rm(root, { recursive: true, force: true })));
 });
 
-test('live: engine A writes pages and an image and flushes; engine B restores both', { skip }, async () => {
+test('live: engine A writes pages and an image and flushes; engine B restores the pages and fetches the image lazily', { skip }, async () => {
   const rootA = await dataDir('a');
   const a = createVaultSync({ account, flushToken: null }, store, rootA);
   await a.sync.restore();
@@ -74,12 +74,17 @@ test('live: engine A writes pages and an image and flushes; engine B restores bo
   const report = await b.sync.restore();
   const restoreMs = Date.now() - started;
   assert.equal(report.version, flushed.version);
+  assert.equal(report.lazy, 1);
   const wikiB = new WikiStore(path.join(rootB, 'brain'));
   assert.deepEqual((await wikiB.listPages()).map((page) => page.id).sort(), ['damping', 'resonance']);
-  assert.equal(await exists(path.join(rootB, 'brain/raw/src_photo/rev-1.png')), true);
+  const raw = path.join(rootB, 'brain/raw/src_photo/rev-1.png');
+  assert.equal(await exists(raw), false, 'the image is a stub after restore');
+  started = Date.now();
   assert.deepEqual(await wikiB.readSourceBytes('src_photo'), image.bytes);
+  const lazyMs = Date.now() - started;
+  assert.equal(await exists(raw), true);
   console.log(
-    `live sync: pushed ${flushed.pushed} objects in ${pushMs}ms; restored ${report.fetched} files (${(report.bytes / 1024 / 1024).toFixed(1)} MiB, image included) in ${restoreMs}ms`,
+    `live sync: pushed ${flushed.pushed} objects in ${pushMs}ms; restored ${report.fetched} files (${(report.bytes / 1024 / 1024).toFixed(1)} MiB) in ${restoreMs}ms; lazy image (${(image.bytes.length / 1024 / 1024).toFixed(1)} MiB) fetched in ${lazyMs}ms`,
   );
 
   // B edits and pushes; A, now stale, is refused rather than clobbering B.
