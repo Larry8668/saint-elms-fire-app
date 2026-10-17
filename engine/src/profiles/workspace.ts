@@ -26,6 +26,10 @@ import { PeerShareStore } from '../shares/store';
 import { gatherSignalInputs } from '../signals/inputs';
 import { SignalService } from '../signals/service';
 import { SignalStore } from '../signals/store';
+import { modelRephrase } from '../suggest/draft';
+import { gatherSeedInputs } from '../suggest/inputs';
+import { SuggestionService } from '../suggest/service';
+import { SuggestionStore } from '../suggest/store';
 import { probeHealth } from '../system/health';
 import type { SettingsStore } from '../settings/store';
 import type { ProfileRegistry } from './registry';
@@ -55,6 +59,8 @@ export interface Workspace {
   youtube: YouTube;
   /** Derived attention signals over the stores above — no model calls, no new egress. */
   signals: SignalService;
+  /** Per-teacher suggested questions; code picks them, a model may only rephrase (opt-in). */
+  suggestions: SuggestionService;
 }
 
 export class WorkspaceManager {
@@ -140,6 +146,23 @@ export class WorkspaceManager {
           health: async () => probeHealth(await settings.get()),
         }),
     });
+    const sessions = new SessionStore(paths.sessions);
+    const suggestions = new SuggestionService({
+      store: new SuggestionStore(paths.root),
+      proactivity: async () => (await settings.get()).proactivity,
+      recentTurns: (teacher) => sessions.recentUserTurns(teacher),
+      rephrase: modelRephrase(() => settings.get()),
+      inputs: () =>
+        gatherSeedInputs({
+          logistics: () => logistics.list(),
+          pages: () => wiki.listPages(),
+          events: () => wiki.listEvents(),
+          maintenance: () => maintenance.report(),
+          concepts: async () => [...(await vault.all()).values()],
+          lessons: () => content.academicLessons(),
+          studiedLessonIds: () => sessions.studiedLessonIds(),
+        }),
+    });
     const workspace: Workspace = {
       profile: { ...profile },
       paths,
@@ -163,7 +186,7 @@ export class WorkspaceManager {
       }),
       brain: new BrainService(content, vault, settings, paths.quizzes, { wiki, sources, identity }),
       embeddings,
-      sessions: new SessionStore(paths.sessions),
+      sessions,
       sync: new ContentSync(settings, content, async () => {
         const currentProfile = await this.registry.get(profileId);
         return {
@@ -173,6 +196,7 @@ export class WorkspaceManager {
       }),
       logistics,
       signals,
+      suggestions,
       youtube: new YouTube(),
       peerShares: new PeerShareService({
         wiki,

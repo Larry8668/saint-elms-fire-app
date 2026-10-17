@@ -72,13 +72,30 @@ export class SessionStore {
     }
   }
 
+  private async all(teacher?: TeacherId): Promise<Session[]> {
+    const names = await readdir(this.dir).catch(() => [] as string[]);
+    const sessions = await Promise.all(names.filter((n) => n.endsWith('.json')).map((n) => readJson<Session | null>(path.join(this.dir, n), null)));
+    return sessions.filter((s): s is Session => Boolean(s) && (!teacher || s!.teacher === teacher));
+  }
+
+  /** The student's own latest messages to one teacher, newest first. */
+  async recentUserTurns(teacher: TeacherId, limit = 20): Promise<string[]> {
+    return (await this.all(teacher))
+      .flatMap((s) => s.turns.filter((t) => t.role === 'user'))
+      .sort((a, b) => (b.at ?? '').localeCompare(a.at ?? ''))
+      .slice(0, limit)
+      .map((t) => t.content);
+  }
+
+  /** Every lesson any conversation has drawn on. */
+  async studiedLessonIds(): Promise<string[]> {
+    return [...new Set((await this.all()).flatMap((s) => s.lessonIds))];
+  }
+
   /** Newest first. `limit` is clamped to 1–MAX_LIST; non-numeric input falls back to 30. */
   async list({ teacher, limit = 30 }: { teacher?: TeacherId; limit?: number } = {}): Promise<SessionSummary[]> {
     const take = Number.isFinite(limit) ? Math.min(MAX_LIST, Math.max(1, Math.floor(limit))) : 30;
-    const names = await readdir(this.dir).catch(() => [] as string[]);
-    const sessions = await Promise.all(names.filter((n) => n.endsWith('.json')).map((n) => readJson<Session | null>(path.join(this.dir, n), null)));
-    return sessions
-      .filter((s): s is Session => Boolean(s) && (!teacher || s!.teacher === teacher))
+    return (await this.all(teacher))
       .sort((a, b) => b.updatedAt.localeCompare(a.updatedAt))
       .slice(0, take)
       .map((s) => ({

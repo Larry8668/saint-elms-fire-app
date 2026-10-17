@@ -1,6 +1,6 @@
 import type { LearningEvent, LogisticsRecord, MaintenanceReport, WikiJob } from '@sef/shared';
 import type { PageSnapshot } from '../brain/wiki-store';
-import { errorFields, log } from '../config';
+import { attempt } from '../lib/attempt';
 import type { HealthProbe } from '../system/health';
 import type { FindingSummary, QuestionPage, SignalInputs } from './detectors';
 
@@ -15,14 +15,7 @@ export interface SignalSources {
 }
 
 /** A failed read stays undefined so its detector preserves, rather than clears, what it knew. */
-async function attempt<T>(source: string, read: () => Promise<T>): Promise<T | undefined> {
-  try {
-    return await read();
-  } catch (error) {
-    log.warn('signal_input_failed', { source, ...errorFields(error) });
-    return undefined;
-  }
-}
+const read = <T>(source: string, fn: () => Promise<T>) => attempt('signal_input_failed', source, fn);
 
 export function questionPages(pages: PageSnapshot[], events: LearningEvent[]): QuestionPage[] {
   const lastEvent = new Map<string, string>();
@@ -41,12 +34,12 @@ export function questionPages(pages: PageSnapshot[], events: LearningEvent[]): Q
 
 export async function gatherSignalInputs(sources: SignalSources): Promise<Omit<SignalInputs, 'now' | 'observations'>> {
   const [logistics, jobs, pages, events, report, health] = await Promise.all([
-    attempt('logistics', sources.logistics),
-    attempt('jobs', sources.jobs),
-    attempt('pages', sources.pages),
-    attempt('events', sources.events),
-    attempt('maintenance', sources.maintenance),
-    attempt('health', sources.health),
+    read('logistics', sources.logistics),
+    read('jobs', sources.jobs),
+    read('pages', sources.pages),
+    read('events', sources.events),
+    read('maintenance', sources.maintenance),
+    read('health', sources.health),
   ]);
   const findings: FindingSummary[] | undefined = report?.findings.map((f) => ({ id: f.id, title: f.title, pageIds: f.pageIds }));
   return {

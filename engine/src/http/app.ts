@@ -9,6 +9,7 @@ import type { EngineDeps, EngineEnv } from './context';
 import { errorStatus, friendlyError } from './errors';
 import { anchorRoutes } from './routes/anchors';
 import { attentionRoutes } from './routes/attention';
+import { suggestRoutes } from './routes/suggest';
 import { authRoutes } from './routes/auth';
 import { logisticsRoutes } from './routes/logistics';
 import { settingsRoutes } from './routes/settings';
@@ -132,6 +133,7 @@ export function createApp(deps: EngineDeps) {
   app.route('/api', shareRoutes(deps));
   app.route('/api', logisticsRoutes(deps));
   app.route('/api', attentionRoutes(deps));
+  app.route('/api', suggestRoutes(deps));
 
   return app;
 }
