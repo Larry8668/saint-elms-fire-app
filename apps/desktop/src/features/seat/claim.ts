@@ -387,12 +387,13 @@ export class ClaimRunner {
   };
 }
 
-/** "Building the app (build), 4 of 8 steps done". */
+/** "Working on build and models (4 steps done)". */
 export function describeBootstrap(status: BootstrapStatus): string {
   const running = status.steps.filter((s) => s.state === 'running').map((s) => s.name);
   const done = status.steps.filter((s) => s.state === 'done').length;
   if (status.state === 'starting' || status.steps.length === 0) return 'Starting the setup script';
-  return running.length ? `Working on ${running.join(' and ')} (${done} steps done)` : `${done} steps done`;
+  const finished = `${done} ${done === 1 ? 'step' : 'steps'} done`;
+  return running.length ? `Working on ${running.join(' and ')} (${finished})` : finished;
 }
 
 /** localStorage-backed progress; the app's default store. */
