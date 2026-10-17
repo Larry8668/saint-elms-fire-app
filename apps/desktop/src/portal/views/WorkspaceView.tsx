@@ -8,7 +8,7 @@ import { cn } from '@/lib/cn';
 import { log } from '@/lib/log';
 import { Notice } from '../components/Notice';
 import { endWorkspace, getWorkspace, PortalError, probeWorkspaceHealth, startWorkspace } from '../portal-api';
-import { runWorkspaceFlow, type FlowFailure, type WorkspaceFlow } from '../workspace/session-flow';
+import { handoffUrl, runWorkspaceFlow, type FlowFailure, type WorkspaceFlow } from '../workspace/session-flow';
 
 const FAILURE_COPY: Record<FlowFailure, { title: string; body: string }> = {
   unavailable: { title: 'Hosted workspaces are not available', body: 'This university server has no hosted workspaces set up. Use the desktop app instead.' },
@@ -21,6 +21,9 @@ const FAILURE_COPY: Record<FlowFailure, { title: string; body: string }> = {
   sync_error: { title: 'Your notes could not be restored', body: 'Your workspace started but could not load your notes from university storage. Try again; if it keeps failing, contact support.' },
   timeout: { title: 'Starting is taking far too long', body: 'Try again in a few minutes.' },
 };
+
+/** The web app, when it is hosted apart from the VM (set on the portal build); unset = the VM serves its own UI. */
+const APP_URL = import.meta.env.VITE_APP_URL as string | undefined;
 
 const CONNECT_STEP = (restoring: boolean): SessionStepStatus => ({
   name: 'health',
@@ -55,7 +58,7 @@ export function WorkspaceView({ onBack }: { onBack: () => void }) {
       if (abort.signal.aborted) return;
       if (final.phase === 'ready') {
         log.info('workspace_handoff', {});
-        window.location.assign(final.url);
+        window.location.assign(handoffUrl(final.url, APP_URL));
       } else if (final.phase === 'failed') {
         log.warn('workspace_failed', { reason: final.reason });
       }

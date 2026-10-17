@@ -2,7 +2,7 @@ import { spawn, spawnSync, type ChildProcess } from 'node:child_process';
 import { existsSync, mkdirSync, mkdtempSync, openSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
-import { ENGINE_PORT, INSTABOX_PORT, UNI_PORT, UNI_URL, WORKSPACE_UI_DIR } from './support';
+import { APP_DIR, APP_PORT, APP_URL, ENGINE_PORT, INSTABOX_PORT, UNI_PORT, UNI_URL, WORKSPACE_UI_DIR, type E2EStatus } from './support';
 
 /**
  * Starts the university server and the student engine for the run and stops them
@@ -32,6 +32,7 @@ const UNI_DATA = mkdtempSync(path.join(tmpdir(), 'sef-e2e-uni-'));
 let uni: ChildProcess | null = null;
 let instabox: ChildProcess | null = null;
 let engine: ChildProcess | null = null;
+let app: ChildProcess | null = null;
 const LOG = path.join(REPO, 'test-results/e2e-uni.log');
 const ENGINE_LOG = path.join(REPO, 'test-results/e2e-engine.log');
 
@@ -59,7 +60,7 @@ const reachable = async (url: string): Promise<boolean> => {
  * The drill spec also reads the engine address and data dir out of it.
  */
 const statusPath = path.join(REPO, 'test-results/e2e-status.json');
-const writeStatus = (value: { ok: boolean; reason?: string; engineUrl?: string; engineDataDir?: string; uniUrl?: string; workspaceUi?: boolean }) =>
+const writeStatus = (value: E2EStatus) =>
   writeFileSync(statusPath, JSON.stringify(value), 'utf8');
 
 const spawnService = (binDir: string, cwd: string, env: NodeJS.ProcessEnv, fd: number): ChildProcess =>
@@ -84,11 +85,14 @@ const waitFor = async (label: string, url: string, proc: ChildProcess | null, de
 };
 
 export default async function globalSetup(): Promise<(() => Promise<void>) | void> {
+  // The web app on its own origin (PR-45d): the engine then allows that origin and the uni passes it on.
+  const appBuilt = existsSync(path.join(APP_DIR, 'index.html'));
   // Something already answering /health on our port is not our server: running against it would
   // test the wrong build while reporting ours. Refuse to start rather than race the spawn.
   for (const [name, url] of [
     ['university server', `${UNI_URL}/health`],
     ['engine', `${ENGINE_URL}/api/health`],
+    ...(appBuilt ? ([['web app', APP_URL]] as const) : []),
   ] as const) {
     if (await reachable(url)) {
       writeStatus({ ok: false, reason: `A ${name} already answers at ${url} — kill it or set the E2E port overrides.` });
@@ -166,6 +170,7 @@ export default async function globalSetup(): Promise<(() => Promise<void>) | voi
       INSTABOX_API_URL: `http://127.0.0.1:${INSTABOX_PORT}`,
       SEF_GOLDEN_SNAPSHOT_ID: 'sn_e2efakesnapshot',
       SESSION_WORKSPACE_ORIGINS: ENGINE_URL,
+      ...(appBuilt ? { APP_PUBLIC_ORIGIN: APP_URL } : {}),
     },
     logFd,
   );
@@ -186,6 +191,8 @@ export default async function globalSetup(): Promise<(() => Promise<void>) | voi
       ENGINE_DATA_DIR: ENGINE_DATA,
       SEED_DEMO: 'false',
       UNI_SERVER_URL: UNI_URL,
+      // What session-start.sh writes on a real VM when the uni has APP_PUBLIC_ORIGIN.
+      ...(appBuilt ? { ENGINE_ALLOWED_ORIGINS: APP_URL } : {}),
       // The workspace build (same-origin) lets the engine play a workspace VM for the browser.
       ...(existsSync(path.join(WORKSPACE_UI_DIR, 'index.html')) ? { ENGINE_STATIC_DIR: WORKSPACE_UI_DIR } : {}),
       // Model roles stay overrideable so the drill can point at whatever is pulled.
@@ -205,7 +212,29 @@ export default async function globalSetup(): Promise<(() => Promise<void>) | voi
     return;
   }
 
-  writeStatus({ ok: true, engineUrl: ENGINE_URL, engineDataDir: ENGINE_DATA, uniUrl: UNI_URL, workspaceUi: existsSync(path.join(WORKSPACE_UI_DIR, 'index.html')) });
+  if (appBuilt) {
+    app = spawn(path.join(REPO, 'apps/desktop/node_modules/.bin/vite'), ['preview', '--outDir', APP_DIR, '--port', String(APP_PORT), '--strictPort', '--host', '127.0.0.1'], {
+      cwd: path.join(REPO, 'apps/desktop'),
+      env: process.env,
+      stdio: ['ignore', engineLogFd, engineLogFd],
+      detached: true,
+    });
+    const appFailure = await waitFor('The web app (vite preview)', APP_URL, app);
+    if (appFailure) {
+      writeStatus({ ok: false, reason: `${appFailure} See ${ENGINE_LOG}.` });
+      await globalTeardown();
+      return;
+    }
+  }
+
+  writeStatus({
+    ok: true,
+    engineUrl: ENGINE_URL,
+    engineDataDir: ENGINE_DATA,
+    uniUrl: UNI_URL,
+    workspaceUi: existsSync(path.join(WORKSPACE_UI_DIR, 'index.html')),
+    ...(appBuilt ? { appUrl: APP_URL } : {}),
+  });
   // Playwright runs the function globalSetup returns as the run's teardown — exporting a
   // `globalTeardown` name alone wires nothing, and leaked servers poison the next run's
   // port guard.
@@ -239,5 +268,5 @@ const stop = async (proc: ChildProcess | null): Promise<void> => {
 };
 
 export async function globalTeardown(): Promise<void> {
-  await Promise.all([stop(uni), stop(engine), stop(instabox)]);
+  await Promise.all([stop(uni), stop(engine), stop(instabox), stop(app)]);
 }

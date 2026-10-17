@@ -44,6 +44,7 @@ function testConfig(overrides: Partial<SessionConfig> = {}): SessionConfig {
     gatewaySecret: GATEWAY_SECRET,
     gatewayTokenMinutes: 60,
     objectStore: { OBJECT_STORE_ENDPOINT: 'https://store.example.test', OBJECT_STORE_BUCKET: 'sef-vaults', OBJECT_STORE_SECRET_KEY: 'store-secret-value' },
+    appOrigin: 'https://sef.vercel.app',
     seatHome: '/data/home/sef-seat',
     timeouts: { create: 3000, start: 3000, publish: 1000, sessionStart: 3000, health: 1500, flush: 3000, delete: 3000 },
     capacityWaitMs: 3000,
@@ -219,6 +220,7 @@ test('spawn: create → start → publish → session-start → health, with per
     assert.equal(envs.UNI_SERVER_URL, 'https://uni.example.test');
     assert.equal(envs.MODEL_GATEWAY_URL, 'https://gateway.example.test/v1');
     assert.equal(envs.OBJECT_STORE_BUCKET, 'sef-vaults');
+    assert.equal(envs.ENGINE_ALLOWED_ORIGINS, 'https://sef.vercel.app', 'the web app (APP_PUBLIC_ORIGIN) may call the VM');
     assert.equal(envs.SYNC_FLUSH_TOKEN, session.flush_token);
     assert.match(envs.SYNC_FLUSH_TOKEN!, /^[A-Za-z0-9_-]{43}$/, '32 random bytes, base64url: over the engine\'s 24-character minimum');
     // With sync on, the engine refuses to boot unless VAULT_SYNC_ACCOUNT is among the seat owners.

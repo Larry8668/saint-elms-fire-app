@@ -380,3 +380,38 @@ test('IPv6 clients behind the edge are limited per /64, not per address', async 
   assert.equal((await login(call, 'nobody@example.test', 'guess', viaEdge('2001:db8:5:6:ffff::1'), edgeSocket)).status, 429, 'a fresh address in the same /64');
   assert.notEqual((await login(call, 'nobody@example.test', 'guess', viaEdge('2001:db8:5:7::1'), edgeSocket)).status, 429, 'the next /64 is someone else');
 });
+
+test('the web app on its own origin (ENGINE_ALLOWED_ORIGINS) may call a workspace cross-origin, SSE included; other origins may not', async () => {
+  const APP = 'https://sef.vercel.app';
+  const { app, call } = await harness({ ENGINE_PUBLIC_HOST: SEAT, ENGINE_TRUST_PROXY: 'true', ENGINE_ALLOWED_ORIGINS: APP });
+  // A stand-in for /api/chat/turn's streamSSE answer, behind the same middleware.
+  const { streamSSE } = await import('hono/streaming');
+  app.post('/api/test-stream', (c) => streamSSE(c, async (stream) => stream.writeSSE({ data: JSON.stringify({ type: 'done' }) })));
+
+  for (const [path, method] of [['/api/chat/turn', 'POST'], ['/api/auth/me', 'GET'], ['/api/workspace', 'DELETE']] as const) {
+    const preflight = await call(path, { method: 'OPTIONS', headers: { ...viaEdge('198.51.100.9'), origin: APP, 'access-control-request-method': method, 'access-control-request-headers': 'authorization,content-type' } }, edgeSocket);
+    assert.equal(preflight.status, 204, path);
+    assert.equal(preflight.headers.get('access-control-allow-origin'), APP, path);
+    const methods = preflight.headers.get('access-control-allow-methods') ?? '';
+    for (const m of ['GET', 'POST', 'DELETE']) assert.ok(methods.split(',').includes(m), `${path}: ${m} in ${methods}`);
+    const headers = (preflight.headers.get('access-control-allow-headers') ?? '').toLowerCase();
+    assert.ok(headers.includes('authorization') && headers.includes('content-type'), `${path}: ${headers}`);
+    assert.equal(preflight.headers.get('access-control-allow-credentials'), null, 'bearer tokens, never cookies');
+  }
+
+  const stream = await call('/api/test-stream', { method: 'POST', headers: { ...viaEdge('198.51.100.9'), origin: APP, 'content-type': 'application/json' }, body: '{}' }, edgeSocket);
+  assert.equal(stream.status, 200);
+  assert.match(stream.headers.get('content-type') ?? '', /text\/event-stream/);
+  assert.equal(stream.headers.get('access-control-allow-origin'), APP, 'the browser may read the stream');
+  assert.match(await stream.text(), /data: \{"type":"done"\}/);
+
+  const me = await call('/api/auth/me', { headers: { ...viaEdge('198.51.100.9'), origin: APP } }, edgeSocket);
+  assert.equal(me.headers.get('access-control-allow-origin'), APP);
+
+  const EVIL = 'https://sef-vercel.app.evil.test';
+  const refusedPreflight = await call('/api/chat/turn', { method: 'OPTIONS', headers: { ...viaEdge('198.51.100.9'), origin: EVIL, 'access-control-request-method': 'POST' } }, edgeSocket);
+  assert.equal(refusedPreflight.headers.get('access-control-allow-origin'), null);
+  const refused = await call('/api/test-stream', { method: 'POST', headers: { ...viaEdge('198.51.100.9'), origin: EVIL, 'content-type': 'application/json' }, body: '{}' }, edgeSocket);
+  assert.equal(refused.status, 403);
+  assert.equal(((await refused.json()) as { code?: string }).code, 'forbidden_origin');
+});

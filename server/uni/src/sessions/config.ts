@@ -32,6 +32,21 @@ export interface SessionConfig {
    * so the browser can see the VM answer before it is handed there. Optional for tests.
    */
   workspaceOrigins?: string[];
+  /**
+   * The web app's origin when it is hosted apart from the VM (APP_PUBLIC_ORIGIN, e.g. on
+   * Vercel): passed to the VM as ENGINE_ALLOWED_ORIGINS so the app may call it cross-origin.
+   */
+  appOrigin?: string;
+}
+
+/** One https origin (http only on loopback, for tests): no path, no wildcard, no list. */
+const APP_ORIGIN = /^(https:\/\/[a-z0-9-]+(\.[a-z0-9-]+)+|http:\/\/(127\.0\.0\.1|localhost))(:\d{1,5})?$/i;
+
+export function parseAppOrigin(raw: string | undefined): string | undefined {
+  const origin = raw?.trim().replace(/\/+$/, '');
+  if (!origin) return undefined;
+  if (!APP_ORIGIN.test(origin)) throw new Error(`APP_PUBLIC_ORIGIN: ${JSON.stringify(origin)} is not one https origin (or http on loopback)`);
+  return origin.toLowerCase();
 }
 
 /** https on any host (one leading `*.` label allowed), or http on loopback for a local engine under test. */
@@ -108,5 +123,6 @@ export function parseSessionConfig(env: NodeJS.ProcessEnv = process.env, uniPubl
     capacityWaitMs: envInt('SESSION_CAPACITY_WAIT_SECONDS', 600, { min: 0, max: 86_400 }, env) * 1000,
     retryBaseMs: 2_000,
     workspaceOrigins: parseWorkspaceOrigins(value(env, 'SESSION_WORKSPACE_ORIGINS')),
+    appOrigin: parseAppOrigin(value(env, 'APP_PUBLIC_ORIGIN')),
   };
 }

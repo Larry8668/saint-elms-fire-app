@@ -400,23 +400,7 @@ export class SessionOrchestrator {
 
   /** The per-session half of the engine env. Values travel only in exec `envs`. */
   private sessionEnvs(row: SessionRow): Record<string, string> {
-    const host = new URL(row.url!).host;
-    const envs: Record<string, string> = {
-      ENGINE_PUBLIC_HOST: host,
-      // The id the student's own sign-in on the VM will produce: account.id for a legacy
-      // login, user.id for a device (better-auth) sign-in. PR-37d pins the seat to it.
-      ENGINE_SEAT_OWNER: row.account_id,
-      VAULT_SYNC_ACCOUNT: row.account_id,
-      UNI_SERVER_URL: this.config.uniPublicUrl,
-      MODEL_GATEWAY_URL: this.config.gatewayUrl,
-      SYNC_FLUSH_TOKEN: row.flush_token,
-      ...this.config.objectStore,
-    };
-    if (this.config.gatewaySecret) {
-      // PR-43a's format (`sefgw1.`, see @sef/shared/node gateway-token): bound to this account and VM.
-      envs.MODEL_GATEWAY_TOKEN = mintGatewayToken(this.config.gatewaySecret, { sub: row.account_id, vm: row.machine_id!, ttlSeconds: this.config.gatewayTokenMinutes * 60 });
-    }
-    return envs;
+    return sessionStartEnvs(this.config, row);
   }
 
   private async stepSessionStart(row: SessionRow): Promise<SessionRow> {
@@ -587,4 +571,27 @@ export class SessionOrchestrator {
     }
     return status;
   }
+}
+
+/** The per-session half of the engine env (session-start.sh's inputs). Values travel only in exec `envs`. */
+export function sessionStartEnvs(config: SessionConfig, row: Pick<SessionRow, 'url' | 'account_id' | 'flush_token' | 'machine_id'>): Record<string, string> {
+  const host = new URL(row.url!).host;
+  const envs: Record<string, string> = {
+    ENGINE_PUBLIC_HOST: host,
+    // The id the student's own sign-in on the VM will produce: account.id for a legacy
+    // login, user.id for a device (better-auth) sign-in. PR-37d pins the seat to it.
+    ENGINE_SEAT_OWNER: row.account_id,
+    VAULT_SYNC_ACCOUNT: row.account_id,
+    UNI_SERVER_URL: config.uniPublicUrl,
+    MODEL_GATEWAY_URL: config.gatewayUrl,
+    SYNC_FLUSH_TOKEN: row.flush_token,
+    ...config.objectStore,
+    // The web app hosted apart from the VM (APP_PUBLIC_ORIGIN) calls it cross-origin.
+    ...(config.appOrigin ? { ENGINE_ALLOWED_ORIGINS: config.appOrigin } : {}),
+  };
+  if (config.gatewaySecret) {
+    // PR-43a's format (`sefgw1.`, see @sef/shared/node gateway-token): bound to this account and VM.
+    envs.MODEL_GATEWAY_TOKEN = mintGatewayToken(config.gatewaySecret, { sub: row.account_id, vm: row.machine_id!, ttlSeconds: config.gatewayTokenMinutes * 60 });
+  }
+  return envs;
 }

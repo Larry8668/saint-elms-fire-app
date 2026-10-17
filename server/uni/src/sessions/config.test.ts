@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
-import { parseSessionConfig, parseWorkspaceOrigins } from './config';
-import { flushErrorCode, healthVerdict } from './orchestrator';
+import { parseAppOrigin, parseSessionConfig, parseWorkspaceOrigins } from './config';
+import { flushErrorCode, healthVerdict, sessionStartEnvs } from './orchestrator';
 
 const base = { INSTABOX_API_KEY: 'ibk_x', SEF_GOLDEN_SNAPSHOT_ID: 'sn_agquvqu6h2bc33n7w2bfctcxni' };
 
@@ -53,4 +53,20 @@ test('workspace origins: the Instabox edge by default, https or loopback only, a
   for (const bad of ['*', 'http://evil.test', 'https://*', "https://a.test 'unsafe-inline'", 'https://a.test/path', 'data:', 'https://*.*.test']) {
     assert.throws(() => parseWorkspaceOrigins(bad), /SESSION_WORKSPACE_ORIGINS/, bad);
   }
+});
+
+test('APP_PUBLIC_ORIGIN: one https origin (http on loopback), passed to the VM as ENGINE_ALLOWED_ORIGINS', () => {
+  assert.equal(parseSessionConfig(base)!.appOrigin, undefined);
+  assert.equal(parseSessionConfig({ ...base, APP_PUBLIC_ORIGIN: 'https://SEF.vercel.app/' })!.appOrigin, 'https://sef.vercel.app');
+  assert.equal(parseAppOrigin('http://127.0.0.1:3540'), 'http://127.0.0.1:3540');
+  for (const bad of ['*', 'http://sef.vercel.app', 'https://sef.vercel.app/app', 'https://a.test,https://b.test', 'https://*.vercel.app', 'https://localhost:3540 x']) {
+    assert.throws(() => parseAppOrigin(bad), /APP_PUBLIC_ORIGIN/, bad);
+  }
+
+  const row = { url: 'https://4100-m1.instabox.tech', account_id: 'u_1', flush_token: 'f'.repeat(43), machine_id: 'm_1' };
+  const without = sessionStartEnvs(parseSessionConfig(base)!, row);
+  assert.equal(without.ENGINE_ALLOWED_ORIGINS, undefined, 'unset: the VM serves its own UI and allows only its own origin');
+  assert.equal(without.ENGINE_PUBLIC_HOST, '4100-m1.instabox.tech');
+  const withApp = sessionStartEnvs(parseSessionConfig({ ...base, APP_PUBLIC_ORIGIN: 'https://sef.vercel.app' })!, row);
+  assert.equal(withApp.ENGINE_ALLOWED_ORIGINS, 'https://sef.vercel.app');
 });

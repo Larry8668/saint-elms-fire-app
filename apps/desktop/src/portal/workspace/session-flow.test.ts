@@ -2,6 +2,7 @@ import assert from 'node:assert/strict';
 import { test } from 'node:test';
 import { SESSION_STEP_LABELS, SESSION_STEPS, type SessionStep, type StudentSessionStatus } from '@sef/shared';
 import {
+  handoffUrl,
   HANDOFF_TIMEOUT_MS,
   healthVerdict,
   MAX_POLL_FAILURES,
@@ -203,4 +204,12 @@ test('the hand-off waits through restoring, then leaves; a sync error or silence
   const silent = harness({ start: [session('ready', { url: URL_ })], polls: [null], health: [null] });
   assert.equal(await waitForWorkspace(URL_, silent.deps, () => {}), 'unreachable');
   assert.ok(silent.elapsed() >= HANDOFF_TIMEOUT_MS && silent.elapsed() < HANDOFF_TIMEOUT_MS + 2_000);
+});
+
+test('the hand-off goes to the web app with the workspace in ?workspace= when VITE_APP_URL is set, else to the VM', () => {
+  const vm = 'https://4100-m1abc.instabox.tech';
+  assert.equal(handoffUrl(vm, 'https://sef.vercel.app'), 'https://sef.vercel.app/?workspace=https%3A%2F%2F4100-m1abc.instabox.tech');
+  assert.equal(handoffUrl(vm, 'https://sef.vercel.app/'), 'https://sef.vercel.app/?workspace=https%3A%2F%2F4100-m1abc.instabox.tech');
+  assert.equal(new URL(handoffUrl(vm, 'https://sef.vercel.app')).searchParams.get('workspace'), vm, 'the app reads back exactly the VM url');
+  for (const unset of [undefined, '', '  ']) assert.equal(handoffUrl(vm, unset), vm, 'unset: the VM serves its own UI, as before');
 });
