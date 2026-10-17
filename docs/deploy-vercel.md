@@ -26,7 +26,15 @@ Build environment variables:
 | `VITE_UNI_URL` | the university server, e.g. `https://uni.example.edu` | Portal links (back to "Open my workspace", account pages). |
 | `VITE_WORKSPACE_HOST_SUFFIX` | `.instabox.tech` (the default) | The app only accepts a `?workspace=` URL whose host ends with this, over https, with no credentials, path, query or fragment. A forged link to any other host is ignored. |
 
-Leave `VITE_ENGINE_URL` unset (a student without a workspace falls back to a local engine at `127.0.0.1:4100`) and `VITE_DEMO_MODE` unset.
+| `VITE_DEMO_MODE` | `true` (production) | Shows the one-click demo students. On a hosted build they prompt for the demo password instead of filling a known one, so the private `DEMO_PASSWORD` never ships in the bundle. Unset or `false`: plain sign-in only. |
+
+Leave `VITE_ENGINE_URL` unset (a student without a workspace falls back to a local engine at `127.0.0.1:4100`).
+
+Set it once and redeploy (Vite bakes it in at build time):
+
+```bash
+printf 'true' | vercel env add VITE_DEMO_MODE production --yes && vercel --prod --yes
+```
 
 ## University server and portal
 
