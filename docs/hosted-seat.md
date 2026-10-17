@@ -2,7 +2,7 @@
 
 A hosted seat is one student's engine running on a cloud box that the student owns. The box publishes the engine port through a TLS edge (for example Instabox's `https://4100-<id>.instabox.tech`). The engine was built for loopback, so this page covers what changes when it is reachable from the internet, which knobs control that, and what the setup does and does not protect.
 
-Provisioning the box is a later PR (PR-38). This page covers the engine side only (PR-37).
+The engine side is PR-37. Provisioning a seat on Instabox (the bootstrap script and the desktop app's "Claim your seat" flow) is PR-38 and is described under [Provisioning a seat](#provisioning-a-seat-on-instabox).
 
 ## Shape
 
@@ -38,6 +38,8 @@ What the Instabox edge sends to the box, measured on a real machine:
 | `ENGINE_STATIC_DIR` | unset | the absolute path of the built `apps/desktop/dist` | Serves the student UI from the engine's own origin (see below). The engine's loopback origin is then allowed as well. |
 | `UNI_SERVER_URL` | `http://localhost:4200` | the university's HTTPS URL | First-run default for the uni server. Settings can change it later. |
 | `OLLAMA_URL` | `http://localhost:11434` | `http://ollama:11434` (compose) or loopback | Model runtime on the box. |
+| `MODEL_GATEWAY_URL` | unset | the operator's model gateway (central-model and session VMs) | Set, the `uni` provider ("University model") becomes this gateway, spoken to over Ollama's native `/api/*` surface, and every role defaults to it. Give the gateway root; a trailing `/v1` (what the orchestrator passes) or `/api` is dropped. The native path keeps the tuning a local Ollama gets: `num_ctx` (`OLLAMA_NUM_CTX`), `think` (off unless a role asks for it) and the `format` grammar for structured output, and the gateway sees real token counts. The engine calls only `/api/chat`, `/api/embed` (falling back to `/api/embeddings`) and `/api/tags` (the role health probe), all on the gateway allowlist. Audio transcription has no gateway route, so a hosted session reports it as unavailable instead of calling one. The URL and token are applied on every settings read and are not stored, and roles stored on the on-box `ollama` provider read as the gateway, so the engine never calls an old gateway even if a settings file still names one. The gateway is not "on this device": verification labels say the answer came from a hosted provider, and the Settings model suggestions are the configured defaults rather than sized to the VM's RAM. |
+| `MODEL_GATEWAY_TOKEN` | unset | the session's short-lived gateway token | Sent as `Authorization: Bearer` on every native call to the gateway (chat, structured output, embeddings, the health probe). Read from the environment only: never written to `settings.json` or a profile's `private-settings.json`, never logged, and absent from `/api/health/detail` (a bad token shows there as `HTTP 401`). `GET /api/settings` shows only `hasApiKey`. |
 
 ### Running the engine in Docker
 
@@ -133,3 +135,50 @@ Responses carry a CSP limited to the engine's own origin (`default-src 'self'`, 
 - **The university cannot reach the seat.** The box lives in the student's own account. The uni server still sees what it always saw: sign-ins, catalogue sync and shares.
 - **Anyone with the URL can reach the sign-in surface.** The protections above (host and origin gates, rate limiting, closed offline unlock, bound device polls, minimal public health) are what stand between the URL and the vault. Bearer sessions last `ENGINE_SESSION_HOURS` (14 days by default). A lost device should be revoked from the session list.
 - **No offline mode.** A hosted seat needs the network. Vault export remains the continuity path.
+
+## Provisioning a seat on Instabox
+
+`infra/seat/` turns a fresh Instabox `universal` machine into a seat. Instabox snapshots cannot cross accounts, so for a student-owned box the bootstrap script is the golden image. For operator-hosted sessions, where the operator owns every VM, `infra/seat/golden/` builds one snapshot that every session VM is created from: see [infra/seat/golden/README.md](../infra/seat/golden/README.md).
+
+| File | What it is |
+| --- | --- |
+| `infra/seat/bootstrap.sh` | Idempotent setup script. The desktop app sends it over exec and starts it detached. |
+| `infra/seat/docker-compose.seat.yml` | Copied to the box as `docker-compose.yml`: `ollama`, a one-off `build`, and `engine`. |
+| `infra/seat/seat.env.template` | Rendered to the box as `seat.env`, the engine's environment (see the table above). |
+| `infra/seat/session-start.sh` | Per-session start on a golden-image box: writes `session.env` and (re)starts the engine. |
+
+**Modes.** `SEAT_MODEL_MODE=central` skips Ollama and the models (91 of the 98 s of a first bootstrap); the engine reaches the model through `MODEL_GATEWAY_URL`/`MODEL_GATEWAY_TOKEN` in `session.env`, which `session-start.sh` writes. `SEAT_MODE=golden` (always central) builds the image without any per-session value, starts nothing and ends with a scrub. The default, a local-model seat, is unchanged.
+
+**What runs where.** Everything lives under `/data/home/sef-seat`, on the box's persistent disk:
+
+| Path | Contents |
+| --- | --- |
+| `src/` | The app repo at the pinned ref (`git fetch --depth 1` of `SEAT_REF`) |
+| `engine-data/` | The engine's data dir: profiles, vaults, sessions |
+| `ollama/` | Pulled models |
+| `cache/` | corepack and the pnpm store |
+| `bootstrap.log`, `models.log` | Everything the script printed; paste it into a support request |
+| `state`, `status` | `running` / `done` / `failed:<step>`, and one line per step start and finish with its duration |
+
+The engine and Ollama are containers with `restart: unless-stopped`. Measured on a real box: plain processes die when a machine is stopped and started, while those containers come back with the Docker daemon, which is enabled at boot. An idle suspend keeps everything running. The engine uses host networking, so it binds `127.0.0.1:4100` and the edge's peer stays loopback. Ollama listens on `127.0.0.1:11434` only.
+
+**Inputs.** `SEAT_REF` (git ref or commit), `SEAT_PUBLIC_HOST` (`4100-<id>.instabox.tech`) and `SEAT_UNI_URL` are required. `SEAT_CHAT_MODEL` (default `gemma4:e2b`) and `SEAT_EMBED_MODEL` (default `embeddinggemma`) are optional. Every value is checked against a narrow pattern before it reaches a file or a command line. The first run saves them to `bootstrap.inputs`. A bare re-run repeats the last configuration, and a re-run with one changed value reconfigures only that value.
+
+**Steps.** `inputs`, `preflight` (tools, Docker, 12 GB free), `checkout`, `configure`, `ollama`, then `models` and `build` in parallel, then `engine` (recreated and waited on until `/api/health` answers). A lock allows one run at a time. A launch while a run is going leaves it alone. Each step converges, so after a failure, re-running the script resumes the work. The app's "Retry" does exactly that.
+
+**Running it by hand** on a box (as `user`):
+
+```bash
+SEAT_REF=<commit> SEAT_PUBLIC_HOST=4100-<id>.instabox.tech SEAT_UNI_URL=https://uni.example.edu \
+  setsid nohup bash bootstrap.sh >> /data/home/sef-seat/bootstrap.log 2>&1 < /dev/null &
+cat /data/home/sef-seat/state; cat /data/home/sef-seat/status
+```
+
+`SEAT_DRY_RUN=1 SEAT_HOME=<tmp> SEAT_SRC_DIR=<checkout>` writes every file and runs no git, Docker or network command. The fixture in `apps/desktop/src/features/seat/bootstrap-script.test.ts` uses it.
+
+**Models.** A box has 4 vCPU and 8 GiB with no GPU, which is PR-31's lowest tier: `gemma4:e2b` for the tutor, brain and vision roles, and `embeddinggemma`. The safety model (`shieldgemma:2b`) is not pulled, so peer-share screening reports it as unavailable, and it stays advisory either way.
+
+**Upgrades.** v1 builds on the box from a pinned git ref, so upgrading means re-running the script with a new `SEAT_REF`. When the repo starts publishing an engine image to `ghcr.io`, the `build` service becomes a `docker compose pull` of a pinned tag, and `SEAT_REF` selects that tag.
+
+**Known gaps on a seat.** The engine container has no Python, so YouTube ingest (which shells out to `yt-dlp`) is unavailable. Without a desktop keyring, the engine's credential store falls back to memory (see the threat notes).
+

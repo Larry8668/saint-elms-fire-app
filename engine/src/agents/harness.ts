@@ -11,7 +11,7 @@ import type { EmbeddingService } from '../embed/service';
 import { logisticsContext } from '../logistics/context';
 import { extractLogistics } from '../logistics/extract';
 import type { LogisticsAccess } from '../logistics/store';
-import { resolveModel, type ResolvedModel } from '../models/registry';
+import { isOnDevice, resolveModel, type ResolvedModel } from '../models/registry';
 import type { SessionStore } from '../sessions/store';
 import type { SettingsReader } from '../settings/store';
 import { webSearch, type WebResult } from '../web/searxng';
@@ -90,6 +90,8 @@ function capabilityChecks(denied: CapabilityId[]): VerificationCheck[] {
  * before the first await, so nothing reaches a model — and no image bytes are handed to one —
  * until the deterministic checks have passed.
  */
+export const MODEL_UNAVAILABLE = 'The model service is unavailable right now, so I can’t answer. Nothing was checked or invented; try again in a moment.';
+
 export async function runChatTurn(req: ChatRequest, deps: HarnessDeps, emit: (event: ChatStreamEvent) => void): Promise<void> {
   const started = Date.now();
   const ctx = new TurnContext(emit);
@@ -295,6 +297,13 @@ export async function runChatTurn(req: ChatRequest, deps: HarnessDeps, emit: (ev
   // immediately, the model's text does not — it is buffered, checked, then served once.
   let text = '';
   for await (const chunk of stream.textStream) text += chunk;
+  // A provider that refused or failed (the gateway's 401/503, a stopped Ollama) ends the stream
+  // with no text. Say that, instead of letting the evidence checks blame the lessons.
+  const streamError = (stream as { error?: unknown }).error;
+  if (!text.trim() && streamError) {
+    log.warn('model_unavailable', { teacher: req.teacher, status: (streamError as { statusCode?: number }).statusCode ?? null });
+    return finish(MODEL_UNAVAILABLE, resolved, [{ id: 'model', label: 'The model service did not answer', passed: false }]);
+  }
   text = text.trim() || "I couldn't put an answer together just now. Could you rephrase that?";
 
   // 5. What the model read out of an image is untrusted input. Re-classified, and never served
@@ -356,10 +365,10 @@ export async function runChatTurn(req: ChatRequest, deps: HarnessDeps, emit: (ev
     });
   }
   checks.push({ id: 'released-only', label: 'Only released lessons were searched', passed: true, detail: 'Unreleased lessons are never on this device' });
-  if (hasImage) checks.push({ id: 'vision', label: 'Image read on-device', passed: resolved.provider.kind === 'ollama', detail: resolved.label });
+  if (hasImage) checks.push({ id: 'vision', label: 'Image read on-device', passed: isOnDevice(resolved.provider), detail: resolved.label });
   checks.push({
     id: 'provider',
-    label: resolved.provider.kind === 'ollama' ? 'Answered by a model on this device' : 'Answered by a hosted provider — the question left this device',
+    label: isOnDevice(resolved.provider) ? 'Answered by a model on this device' : 'Answered by a hosted provider — the question left this device',
     passed: true,
     detail: resolved.label,
   });

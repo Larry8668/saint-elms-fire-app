@@ -95,7 +95,9 @@ export async function probeGpu(probe: CapabilityProbe): Promise<string | undefin
   return undefined;
 }
 
-export async function detectCapability(probe: CapabilityProbe = systemProbe): Promise<DeviceCapability> {
+export async function detectCapability(probe: CapabilityProbe = systemProbe, gateway = config.modelGateway): Promise<DeviceCapability> {
+  // A hosted session's models run behind the gateway, not on this VM: its RAM sizes nothing.
+  if (gateway) return { ramGb: null, suggested: configuredDefaults() };
   const ramGb = readRamGb(probe);
   const gpu = await probeGpu(probe);
   const capability: DeviceCapability = { ramGb, ...(gpu ? { gpu } : {}), suggested: suggestFor(ramGb) };

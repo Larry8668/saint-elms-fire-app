@@ -82,5 +82,7 @@ export const PlannerDraftSchema = z.object({
       }),
     )
     .max(20),
+  /** Set, with no steps, when the goal is not something a study plan can serve. */
+  declined: z.string().optional(),
 });
 export type PlannerDraft = z.infer<typeof PlannerDraftSchema>;

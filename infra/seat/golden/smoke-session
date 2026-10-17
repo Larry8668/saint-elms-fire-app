@@ -1,0 +1,98 @@
+#!/usr/bin/env bash
+# Times one session from the golden snapshot, the way the orchestrator (PR-42) will run it:
+# create from the snapshot -> /start -> publish 4100 -> session-start.sh -> public health ->
+# delete. The total is the login-to-ready time a student would wait.
+#
+#   INSTABOX_API_KEY=... infra/seat/golden/smoke-session <snapshotId>
+#
+# Uses dummy uni and gateway URLs (unreachable is fine: the checks are the engine's own).
+#   SMOKE_KEEP=1   leave the VM running for a look; run again to delete it
+here=$(cd "$(dirname "$0")" && pwd)
+. "$here/lib.sh"
+
+SID=${1:?usage: smoke-session <snapshotId>}
+[[ $SID =~ ^(sn|im)_[a-z0-9]+$ ]] || die "not a snapshot id: $SID"
+APP=sef-session-smoke
+FILE=smoke.state
+declare -a TIMES=()
+t0=$(now)
+mark=$t0
+lap() {
+  local t
+  t=$(now)
+  TIMES+=("$1 $((t - mark))")
+  log "-- $1: $((t - mark))s"
+  mark=$t
+}
+
+MID=$(state $FILE MACHINE)
+# A leftover VM is reused only if it came from this snapshot (it carries the id in metadata).
+[[ -n $MID ]] || MID=$(list_by_app "$APP&metadata=snapshot:$SID" | head -n 1)
+if [[ -z $MID ]]; then
+  MID=$(create_machine $FILE "$(jq -nc --arg app $APP --arg sid "$SID" '{name: ("sef-smoke-" + (now | strftime("%H%M%S"))),
+    snapshotId: $sid, vault: false, metadata: {app: $app, snapshot: $sid}, autoSuspendAfterSeconds: 600}')")
+fi
+state $FILE MACHINE "$MID"
+log "session VM: $MID ($(machine_state "$MID"))"
+lap create
+
+[[ ${SMOKE_KEEP:-0} == 1 || -z $(state $FILE DONE) ]] || {
+  delete_machine "$MID" $FILE
+  rm -f "$STATE_DIR/$FILE"
+  exit 0
+}
+
+wait_running "$MID" $FILE
+lap start
+
+api POST "/v1/machines/$MID/ports" '{"port":4100,"name":"engine"}'
+[[ $STATUS == 200 || $STATUS == 201 ]] || die "publish: HTTP $STATUS $(err_text)"
+URL=$(jq -r .url "$RESP")
+HOST=${URL#https://}
+HOST=${HOST%/}
+[[ $HOST =~ ^[a-z0-9]([a-z0-9.-]{0,251}[a-z0-9])?$ ]] || die "publish returned an unexpected URL: $URL"
+lap publish
+
+# The sync values exercise session-start's checks; an engine without vault sync ignores them.
+envs=$(jq -nc --arg host "$HOST" --arg flush "$(openssl rand -hex 16)" '{ENGINE_PUBLIC_HOST: $host, ENGINE_SEAT_OWNER: "smoke-owner",
+  UNI_SERVER_URL: "https://uni.invalid", MODEL_GATEWAY_URL: "https://gateway.invalid/v1", MODEL_GATEWAY_TOKEN: "smoke-token",
+  VAULT_SYNC_ACCOUNT: "smoke-owner", SYNC_FLUSH_TOKEN: $flush}')
+box_exec "$MID" "bash $SEAT_HOME/session-start.sh" "" "$envs" 58 >&2 || die "session-start failed"
+lap session-start
+
+deadline=$(($(now) + 60))
+until body=$(curl -fsS --max-time 10 "$URL/api/health" 2>/dev/null); do
+  (($(now) < deadline)) || die "public /api/health never answered"
+  sleep 1
+done
+lap public-health
+total=$(($(now) - t0))
+
+fail=0
+check() {
+  if "${@:2}"; then log "ok   $1"; else
+    log "FAIL $1"
+    fail=1
+  fi
+}
+health_shape() { jq -e '(keys == ["engine", "ok", "uni"]) and .ok == true and (.uni | keys == ["reachable"])' <<<"$body" >/dev/null; }
+detail_closed() { [[ $(curl -s -o /dev/null -w '%{http_code}' --max-time 10 "$URL/api/health/detail") == 401 ]]; }
+ui_served() { curl -fsS --max-time 10 "$URL/" | grep -q '<div id="root">'; }
+check "health is {ok, engine, uni:{reachable}} and nothing more: $body" health_shape
+check "health/detail needs a session (401)" detail_closed
+check "the UI is served from the engine's origin" ui_served
+
+printf '\nsession from snapshot %s, %s\n' "$SID" "$(date -u +%Y-%m-%dT%H:%MZ)"
+for t in "${TIMES[@]}"; do printf '  %-15s %4ss\n' "${t% *}" "${t#* }"; done
+printf '  %-15s %4ss  (create to public health)\n' login-to-ready "$total"
+
+if [[ ${SMOKE_KEEP:-0} == 1 ]]; then
+  state $FILE DONE 1
+  log "kept $MID at $URL; run smoke-session again to delete it"
+else
+  t=$(now)
+  delete_machine "$MID" $FILE
+  rm -f "$STATE_DIR/$FILE"
+  log "deleted $MID in $(($(now) - t))s"
+fi
+exit $fail
