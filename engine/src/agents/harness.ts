@@ -11,7 +11,7 @@ import type { EmbeddingService } from '../embed/service';
 import { logisticsContext } from '../logistics/context';
 import { extractLogistics } from '../logistics/extract';
 import type { LogisticsAccess } from '../logistics/store';
-import { resolveModel, type ResolvedModel } from '../models/registry';
+import { isOnDevice, resolveModel, type ResolvedModel } from '../models/registry';
 import type { SessionStore } from '../sessions/store';
 import type { SettingsReader } from '../settings/store';
 import { webSearch, type WebResult } from '../web/searxng';
@@ -356,10 +356,10 @@ export async function runChatTurn(req: ChatRequest, deps: HarnessDeps, emit: (ev
     });
   }
   checks.push({ id: 'released-only', label: 'Only released lessons were searched', passed: true, detail: 'Unreleased lessons are never on this device' });
-  if (hasImage) checks.push({ id: 'vision', label: 'Image read on-device', passed: resolved.provider.kind === 'ollama', detail: resolved.label });
+  if (hasImage) checks.push({ id: 'vision', label: 'Image read on-device', passed: isOnDevice(resolved.provider), detail: resolved.label });
   checks.push({
     id: 'provider',
-    label: resolved.provider.kind === 'ollama' ? 'Answered by a model on this device' : 'Answered by a hosted provider — the question left this device',
+    label: isOnDevice(resolved.provider) ? 'Answered by a model on this device' : 'Answered by a hosted provider — the question left this device',
     passed: true,
     detail: resolved.label,
   });

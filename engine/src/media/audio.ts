@@ -6,6 +6,7 @@ import type { ProviderConfig } from '@sef/shared';
 import { errorFields, log } from '../config';
 import { checkAudioDuration, formatDuration } from '../brain/sources/limits';
 import { ModelConfigError, resolveModel } from '../models/registry';
+import { isGatewayProvider } from '../settings/store';
 import type { StoredSettings } from '../settings/store';
 import { ProcessError, spawnProcess, type RunCommand } from './process';
 
@@ -63,7 +64,9 @@ const trimSlash = (url: string) => url.replace(/\/+$/, '');
 
 /** Where a provider kind keeps its OpenAI-compatible transcriptions route, if it has one. */
 function transcriptionEndpoint(provider: ProviderConfig): string | null {
-  if (provider.kind === 'anthropic') return null;
+  // The model gateway serves no transcriptions route (its allowlist is chat, generate, embed,
+  // show, tags and version), so a hosted session never sends it audio.
+  if (provider.kind === 'anthropic' || isGatewayProvider(provider)) return null;
   if (provider.kind === 'ollama') return `${trimSlash(provider.baseUrl ?? 'http://localhost:11434')}/v1/audio/transcriptions`;
   const base = provider.baseUrl ?? (provider.kind === 'openai' ? 'https://api.openai.com/v1' : '');
   return base ? `${trimSlash(base)}/audio/transcriptions` : null;
@@ -266,7 +269,12 @@ export class AudioTranscriber {
       const resolved = resolveModel(await this.settings.get(), 'vision');
       const url = transcriptionEndpoint(resolved.provider);
       if (!url) {
-        throw new AudioTranscribeError(`The ${resolved.provider.label} provider has no transcription endpoint — pick an Ollama or OpenAI-compatible provider for the vision role.`, 'transcription_unavailable');
+        throw new AudioTranscribeError(
+          isGatewayProvider(resolved.provider)
+            ? 'Audio transcription is not available on a hosted session yet: the model gateway serves no transcription endpoint.'
+            : `The ${resolved.provider.label} provider has no transcription endpoint — pick an Ollama or OpenAI-compatible provider for the vision role.`,
+          'transcription_unavailable',
+        );
       }
       return { url, model: resolved.modelId, ...(resolved.provider.apiKey ? { apiKey: resolved.provider.apiKey } : {}) };
     } catch (error) {

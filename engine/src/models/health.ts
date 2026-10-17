@@ -1,5 +1,6 @@
 import type { ModelRole, ProviderConfig } from '@sef/shared';
 import type { StoredSettings } from '../settings/store';
+import { ollamaHeaders } from './registry';
 
 const TIMEOUT_MS = 2500;
 
@@ -14,7 +15,7 @@ export async function listProviderModels(provider: ProviderConfig): Promise<stri
   const base = (provider.baseUrl ?? '').replace(/\/+$/, '');
   switch (provider.kind) {
     case 'ollama': {
-      const body = (await getJson(`${base || 'http://localhost:11434'}/api/tags`)) as { models?: Array<{ name: string }> };
+      const body = (await getJson(`${base || 'http://localhost:11434'}/api/tags`, ollamaHeaders(provider))) as { models?: Array<{ name: string }> };
       return (body.models ?? []).map((m) => m.name);
     }
     case 'openai-compatible':

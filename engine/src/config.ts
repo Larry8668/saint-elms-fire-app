@@ -13,6 +13,25 @@ function env(name: string, fallback: string): string {
   return value ? value : fallback;
 }
 
+/**
+ * The operator's model gateway for hosted sessions (PR-43); null unless MODEL_GATEWAY_URL is set.
+ * `url` is the gateway root: the engine speaks Ollama's native `/api/*` surface to it.
+ */
+export interface ModelGateway {
+  url: string;
+  token?: string;
+}
+
+export function parseModelGateway(environment: NodeJS.ProcessEnv = process.env): ModelGateway | null {
+  const url = environment.MODEL_GATEWAY_URL?.trim();
+  if (!url) return null;
+  if (!/^https?:\/\/[^\s/]+/.test(url)) throw new Error('MODEL_GATEWAY_URL must be an http(s) URL');
+  const token = environment.MODEL_GATEWAY_TOKEN?.trim();
+  // The orchestrator hands out the OpenAI-style `<root>/v1`; the native surface lives at the root.
+  const root = url.replace(/\/+$/, '').replace(/\/(?:v1|api)$/, '');
+  return { url: root, ...(token ? { token } : {}) };
+}
+
 const dataDir = path.resolve(env('ENGINE_DATA_DIR', path.join(here, '../../.data/engine')));
 
 /** Everything one student owns on this device. Profiles never read each other's folders. */
@@ -119,6 +138,8 @@ export const config = {
   demoPassword: env('DEMO_PASSWORD', DEMO_PASSWORD_DEFAULT),
   /** Repo courseware used only to preload demo profiles offline. Real students sync signed packages. */
   demoCoursewareDir: path.resolve(env('COURSEWARE_DIR', path.join(here, '../../courseware'))),
+  /** Set on a hosted session: the `uni` provider becomes this gateway for every role (settings/store.ts). */
+  modelGateway: parseModelGateway(),
   /** Defaults used the first time settings.json is created. */
   defaults: {
     uniServerUrl: env('UNI_SERVER_URL', 'http://localhost:4200'),

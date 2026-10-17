@@ -38,6 +38,8 @@ What the Instabox edge sends to the box, measured on a real machine:
 | `ENGINE_STATIC_DIR` | unset | the absolute path of the built `apps/desktop/dist` | Serves the student UI from the engine's own origin (see below). The engine's loopback origin is then allowed as well. |
 | `UNI_SERVER_URL` | `http://localhost:4200` | the university's HTTPS URL | First-run default for the uni server. Settings can change it later. |
 | `OLLAMA_URL` | `http://localhost:11434` | `http://ollama:11434` (compose) or loopback | Model runtime on the box. |
+| `MODEL_GATEWAY_URL` | unset | the operator's model gateway (central-model and session VMs) | Set, the `uni` provider ("University model") becomes this gateway, spoken to over Ollama's native `/api/*` surface, and every role defaults to it. Give the gateway root; a trailing `/v1` (what the orchestrator passes) or `/api` is dropped. The native path keeps the tuning a local Ollama gets: `num_ctx` (`OLLAMA_NUM_CTX`), `think` (off unless a role asks for it) and the `format` grammar for structured output, and the gateway sees real token counts. The engine calls only `/api/chat`, `/api/embed` (falling back to `/api/embeddings`) and `/api/tags` (the role health probe), all on the gateway allowlist. Audio transcription has no gateway route, so a hosted session reports it as unavailable instead of calling one. The URL and token are applied on every settings read and are not stored, and roles stored on the on-box `ollama` provider read as the gateway, so the engine never calls an old gateway even if a settings file still names one. The gateway is not "on this device": verification labels say the answer came from a hosted provider, and the Settings model suggestions are the configured defaults rather than sized to the VM's RAM. |
+| `MODEL_GATEWAY_TOKEN` | unset | the session's short-lived gateway token | Sent as `Authorization: Bearer` on every native call to the gateway (chat, structured output, embeddings, the health probe). Read from the environment only: never written to `settings.json` or a profile's `private-settings.json`, never logged, and absent from `/api/health/detail` (a bad token shows there as `HTTP 401`). `GET /api/settings` shows only `hasApiKey`. |
 
 ### Running the engine in Docker
 
@@ -136,13 +138,16 @@ Responses carry a CSP limited to the engine's own origin (`default-src 'self'`, 
 
 ## Provisioning a seat on Instabox
 
-`infra/seat/` turns a fresh Instabox `universal` machine into a seat. Instabox snapshots cannot cross accounts, so the bootstrap script is the golden image.
+`infra/seat/` turns a fresh Instabox `universal` machine into a seat. Instabox snapshots cannot cross accounts, so for a student-owned box the bootstrap script is the golden image. For operator-hosted sessions, where the operator owns every VM, `infra/seat/golden/` builds one snapshot that every session VM is created from: see [infra/seat/golden/README.md](../infra/seat/golden/README.md).
 
 | File | What it is |
 | --- | --- |
 | `infra/seat/bootstrap.sh` | Idempotent setup script. The desktop app sends it over exec and starts it detached. |
 | `infra/seat/docker-compose.seat.yml` | Copied to the box as `docker-compose.yml`: `ollama`, a one-off `build`, and `engine`. |
 | `infra/seat/seat.env.template` | Rendered to the box as `seat.env`, the engine's environment (see the table above). |
+| `infra/seat/session-start.sh` | Per-session start on a golden-image box: writes `session.env` and (re)starts the engine. |
+
+**Modes.** `SEAT_MODEL_MODE=central` skips Ollama and the models (91 of the 98 s of a first bootstrap); the engine reaches the model through `MODEL_GATEWAY_URL`/`MODEL_GATEWAY_TOKEN` in `session.env`, which `session-start.sh` writes. `SEAT_MODE=golden` (always central) builds the image without any per-session value, starts nothing and ends with a scrub. The default, a local-model seat, is unchanged.
 
 **What runs where.** Everything lives under `/data/home/sef-seat`, on the box's persistent disk:
 

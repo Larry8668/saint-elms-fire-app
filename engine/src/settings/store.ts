@@ -1,5 +1,5 @@
 import { defaultProactivity, mergeProactivity, type EngineSettings, type ProactivityPatch, type ProviderConfig } from '@sef/shared';
-import { config, log } from '../config';
+import { config, log, type ModelGateway } from '../config';
 import { readJson, writeJson } from '../lib/fs';
 
 export type StoredSettings = EngineSettings;
@@ -19,22 +19,57 @@ export interface SettingsSource extends SettingsReader {
   update(patch: SettingsPatch): Promise<StoredSettings>;
 }
 
+/** The provider a hosted session's gateway takes over; its label already reads "University model". */
+export const GATEWAY_PROVIDER_ID = 'uni';
+
+/** True for the provider that is the operator's model gateway on this engine (none on a laptop). */
+export const isGatewayProvider = (provider: Pick<ProviderConfig, 'id'>, gateway: ModelGateway | null = config.modelGateway): boolean =>
+  Boolean(gateway) && provider.id === GATEWAY_PROVIDER_ID;
+
+/**
+ * On a hosted session (MODEL_GATEWAY_URL set) the `uni` provider is the operator's model
+ * gateway, spoken to over Ollama's native API, so every role keeps the tuning a local Ollama
+ * gets (`num_ctx`, `think`, the `format` grammar). Its URL and token come from the environment
+ * on every read and are never written to disk, so a rotated per-session token or a moved
+ * gateway takes effect on the next engine start. The token travels as the provider's apiKey,
+ * which native Ollama calls send as `Authorization: Bearer` (see `ollamaHeaders`).
+ */
+export function withGateway<T extends { providers: ProviderConfig[]; roles?: StoredSettings['roles'] }>(
+  settings: T,
+  gateway: ModelGateway | null = config.modelGateway,
+): T {
+  if (!gateway) return settings;
+  const managed = (p: ProviderConfig): ProviderConfig => ({ ...p, kind: 'ollama', baseUrl: gateway.url, apiKey: gateway.token });
+  const providers = settings.providers.map((p) => (p.id === GATEWAY_PROVIDER_ID ? managed(p) : p));
+  if (!providers.some((p) => p.id === GATEWAY_PROVIDER_ID)) providers.push(managed({ id: GATEWAY_PROVIDER_ID, kind: 'ollama', label: 'University model' }));
+  // A session box runs no Ollama: a role stored on it (a restored profile, say) uses the gateway.
+  const roles = settings.roles
+    ? (Object.fromEntries(
+        Object.entries(settings.roles).map(([role, value]) => [role, value?.provider === 'ollama' ? { ...value, provider: GATEWAY_PROVIDER_ID } : value]),
+      ) as StoredSettings['roles'])
+    : undefined;
+  return { ...settings, providers, ...(roles ? { roles } : {}) };
+}
+
 function defaultSettings(): StoredSettings {
   const d = config.defaults;
+  // A session engine has no local model runtime: every role starts on the gateway.
+  const roleProvider = config.modelGateway ? GATEWAY_PROVIDER_ID : 'ollama';
   return {
     uniServerUrl: d.uniServerUrl,
     searxngUrl: d.searxngUrl,
     thinking: true,
     providers: [
       { id: 'ollama', kind: 'ollama', label: 'Ollama (on this device)', baseUrl: d.ollamaUrl },
-      { id: 'uni', kind: 'openai-compatible', label: 'University model', baseUrl: 'http://localhost:11434/v1' },
+      // What a laptop stores; on a hosted session withGateway() overlays the gateway on every read.
+      { id: GATEWAY_PROVIDER_ID, kind: 'openai-compatible', label: 'University model', baseUrl: 'http://localhost:11434/v1' },
     ],
     roles: {
-      tutor: { provider: 'ollama', model: d.tutorModel },
-      brain: { provider: 'ollama', model: d.brainModel },
-      vision: { provider: 'ollama', model: d.visionModel },
-      embed: { provider: 'ollama', model: d.embedModel },
-      safety: { provider: 'ollama', model: d.safetyModel },
+      tutor: { provider: roleProvider, model: d.tutorModel },
+      brain: { provider: roleProvider, model: d.brainModel },
+      vision: { provider: roleProvider, model: d.visionModel },
+      embed: { provider: roleProvider, model: d.embedModel },
+      safety: { provider: roleProvider, model: d.safetyModel },
     },
     proactivity: defaultProactivity(),
   };
@@ -63,11 +98,13 @@ export class SettingsStore implements SettingsSource {
         log.info('settings_created', { file: this.filePath });
       }
     }
-    return this.current;
+    return withGateway(this.current);
   }
 
   async update(patch: SettingsPatch): Promise<StoredSettings> {
-    const existing = await this.get();
+    await this.get();
+    // The stored copy, not the read view: a gateway token must never reach writeJson.
+    const existing = this.current!;
     const providers = patch.providers ? mergeProviders(existing.providers, patch.providers) : existing.providers;
     this.current = {
       ...existing,
@@ -78,7 +115,7 @@ export class SettingsStore implements SettingsSource {
     };
     await writeJson(this.filePath, this.current);
     log.info('settings_updated', { fields: Object.keys(patch) });
-    return this.current;
+    return withGateway(this.current);
   }
 
   /** Safe for the UI: keys replaced by a flag. */
@@ -118,7 +155,7 @@ export class ProfileSettingsStore implements SettingsSource {
 
   async get(): Promise<StoredSettings> {
     const [device, privateSettings] = await Promise.all([this.deviceSettings.get(), this.privateSettings()]);
-    return { ...device, ...privateSettings };
+    return withGateway({ ...device, ...privateSettings });
   }
 
   async update(patch: SettingsPatch): Promise<StoredSettings> {

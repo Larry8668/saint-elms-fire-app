@@ -1,20 +1,28 @@
 #!/usr/bin/env bash
-# Turns a fresh Instabox `universal` box into a hosted seat: engine + vault + Ollama.
+# Turns a fresh Instabox `universal` box into a hosted seat: engine + vault + Ollama, or (in
+# golden mode) into the image that per-login session VMs are created from.
 #
 # The desktop app's "Claim your seat" flow sends this file over exec and starts it detached
 # (exec is blocking, capped at 600 s, and not idempotent), then polls $SEAT_HOME/state and
-# $SEAT_HOME/status with short execs. Snapshots cannot cross accounts, so this script is the
-# golden image.
+# $SEAT_HOME/status with short execs. For operator-hosted sessions, golden/build-snapshot runs it
+# in golden mode on a builder box and snapshots the result (golden/README.md).
 #
 # Inputs (environment; saved to $SEAT_HOME/bootstrap.inputs on first use, so a bare re-run
 # repeats the last configuration and a re-run with new values reconfigures):
 #   SEAT_REF          git ref or commit of the app repo to run (required)
-#   SEAT_PUBLIC_HOST  the published hostname, 4100-<id>.instabox.tech (required)
-#   SEAT_UNI_URL      the university server's URL (required)
+#   SEAT_MODE         seat (default) or golden: build everything, start nothing, keep no per-session
+#                     value, and scrub. session-start.sh then supplies those values per session.
+#   SEAT_MODEL_MODE   local (default: Ollama and models on the box) or central: no Ollama, the
+#                     model gateway URL and token come from session.env (session-start.sh).
+#                     Golden mode is always central.
+#   SEAT_PUBLIC_HOST  the published hostname, 4100-<id>.instabox.tech (required for a seat)
+#   SEAT_UNI_URL      the university server's URL (required for a seat)
 #   SEAT_CHAT_MODEL   default gemma4:e2b; SEAT_EMBED_MODEL default embeddinggemma
 #   SEAT_HOME         default /data/home/sef-seat
 #   SEAT_DRY_RUN=1    write every file but run no git, docker or network command (tests);
 #                     SEAT_SRC_DIR then names a local checkout to read the templates from.
+#
+# `bootstrap.sh scrub` only runs the pre-snapshot scrub (see scrub below).
 #
 # Re-runnable: every step converges (fetch instead of clone, `compose up -d`, pulls that are
 # no-ops when present, a build skipped when the checkout has not changed). One run at a time.
@@ -96,9 +104,11 @@ REF_RE='^[A-Za-z0-9][A-Za-z0-9._/-]{0,99}$'
 HOST_RE='^[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?(\.[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?)+$'
 URL_RE='^https?://[A-Za-z0-9.-]+(:[0-9]{1,5})?(/[A-Za-z0-9._~/-]*)?$'
 MODEL_RE='^[a-z0-9][a-z0-9._:/-]{0,99}$'
+# Variables that belong to one session: never in a golden image's seat.env.
+SESSION_KEYS_RE='^(ENGINE_PUBLIC_HOST|ENGINE_SEAT_OWNER|UNI_SERVER_URL|MODEL_GATEWAY_[A-Z_]+|OBJECT_STORE_[A-Z_]+|VAULT_SYNC_ACCOUNT|SYNC_FLUSH_TOKEN)='
 
 load_inputs() {
-  local saved_ref="" saved_host="" saved_uni="" saved_chat="" saved_embed=""
+  local saved_ref="" saved_host="" saved_uni="" saved_chat="" saved_embed="" saved_mode="" saved_model_mode=""
   if [[ -f $INPUTS ]]; then
     # Written by this script from validated values only; still parsed, never sourced.
     while IFS='=' read -r key value; do
@@ -108,6 +118,8 @@ load_inputs() {
         SEAT_UNI_URL) saved_uni=$value ;;
         SEAT_CHAT_MODEL) saved_chat=$value ;;
         SEAT_EMBED_MODEL) saved_embed=$value ;;
+        SEAT_MODE) saved_mode=$value ;;
+        SEAT_MODEL_MODE) saved_model_mode=$value ;;
       esac
     done <"$INPUTS"
   fi
@@ -117,15 +129,25 @@ load_inputs() {
   SEAT_CHAT_MODEL=${SEAT_CHAT_MODEL:-${saved_chat:-gemma4:e2b}}
   SEAT_EMBED_MODEL=${SEAT_EMBED_MODEL:-${saved_embed:-embeddinggemma}}
   SEAT_UNI_URL=${SEAT_UNI_URL%/}
+  SEAT_MODE=${SEAT_MODE:-${saved_mode:-seat}}
+  SEAT_MODEL_MODE=${SEAT_MODEL_MODE:-${saved_model_mode:-$([[ $SEAT_MODE == golden ]] && echo central || echo local)}}
 
+  [[ $SEAT_MODE == seat || $SEAT_MODE == golden ]] || die "SEAT_MODE must be seat or golden"
+  [[ $SEAT_MODEL_MODE == local || $SEAT_MODEL_MODE == central ]] || die "SEAT_MODEL_MODE must be local or central"
   [[ $SEAT_REF =~ $REF_RE && $SEAT_REF != *..* ]] || die "SEAT_REF is missing or not a plain git ref"
-  [[ $SEAT_PUBLIC_HOST =~ $HOST_RE ]] || die "SEAT_PUBLIC_HOST is missing or not a hostname"
-  [[ $SEAT_UNI_URL =~ $URL_RE ]] || die "SEAT_UNI_URL is missing or not an http(s) URL"
+  if [[ $SEAT_MODE == golden ]]; then
+    # An image shared by every session must not carry one session's host, uni or models.
+    [[ $SEAT_MODEL_MODE == central ]] || die "golden mode needs SEAT_MODEL_MODE=central: session VMs run no Ollama"
+    [[ -z $SEAT_PUBLIC_HOST && -z $SEAT_UNI_URL ]] || die "golden mode takes no SEAT_PUBLIC_HOST or SEAT_UNI_URL; session-start.sh supplies them"
+  else
+    [[ $SEAT_PUBLIC_HOST =~ $HOST_RE ]] || die "SEAT_PUBLIC_HOST is missing or not a hostname"
+    [[ $SEAT_UNI_URL =~ $URL_RE ]] || die "SEAT_UNI_URL is missing or not an http(s) URL"
+  fi
   [[ $SEAT_CHAT_MODEL =~ $MODEL_RE ]] || die "SEAT_CHAT_MODEL is not a model name"
   [[ $SEAT_EMBED_MODEL =~ $MODEL_RE ]] || die "SEAT_EMBED_MODEL is not a model name"
 
-  printf 'SEAT_REF=%s\nSEAT_PUBLIC_HOST=%s\nSEAT_UNI_URL=%s\nSEAT_CHAT_MODEL=%s\nSEAT_EMBED_MODEL=%s\n' \
-    "$SEAT_REF" "$SEAT_PUBLIC_HOST" "$SEAT_UNI_URL" "$SEAT_CHAT_MODEL" "$SEAT_EMBED_MODEL" >"$INPUTS.tmp"
+  printf 'SEAT_REF=%s\nSEAT_PUBLIC_HOST=%s\nSEAT_UNI_URL=%s\nSEAT_CHAT_MODEL=%s\nSEAT_EMBED_MODEL=%s\nSEAT_MODE=%s\nSEAT_MODEL_MODE=%s\n' \
+    "$SEAT_REF" "$SEAT_PUBLIC_HOST" "$SEAT_UNI_URL" "$SEAT_CHAT_MODEL" "$SEAT_EMBED_MODEL" "$SEAT_MODE" "$SEAT_MODEL_MODE" >"$INPUTS.tmp"
   mv -f "$INPUTS.tmp" "$INPUTS"
 }
 
@@ -168,18 +190,26 @@ checkout() {
 }
 
 configure() {
-  mkdir -p "$SEAT_HOME/engine-data" "$SEAT_HOME/ollama" "$SEAT_HOME/cache/home"
+  mkdir -p "$SEAT_HOME/engine-data" "$SEAT_HOME/cache/home"
+  [[ $SEAT_MODEL_MODE == central ]] || mkdir -p "$SEAT_HOME/ollama"
   cp "$SRC/infra/seat/docker-compose.seat.yml" "$SEAT_HOME/docker-compose.yml.tmp"
   mv -f "$SEAT_HOME/docker-compose.yml.tmp" "$SEAT_HOME/docker-compose.yml"
+  cp "$SRC/infra/seat/session-start.sh" "$SEAT_HOME/session-start.sh.tmp"
+  mv -f "$SEAT_HOME/session-start.sh.tmp" "$SEAT_HOME/session-start.sh"
+  # Lines that do not apply are dropped: central has no Ollama (the gateway comes from
+  # session.env), golden keeps no per-session value (session-start.sh writes them).
+  local drop=()
+  [[ $SEAT_MODEL_MODE == central ]] && drop+=(-e '/^OLLAMA_URL=/d')
+  [[ $SEAT_MODE == golden ]] && drop+=(-E -e "/$SESSION_KEYS_RE/d")
   # Values passed the patterns above, so none of them contains `|`, `&` or a newline.
-  sed -e "s|@@PUBLIC_HOST@@|$SEAT_PUBLIC_HOST|g" \
+  sed ${drop[@]+"${drop[@]}"} -e "s|@@PUBLIC_HOST@@|$SEAT_PUBLIC_HOST|g" \
     -e "s|@@UNI_SERVER_URL@@|$SEAT_UNI_URL|g" \
     -e "s|@@CHAT_MODEL@@|$SEAT_CHAT_MODEL|g" \
     -e "s|@@EMBED_MODEL@@|$SEAT_EMBED_MODEL|g" \
     "$SRC/infra/seat/seat.env.template" >"$SEAT_HOME/seat.env.tmp"
   if grep -q '@@' "$SEAT_HOME/seat.env.tmp"; then die "seat.env.template has a placeholder this script does not fill"; fi
   mv -f "$SEAT_HOME/seat.env.tmp" "$SEAT_HOME/seat.env"
-  log "wrote docker-compose.yml and seat.env for $SEAT_PUBLIC_HOST"
+  log "wrote docker-compose.yml and seat.env (${SEAT_MODE} mode, ${SEAT_MODEL_MODE} model) ${SEAT_PUBLIC_HOST}"
 }
 
 wait_http() {
@@ -196,7 +226,11 @@ wait_http() {
   log "$label is up"
 }
 
-compose() { run docker compose --project-directory "$SEAT_HOME" -f "$SEAT_HOME/docker-compose.yml" "$@"; }
+compose() {
+  local profile=()
+  [[ ${SEAT_MODEL_MODE:-local} == central ]] || profile=(--profile local-model)
+  run docker compose --project-directory "$SEAT_HOME" -f "$SEAT_HOME/docker-compose.yml" ${profile[@]+"${profile[@]}"} "$@"
+}
 
 start_ollama() {
   compose up -d --quiet-pull ollama
@@ -245,7 +279,49 @@ models_and_build() {
   }
 }
 
+# The engine's image must be on the box, so a session start never waits on a registry.
+verify_image() {
+  local image
+  # The build and the engine share the one node image (the x-node anchor), so the first
+  # `image: node:` line is the engine's. build_app always writes `built`.
+  image=$(sed -n 's/^  image: \(node:[^ ]*\)$/\1/p' "$SEAT_HOME/docker-compose.yml" | head -n 1)
+  [[ -n $image ]] || die "no node image in docker-compose.yml"
+  run docker image inspect --format '{{.Id}}' "$image"
+  [[ $DRY_RUN == 1 || -f $SRC/apps/desktop/dist/index.html ]] || die "the UI build is missing"
+  printf '{"ref":"%s","commit":"%s","image":"%s","builtAt":"%s"}\n' "$SEAT_REF" "$(cat "$SEAT_HOME/built")" "$image" \
+    "$(date -u +%Y-%m-%dT%H:%M:%SZ)" >"$SEAT_HOME/golden.json"
+}
+
+# Before a snapshot: every session's data goes, and the image is checked for anything secret.
+# Leaves the code, the build, the compose and env files, the package caches and the logs.
+scrub() {
+  [[ $SEAT_MODE == golden ]] || die "scrub is for golden images only; this box is a $SEAT_MODE"
+  compose rm --stop --force engine
+  rm -rf "$SEAT_HOME/engine-data" "$SEAT_HOME/cache/home"
+  mkdir -p "$SEAT_HOME/engine-data" "$SEAT_HOME/cache/home"
+  rm -f "$SEAT_HOME/session.env" "$SEAT_HOME/session.state" "$SEAT_HOME/status.prev"
+  rm -f "$HOME/.bash_history" "$HOME/.git-credentials" "$HOME/.npmrc" "$HOME/.docker/config.json"
+  local found
+  [[ -z $(ls -A "$SEAT_HOME/engine-data") ]] || die "engine-data is not empty"
+  # configure already dropped these; a hit means a template or a hand edit put one back.
+  ! grep -Eq "$SESSION_KEYS_RE" "$SEAT_HOME/seat.env" || die "seat.env holds a per-session value"
+  # src/ is the public repo (with its own .env.example) plus ignored build output, so it is
+  # checked for drift instead: nothing modified or untracked, and no .env file anywhere.
+  found=$(grep -rIlE 'ibk_[A-Za-z0-9]|(TOKEN|SECRET_KEY|PASSWORD)=[^[:space:]]' "$SEAT_HOME" --exclude-dir=src --exclude-dir=cache 2>/dev/null || true)
+  if [[ $DRY_RUN != 1 ]]; then
+    [[ -z $(git -C "$SRC" status --porcelain) ]] || die "the checkout in src/ has local changes"
+    found+=$(find "$SRC" -path "$SRC/node_modules" -prune -o -name '.env*' ! -name .env.example -print -quit)
+  fi
+  [[ -z $found ]] || die "secret-looking values in: $found"
+  log "scrub ok: $(cd "$SEAT_HOME" && ls -A | tr '\n' ' ')"
+}
+
 main() {
+  if [[ ${1:-} == scrub ]]; then
+    load_inputs
+    step scrub scrub
+    return
+  fi
   log "bootstrap starting (pid $$, dry run: $DRY_RUN)"
   set_state running
   # Pollers read this run's markers only; the previous run's stay in status.prev.
@@ -255,8 +331,20 @@ main() {
   step preflight preflight
   step checkout checkout
   step configure configure
-  step ollama start_ollama
-  models_and_build
+  if [[ $SEAT_MODEL_MODE == local ]]; then
+    step ollama start_ollama
+    models_and_build
+  else
+    step build build_app
+  fi
+  if [[ $SEAT_MODE == golden ]]; then
+    step image verify_image
+    step scrub scrub
+    mark "bootstrap done"
+    set_state "done"
+    log "golden image ready: run scrub once more, stop the box and snapshot it"
+    return
+  fi
   step engine start_engine
   mark "bootstrap done"
   set_state "done"
