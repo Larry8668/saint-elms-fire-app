@@ -1,0 +1,77 @@
+# One student's hosted seat: the engine and Ollama on their own cloud box.
+#
+# bootstrap.sh copies this file to $SEAT_HOME/docker-compose.yml and renders seat.env next to
+# it, so every relative path below is inside $SEAT_HOME (/data/home/sef-seat, on the box's
+# persistent disk). Do not run it from the repo checkout.
+#
+# Plain processes die when the box is stopped and started; containers with
+# `restart: unless-stopped` come back with the Docker daemon, which is enabled at boot.
+# That is why both long-running services are containers.
+name: sef-seat
+
+x-node: &node
+  # Same base as infra/docker/node-service.Dockerfile. The build and the engine share it, so
+  # anything compiled during install runs on the libc that built it.
+  image: node:24-slim
+  user: "1000:1000"
+  volumes:
+    - ./src:/seat/src
+    - ./engine-data:/seat/engine-data
+    - ./cache:/seat/cache
+  environment: &node-env
+    HOME: /seat/cache/home
+    COREPACK_HOME: /seat/cache/corepack
+    COREPACK_ENABLE_DOWNLOAD_PROMPT: "0"
+    npm_config_store_dir: /seat/cache/pnpm-store
+    CI: "true"
+
+services:
+  ollama:
+    # Pinned: a floating tag would change the model runtime under a running seat.
+    image: ollama/ollama:0.40.3
+    restart: unless-stopped
+    environment:
+      # One student per box: one request at a time, chat and embedding models both resident.
+      OLLAMA_NUM_PARALLEL: "1"
+      OLLAMA_MAX_LOADED_MODELS: "2"
+      OLLAMA_KEEP_ALIVE: 30m
+    volumes:
+      - ./ollama:/root/.ollama
+    # Loopback only: the engine reaches it from the host network; the edge never does.
+    ports: ["127.0.0.1:11434:11434"]
+
+  # One-off: install the engine's and the UI's dependencies and build the UI the engine
+  # serves. `docker compose --profile build run --rm build`; bootstrap.sh runs it.
+  build:
+    <<: *node
+    profiles: ["build"]
+    working_dir: /seat/src
+    environment:
+      <<: *node-env
+      VITE_ENGINE_URL: same-origin
+      VITE_DEMO_MODE: "false"
+    command:
+      - bash
+      - -euc
+      - >-
+        corepack pnpm install --frozen-lockfile --filter @sef/engine... --filter @sef/desktop... &&
+        corepack pnpm --filter @sef/desktop exec vite build
+
+  engine:
+    <<: *node
+    restart: unless-stopped
+    # Host networking keeps the edge's peer at 127.0.0.1, which is what the engine's default
+    # ENGINE_TRUSTED_PROXIES expects (docs/hosted-seat.md, "Running the engine in Docker").
+    network_mode: host
+    working_dir: /seat/src/engine
+    env_file: [seat.env]
+    # tsx straight from node_modules, not through corepack: a restart after a stop/start must
+    # not depend on downloading pnpm again.
+    command: ["./node_modules/.bin/tsx", "src/index.ts"]
+    healthcheck:
+      test: ["CMD", "node", "-e", "fetch('http://127.0.0.1:4100/api/health').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"]
+      interval: 15s
+      timeout: 5s
+      retries: 5
+      start_period: 60s
+    depends_on: [ollama]
