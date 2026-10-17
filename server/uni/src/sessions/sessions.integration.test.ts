@@ -22,6 +22,7 @@ import { ReleaseStore } from '../store/releases';
 import { signUpVerified, testOptions, withAuthSchema, type AuthContext } from '../testing/auth-fixture';
 import type { SessionConfig } from './config';
 import { SessionOrchestrator, type HealthProbe } from './orchestrator';
+import { SessionReaper } from './reaper';
 import { sessionAdminRoutes, sessionRoutes } from './routes';
 import { sessionById, type SessionRow } from './store';
 
@@ -424,6 +425,83 @@ test('logout during a spawn stops the spawn and deletes what it made', testOptio
     assert.equal(final.state, 'ended');
     assert.equal(h.fake.machines.size, 0);
   }, { timeouts: { create: 3000, start: 3000, publish: 1000, sessionStart: 3000, health: 30_000, flush: 3000, delete: 3000 } });
+});
+
+test('reaper: an idle session is flushed, then deleted; a failed flush is retried once and the delete still happens', testOptions, async () => {
+  for (const flush of ['ok', 'fails', 'missing'] as const) {
+    await withSessions(async (h) => {
+      h.fake.onExec = (_m, body) => {
+        if (!String(body.cmd).includes('session-stop.sh')) return { stdout: '', stderr: '', exitCode: 0 };
+        if (flush === 'fails') return { stdout: '', stderr: 'flush: store unreachable', exitCode: 1 };
+        if (flush === 'missing') return { stdout: '', stderr: 'session-stop.sh not found', exitCode: 127 };
+        return { stdout: '{"ok":true}', stderr: '', exitCode: 0 };
+      };
+      const { cookie } = await approvedStudent(h, `idle-${flush}`);
+      const { id } = await json(await call(h, 'POST', '/v1/session', cookie));
+      await h.orchestrator.idle();
+      const mid = (await row(h, id)).machine_id!;
+      const reaper = new SessionReaper(h.orchestrator, h.context.pool, h.client);
+      await reaper.tick();
+      await h.orchestrator.idle();
+      assert.equal((await row(h, id)).state, 'ready', 'a fresh heartbeat keeps it');
+
+      await h.context.pool.query("UPDATE student_sessions SET heartbeat_at = now() - interval '16 minutes' WHERE id = $1", [id]);
+      await reaper.tick();
+      await h.orchestrator.idle();
+      const final = await row(h, id);
+      assert.equal(final.state, 'ended', `ended after flush ${flush}`);
+      assert.equal(final.end_reason, 'idle');
+      assert.equal(stopExecs(h).length, flush === 'fails' ? 2 : 1);
+      const del = h.fake.requests('DELETE', `/v1/machines/${mid}`)[0];
+      assert.ok(del, 'deleted regardless of the flush');
+      assert.ok(h.fake.seen.indexOf(stopExecs(h).at(-1)!) < h.fake.seen.indexOf(del));
+      if (flush === 'fails') assert.match(final.last_error ?? '', /flush: session-stop.sh exited 1/);
+      if (flush === 'missing') assert.match(final.last_error ?? '', /not found/);
+    });
+  }
+});
+
+test('reaper: an expired lease ends the session too, and a heartbeat extends it', testOptions, async () => {
+  await withSessions(async (h) => {
+    const { cookie } = await approvedStudent(h, 'lease');
+    const { id } = await json(await call(h, 'POST', '/v1/session', cookie));
+    await h.orchestrator.idle();
+    await h.context.pool.query("UPDATE student_sessions SET lease_expires_at = now() + interval '1 minute' WHERE id = $1", [id]);
+    const beat = await call(h, 'POST', '/v1/session/heartbeat', cookie);
+    assert.equal(beat.status, 200);
+    assert.ok((await row(h, id)).lease_expires_at.getTime() > Date.now() + 14 * 60_000);
+    await h.context.pool.query("UPDATE student_sessions SET lease_expires_at = now() - interval '1 second' WHERE id = $1", [id]);
+    await new SessionReaper(h.orchestrator, h.context.pool, h.client).tick();
+    await h.orchestrator.idle();
+    const final = await row(h, id);
+    assert.equal(final.state, 'ended');
+    assert.equal(final.end_reason, 'lease_expired');
+    assert.equal((await call(h, 'POST', '/v1/session/heartbeat', cookie)).status, 404);
+  });
+});
+
+test('orphan sweep: deletes only unowned app:sef-session machines; the user box and other labels are untouched', testOptions, async () => {
+  await withSessions(async (h) => {
+    const userBox = h.fake.addForeignMachine({}, 'suspended');
+    const otherApp = h.fake.addForeignMachine({ app: 'sef-seat' }, 'running');
+    const golden = h.fake.addForeignMachine({ app: 'sef-golden' }, 'stopped');
+    const orphan = h.fake.addForeignMachine({ app: 'sef-session', session: randomUUID() }, 'running');
+    const { cookie } = await approvedStudent(h, 'owner');
+    const { id } = await json(await call(h, 'POST', '/v1/session', cookie));
+    await h.orchestrator.idle();
+    const owned = (await row(h, id)).machine_id!;
+    // A labelled machine whose live row has not recorded its id yet (mid-create) is kept too.
+    const { acquireLease } = await import('./store');
+    const { row: pending } = await acquireLease(h.context.pool, { id: 'pending-account', kind: 'user' }, { maxConcurrent: 3, idleMinutes: 15 });
+    const inFlight = h.fake.addForeignMachine({ app: 'sef-session', session: pending.id }, 'creating');
+
+    const deleted = await new SessionReaper(h.orchestrator, h.context.pool, h.client).sweepOrphans();
+    assert.deepEqual(deleted, [orphan.id]);
+    const touched = new Set(h.fake.seen.filter((r) => r.method !== 'GET' || /\/v1\/machines\/m_/.test(r.path)).map((r) => r.path.match(/m_[a-z0-9]{26}/)?.[0]));
+    for (const untouched of [userBox.id, otherApp.id, golden.id, inFlight.id]) assert.equal(touched.has(untouched), false, `never touched ${untouched}`);
+    assert.ok(h.fake.machines.has(owned));
+    assert.equal(h.fake.requests('GET', '/v1/machines?')[0]!.path.includes('metadata=app%3Asef-session'), true);
+  });
 });
 
 test('capacity: beyond SESSION_MAX_CONCURRENT a login is queued with an honest position, then promoted', testOptions, async () => {
