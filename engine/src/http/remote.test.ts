@@ -163,3 +163,40 @@ test('a hosted seat closes the profile picker and the password-less offline unlo
   const local = await harness();
   assert.ok(((await (await local.call('/api/auth/profiles')).json()) as unknown[]).length > 0, 'a loopback engine keeps the picker');
 });
+
+test('without ENGINE_PUBLIC_HOST, a forwarded or non-loopback caller still finds the picker and offline unlock closed', async () => {
+  // The fail-open config from the review: a seat named only in ENGINE_ALLOWED_ORIGINS, behind an edge that sends Host: 127.0.0.1.
+  const { call, registry } = await harness({ ENGINE_ALLOWED_ORIGINS: `https://${SEAT}`, ENGINE_TRUST_PROXY: '1' });
+  await registry.ensure({ id: 'fwd-user', name: 'F', email: 'f@test', cohortId: 'c' }, 'pw');
+  const profiles = (headers: Record<string, string>, socket?: object) => call('/api/auth/profiles', { headers }, socket);
+  const unlock = (headers: Record<string, string>, socket?: object) =>
+    call('/api/auth/offline-login', { method: 'POST', headers: { 'content-type': 'application/json', ...headers }, body: JSON.stringify({ profileId: 'fwd-user' }) }, socket);
+
+  const forwarded: Array<Record<string, string>> = [{ 'x-forwarded-for': '198.51.100.9' }, { 'x-forwarded-host': SEAT }, { forwarded: 'for=198.51.100.9;proto=https' }];
+  for (const headers of forwarded) {
+    // Closed either way: an empty picker, or (for a forwarded host this engine does not own) the Host gate's 403.
+    const res = await profiles(headers, edgeSocket);
+    const body = await res.json();
+    assert.ok(res.status === 403 || (Array.isArray(body) && body.length === 0), `${JSON.stringify(headers)} -> ${JSON.stringify(body)}`);
+    assert.equal((await unlock(headers, edgeSocket)).status, 403, JSON.stringify(headers));
+  }
+  const lanSocket = { incoming: { socket: { remoteAddress: '172.17.0.1', remotePort: 50000, remoteFamily: 'IPv4' } } };
+  assert.deepEqual(await (await profiles({}, lanSocket)).json(), [], 'a non-loopback peer is remote');
+  assert.equal((await unlock({}, lanSocket)).status, 403);
+
+  const ids = async (socket: object) => ((await (await profiles({}, socket)).json()) as Array<{ id: string }>).map((p) => p.id);
+  assert.ok((await ids(edgeSocket)).includes('fwd-user'), 'a plain loopback caller is the device');
+  const v6Socket = { incoming: { socket: { remoteAddress: '::ffff:127.0.0.1', remotePort: 50000, remoteFamily: 'IPv6' } } };
+  assert.ok((await ids(v6Socket)).includes('fwd-user'), 'IPv4-mapped loopback is the device');
+});
+
+test('ENGINE_DEVICE_PEERS lets a container count its bridge gateway as the device, never a forwarded request', async () => {
+  const { call, registry } = await harness({ ENGINE_DEVICE_PEERS: '172.16.0.0/12' });
+  await registry.ensure({ id: 'peer-user', name: 'P', email: 'p@test', cohortId: 'c' }, 'pw');
+  const gateway = { incoming: { socket: { remoteAddress: '172.18.0.1', remotePort: 50000, remoteFamily: 'IPv4' } } };
+  const stranger = { incoming: { socket: { remoteAddress: '10.0.0.5', remotePort: 50000, remoteFamily: 'IPv4' } } };
+  const listed = (await (await call('/api/auth/profiles', {}, gateway)).json()) as Array<{ id: string }>;
+  assert.ok(listed.some((p) => p.id === 'peer-user'));
+  assert.deepEqual(await (await call('/api/auth/profiles', {}, stranger)).json(), []);
+  assert.deepEqual(await (await call('/api/auth/profiles', { headers: { 'x-forwarded-for': '6.6.6.6' } }, gateway)).json(), []);
+});

@@ -14,7 +14,7 @@ import { SettingsStore } from './settings/store';
 import { startSignalScheduler } from './signals/scheduler';
 
 async function main() {
-  const edge = edgeStartupCheck(process.env);
+  const edge = edgeStartupCheck(process.env, config.host);
   for (const warning of edge.warnings) log.warn('edge_config_warning', { warning });
   if (edge.errors.length > 0) {
     for (const error of edge.errors) log.error('edge_config_refused', { error });

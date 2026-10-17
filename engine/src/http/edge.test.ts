@@ -163,3 +163,48 @@ test('Origin allowlist: built-ins always, the seat origin derived, extras from e
   assert.equal(seat.origins.has('*'), false);
   assert.equal(seat.origins.has('null'), false);
 });
+
+test('startup refuses configs that would run device mode on a reachable engine', () => {
+  const refused = (env: NodeJS.ProcessEnv, bind?: string) => edgeStartupCheck(env, bind).errors;
+  assert.deepEqual(refused({}), [], 'the loopback default');
+  assert.deepEqual(refused({}, '127.0.0.1'), []);
+  assert.deepEqual(refused({}, '::1'), []);
+  assert.deepEqual(refused({}, 'localhost'), []);
+  assert.equal(refused({}, '0.0.0.0').length, 1, 'a public bind without a public host');
+  assert.match(refused({}, '::')[0]!, /ENGINE_PUBLIC_HOST/);
+  assert.equal(refused({ ENGINE_ALLOWED_ORIGINS: 'https://seat.example.test' }).length, 1, 'the fail-open seat from the review');
+  assert.equal(refused({ ENGINE_ALLOWED_ORIGINS: 'https://seat.example.test' }, '0.0.0.0').length, 2);
+  assert.deepEqual(refused({ ENGINE_ALLOWED_ORIGINS: 'http://localhost:4173,https://tauri.localhost,http://[::1]:5173' }), [], 'loopback origins are fine');
+  assert.equal(refused({ ENGINE_PUBLIC_HOST: 'localhost' }).length, 1, 'a public host that parses to nothing is not silently device mode');
+
+  // A hosted seat may bind and serve publicly.
+  assert.deepEqual(refused({ ENGINE_PUBLIC_HOST: 'seat.example.test', ENGINE_ALLOWED_ORIGINS: 'https://app.example.edu' }, '0.0.0.0'), []);
+  // A container publishing its port on loopback declares its gateway instead (docker-compose.yml), and is warned.
+  const container = edgeStartupCheck({ ENGINE_DEVICE_PEERS: '172.16.0.0/12' }, '0.0.0.0');
+  assert.deepEqual(container.errors, []);
+  assert.match(container.warnings.join(' '), /beyond loopback/);
+  // A non-loopback http origin is not refused, but is said out loud.
+  const lan = edgeStartupCheck({ ENGINE_ALLOWED_ORIGINS: 'http://192.168.1.5:5173' });
+  assert.deepEqual(lan.errors, []);
+  assert.equal(lan.warnings.length, 1);
+});
+
+test('remote(): hosted, forwarded or non-loopback', async () => {
+  const policy = (env: NodeJS.ProcessEnv) => edgePolicy(env);
+  const remoteOf = async (env: NodeJS.ProcessEnv, peer: string | null, headers: Record<string, string> = {}) => {
+    const p = policy(env);
+    const app = new Hono();
+    app.get('/', (c) => c.json(p.remote(c)));
+    return (await app.request('/', { headers: { host: '127.0.0.1:4100', ...headers } }, socketFrom(peer))).json();
+  };
+  assert.equal(await remoteOf({}, '127.0.0.1'), false);
+  assert.equal(await remoteOf({}, '::1'), false);
+  assert.equal(await remoteOf({}, '127.0.0.1', { 'x-forwarded-for': '1.2.3.4' }), true);
+  assert.equal(await remoteOf({}, '127.0.0.1', { 'x-forwarded-host': 'x' }), true);
+  assert.equal(await remoteOf({}, '127.0.0.1', { 'x-forwarded-proto': 'https' }), true);
+  assert.equal(await remoteOf({}, '127.0.0.1', { forwarded: 'for=1.2.3.4' }), true);
+  assert.equal(await remoteOf({}, '192.168.1.9'), true);
+  assert.equal(await remoteOf({ ENGINE_PUBLIC_HOST: SEAT }, '127.0.0.1'), true, 'hosted is always remote');
+  assert.equal(await remoteOf({ ENGINE_DEVICE_PEERS: '192.168.0.0/16' }, '192.168.1.9'), false);
+  assert.equal(await remoteOf({ ENGINE_DEVICE_PEERS: '192.168.1.9/' }, '8.8.8.8'), true, 'a malformed device peer never widens to /0');
+});

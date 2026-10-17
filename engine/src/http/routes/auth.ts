@@ -28,9 +28,10 @@ const OfflineBodySchema = z.object({ profileId: z.string().min(1).max(128) });
 export function authRoutes(deps: EngineDeps) {
   const app = new Hono<EngineEnv>();
   const edge = edgePolicy(process.env);
-  // A hosted seat is reachable by anyone with its URL: possession of the device no longer
-  // proves anything, so the profile picker and the password-less offline unlock close.
-  const hosted = edge.publicHost !== null;
+  // A hosted seat is reachable by anyone with its URL, and so is any engine a forwarded or
+  // non-loopback request reaches: possession of the device proves nothing there, so the
+  // profile picker, the password-less offline unlock and keyless device polls close.
+  const remote = (c: Context<EngineEnv>) => edge.remote(c);
 
   // Guessing is limited per client across both sign-in routes (one shared budget); a
   // sign-in that succeeds refunds its attempt. Device polls carry no secret, so they are
@@ -44,7 +45,7 @@ export function authRoutes(deps: EngineDeps) {
   };
 
   /** Profiles on this device, for the sign-in picker. No secrets, works offline. */
-  app.get('/profiles', async (c) => c.json(hosted ? [] : await deps.auth.profiles()));
+  app.get('/profiles', async (c) => c.json(remote(c) ? [] : await deps.auth.profiles()));
 
   app.post('/login', signInLimit, async (c) => {
     const parsed = LoginRequestSchema.safeParse(await c.req.json().catch(() => null));
@@ -74,7 +75,7 @@ export function authRoutes(deps: EngineDeps) {
     const parsed = PollBodySchema.safeParse(await c.req.json().catch(() => null));
     if (!parsed.success) return c.json({ error: 'Invalid poll', code: 'invalid_request' }, 400);
     try {
-      return c.json(await deps.auth.pollDeviceSignIn({ flowKey: parsed.data?.flowKey, requireFlowKey: hosted }));
+      return c.json(await deps.auth.pollDeviceSignIn({ flowKey: parsed.data?.flowKey, requireFlowKey: remote(c) }));
     } catch (error) {
       if (error instanceof AuthError) return failed(c, error);
       if (error instanceof UniUnreachableError) {
@@ -89,7 +90,7 @@ export function authRoutes(deps: EngineDeps) {
    * verified locally. First-time users have no entitlement and cannot get in offline.
    */
   app.post('/offline-login', signInLimit, async (c) => {
-    if (hosted) {
+    if (remote(c)) {
       return c.json({ error: 'Offline unlock is only available on the device itself. Sign in with your university account.', code: 'offline_unavailable' }, 403);
     }
     const parsed = OfflineBodySchema.safeParse(await c.req.json().catch(() => null));
