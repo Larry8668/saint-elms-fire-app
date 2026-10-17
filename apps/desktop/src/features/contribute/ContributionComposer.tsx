@@ -12,6 +12,7 @@ import { log } from '@/lib/log';
 import { useInvalidateBrain, useSessions } from '@/lib/queries';
 import { timeAgo } from '@/lib/time';
 import { formatSeconds, normalizeMediaType, textContribution, uploadContribution } from './review';
+import { whereItIsKept } from '@/features/auth/sign-in-copy';
 
 type Mode = 'write' | 'upload' | 'link' | 'conversation';
 
@@ -231,7 +232,7 @@ export function ContributionComposer({ onFiled }: { onFiled: (receipt: SourceRec
               <span className="block">
                 <FileUp className="mx-auto mb-2 size-6 text-beacon-300" />
                 <span className="block text-[14px] font-medium text-night-100">Drop a file, or click to choose</span>
-                <span className="mt-1 block text-[12px] text-night-500">PDF · image of notes · audio recording · markdown or text · stays on this device</span>
+                <span className="mt-1 block text-[12px] text-night-500">PDF · image of notes · audio recording · markdown or text · {whereItIsKept()}</span>
               </span>
             )}
           </button>

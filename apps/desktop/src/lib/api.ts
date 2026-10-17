@@ -78,10 +78,8 @@ import type {
   WikiProposalRecord,
 } from '@sef/shared';
 import { log } from './log';
-
-const configuredEngineUrl = import.meta.env?.VITE_ENGINE_URL as string | undefined;
-/** `same-origin` builds the UI an engine serves itself (a hosted seat): requests go to the page's own origin. */
-export const ENGINE_URL = configuredEngineUrl === 'same-origin' ? '' : (configuredEngineUrl ?? 'http://127.0.0.1:4100');
+import { currentEngineTarget, isRemoteTarget } from './seat';
+import { edgeCause, seatWaker, type WakeCause, type WakeOutcome } from './seat-wake';
 
 export class EngineError extends Error {
   constructor(
@@ -91,6 +89,67 @@ export class EngineError extends Error {
     readonly code?: string,
   ) {
     super(message);
+  }
+}
+
+const LOCAL_ENGINE_DOWN = 'The local engine is not running. Start it with "pnpm dev".';
+
+/** Honest copy for a workspace the edge answered for: it never claims a local engine is down. */
+const workspaceUnavailable = (outcome: Exclude<WakeOutcome, 'ready'>) =>
+  outcome === 'offline'
+    ? new EngineError('Your workspace is offline. It may have ended after a period without use: open it again from the university portal.', 0, 'seat_paused')
+    : new EngineError('Could not reach your workspace. Check your connection and try again.', 0, 'seat_unreachable');
+
+const isAbort = (error: unknown) => (error as Error | undefined)?.name === 'AbortError';
+
+/**
+ * One engine call. The address is read per call (lib/seat.ts), never fixed at build time.
+ *
+ * A hosted workspace sits behind an edge: when the edge answers for it (a non-JSON 502/503) or
+ * nothing answers, the call waits while the shared waker polls health, then goes again. A
+ * 502/503 from the edge means the engine never saw the first try, so any call is resent; after a
+ * dropped connection only a read is, because a write might have landed.
+ */
+async function engineFetch(path: string, init?: RequestInit): Promise<Response> {
+  const target = currentEngineTarget();
+  const send = () => fetch(`${target.base}${path}`, init);
+  if (!isRemoteTarget(target)) {
+    try {
+      return await send();
+    } catch (error) {
+      if (isAbort(error)) throw error;
+      log.error('engine_unreachable', { path, error: String(error) });
+      throw new EngineError(LOCAL_ENGINE_DOWN, 0);
+    }
+  }
+  let cause: WakeCause;
+  try {
+    const res = await send();
+    const edge = edgeCause(res);
+    if (!edge) {
+      seatWaker.settle();
+      return res;
+    }
+    cause = edge;
+  } catch (error) {
+    if (isAbort(error)) throw error;
+    cause = 'network';
+  }
+  log.info('workspace_waking', { path, cause });
+  const outcome = await seatWaker.wake(target.base, cause);
+  if (outcome !== 'ready') throw workspaceUnavailable(outcome);
+  const method = (init?.method ?? 'GET').toUpperCase();
+  if (cause === 'network' && method !== 'GET' && method !== 'HEAD') {
+    throw new EngineError('Your workspace lost the connection and is back now. Try that again.', 0, 'seat_woke');
+  }
+  try {
+    const res = await send();
+    const edge = edgeCause(res);
+    if (edge) throw workspaceUnavailable(edge === 'offline' ? 'offline' : 'network');
+    return res;
+  } catch (error) {
+    if (isAbort(error) || error instanceof EngineError) throw error;
+    throw workspaceUnavailable('network');
   }
 }
 
@@ -106,16 +165,10 @@ export function setEngineSession(token: string | null, onExpired?: () => void) {
 const authHeaders = (): Record<string, string> => (sessionToken ? { authorization: `Bearer ${sessionToken}` } : {});
 
 async function request<T>(path: string, init?: RequestInit): Promise<T> {
-  let res: Response;
-  try {
-    res = await fetch(`${ENGINE_URL}${path}`, {
-      ...init,
-      headers: { 'content-type': 'application/json', ...authHeaders(), ...init?.headers },
-    });
-  } catch (error) {
-    log.error('engine_unreachable', { path, error: String(error) });
-    throw new EngineError('The local engine is not running. Start it with "pnpm dev".', 0);
-  }
+  const res = await engineFetch(path, {
+    ...init,
+    headers: { 'content-type': 'application/json', ...authHeaders(), ...init?.headers },
+  });
   if (res.status === 204) return undefined as T;
   const body = (await res.json().catch(() => ({}))) as T & { error?: string; code?: string };
   if (!res.ok) {
@@ -130,13 +183,7 @@ const post = <T>(path: string, body?: unknown) => request<T>(path, { method: 'PO
 
 /** Binary responses bypass the JSON path — the raw file goes to an <img> or a download. */
 async function requestBlob(path: string): Promise<Blob> {
-  let res: Response;
-  try {
-    res = await fetch(`${ENGINE_URL}${path}`, { headers: authHeaders() });
-  } catch (error) {
-    log.error('engine_unreachable', { path, error: String(error) });
-    throw new EngineError('The local engine is not running. Start it with "pnpm dev".', 0);
-  }
+  const res = await engineFetch(path, { headers: authHeaders() });
   if (!res.ok) {
     const body = (await res.json().catch(() => ({}))) as { error?: string };
     throw new EngineError(body.error ?? `Request failed (${res.status})`, res.status);
@@ -352,6 +399,22 @@ export interface TurnPayload {
   syllabusConceptKey?: string;
 }
 
+/** How a turn's answer arrived: streamed as it was written, or held back and delivered in one piece. */
+export type StreamDelivery = 'streamed' | 'buffered' | 'failed' | 'aborted';
+
+/**
+ * The engine sends a status frame as soon as a turn starts, so a live stream always has frames
+ * before its answer. When the first frames arrive together with `done`, and late, something in
+ * between (a proxy, an edge) buffered the response. The chat still completes; it says so.
+ */
+export const BUFFERED_AFTER_MS = 2_000;
+export const BUFFERED_NOTICE = 'This answer arrived all at once: your connection held the stream back instead of streaming it.';
+
+/** True when the first read carrying frames also carried the answer's end, long after the request. */
+export function looksBuffered(firstFramesAt: number, startedAt: number, firstReadHasDone: boolean): boolean {
+  return firstReadHasDone && firstFramesAt - startedAt >= BUFFERED_AFTER_MS;
+}
+
 /**
  * Streams one admitted turn over SSE. The server owns the transcript, so a turn carries the
  * new message only — never a client-built history.
@@ -359,33 +422,41 @@ export interface TurnPayload {
  * A refusal before streaming (unknown session, replay, concurrency, policy) arrives as a
  * non-SSE JSON response and is thrown as TurnRefused so the caller can reopen or surface it.
  */
-export async function streamTurn(turn: TurnPayload, onEvent: (event: ChatStreamEvent) => void, signal?: AbortSignal): Promise<void> {
+export async function streamTurn(
+  turn: TurnPayload,
+  onEvent: (event: ChatStreamEvent) => void,
+  signal?: AbortSignal,
+  now: () => number = Date.now,
+): Promise<StreamDelivery> {
+  const startedAt = now();
   let res: Response;
   try {
-    res = await fetch(`${ENGINE_URL}/api/chat/turn`, {
+    res = await engineFetch('/api/chat/turn', {
       method: 'POST',
       headers: { 'content-type': 'application/json', ...authHeaders() },
       body: JSON.stringify({ schemaVersion: CONTRACT_VERSION, ...turn }),
       signal,
     });
   } catch (error) {
-    if ((error as Error).name === 'AbortError') return;
-    onEvent({ type: 'error', message: 'The local engine is not running. Start it with "pnpm dev".' });
-    return;
+    if (isAbort(error)) return 'aborted';
+    onEvent({ type: 'error', message: error instanceof EngineError ? error.message : LOCAL_ENGINE_DOWN });
+    return 'failed';
   }
   if (!res.ok || !res.body) {
     const body = (await res.json().catch(() => ({}))) as { error?: string; code?: string; anchors?: AnchorCandidate[] };
     if (body.code) throw new TurnRefused(body.code, body.error ?? `Turn refused (${res.status})`, res.status, body.anchors);
     onEvent({ type: 'error', message: body.error ?? `Chat failed (${res.status})` });
-    return;
+    return 'failed';
   }
   const reader = res.body.getReader();
   const decoder = new TextDecoder();
   let buffer = '';
+  let delivery: StreamDelivery | null = null;
   for (;;) {
     const { done, value } = await reader.read();
     if (done) break;
     buffer += decoder.decode(value, { stream: true });
+    const events: ChatStreamEvent[] = [];
     let boundary: number;
     while ((boundary = buffer.indexOf('\n\n')) >= 0) {
       const frame = buffer.slice(0, boundary);
@@ -397,12 +468,21 @@ export async function streamTurn(turn: TurnPayload, onEvent: (event: ChatStreamE
         .join('\n');
       if (!data) continue;
       try {
-        onEvent(JSON.parse(data) as ChatStreamEvent);
+        events.push(JSON.parse(data) as ChatStreamEvent);
       } catch (error) {
         log.warn('chat_frame_unparseable', { error: String(error) });
       }
     }
+    if (delivery === null && events.length > 0) {
+      delivery = looksBuffered(now(), startedAt, events.some((e) => e.type === 'done')) ? 'buffered' : 'streamed';
+      if (delivery === 'buffered') {
+        log.warn('chat_stream_buffered', { teacher: turn.teacher });
+        onEvent({ type: 'status', message: BUFFERED_NOTICE });
+      }
+    }
+    for (const event of events) onEvent(event);
   }
+  return delivery ?? 'streamed';
 }
 
 export function fileToBase64(file: File, mimeType?: string): Promise<{ mimeType: string; data: string; preview: string }> {
