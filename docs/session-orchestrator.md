@@ -4,8 +4,6 @@ When a student signs in on the web, the university server gives them their own s
 
 **Product promise: this is "uni-hosted".** The university's operator holds the Instabox key, the VMs, the vault store and the central model. Staff tooling can see that a session exists, and the operator can reach the VM. It is not "a machine only you control", and the docs and the UI must not claim that it is. Prompts that contain vault excerpts reach the central model gateway (PR-43). The local laptop engine and vault export stay as they are, for students who want their data to stay on their own device.
 
-> Stacked series: 42a (client, migration, lease), 42b (spawn worker, routes, this doc), 42c (the idle reaper interval and the orphan sweep). Until 42c lands, teardown runs on logout, on staff force-end and on a failed spawn, and unfinished work resumes at boot.
-
 Code: `server/uni/src/instabox/` (the typed Instabox client and a fake server used in tests), `server/uni/src/sessions/` (the lease store, the spawn worker, teardown, the reaper and the routes), and migration `005_student_sessions.sql`. The gateway token format (shared with PR-43a) is in `packages/shared/src/node/gateway-token.ts`.
 
 ## Flow
