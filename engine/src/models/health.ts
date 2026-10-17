@@ -30,11 +30,13 @@ export async function listProviderModels(provider: ProviderConfig): Promise<stri
 }
 
 export async function checkRoles(settings: StoredSettings) {
-  const roles: ModelRole[] = ['tutor', 'brain', 'vision'];
+  const roles: ModelRole[] = ['tutor', 'brain', 'vision', 'embed'];
   const cache = new Map<string, Promise<string[]>>();
   return Promise.all(
     roles.map(async (role) => {
-      const { provider: providerId, model } = settings.roles[role];
+      const roleConfig = settings.roles[role];
+      if (!roleConfig?.model) return { role, provider: '—', model: '', reachable: false, detail: 'not configured' };
+      const { provider: providerId, model } = roleConfig;
       const provider = settings.providers.find((p) => p.id === providerId);
       if (!provider) return { role, provider: providerId, model, reachable: false, detail: 'unknown provider' };
       if (!cache.has(provider.id)) cache.set(provider.id, listProviderModels(provider));

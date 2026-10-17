@@ -5,8 +5,9 @@ import type { BrainService } from '../brain/service';
 import { probeImageDimensions } from '../brain/sources/image';
 import { checkImageDimensions } from '../brain/sources/limits';
 import { errorFields, log } from '../config';
-import { searchLessons, type LessonHit } from '../content/search';
+import { searchLessonsHybrid, type LessonHit } from '../content/search';
 import type { ContentStore } from '../content/store';
+import type { EmbeddingService } from '../embed/service';
 import { logisticsContext } from '../logistics/context';
 import { extractLogistics } from '../logistics/extract';
 import type { LogisticsAccess } from '../logistics/store';
@@ -37,6 +38,8 @@ export interface HarnessDeps {
   claims?: ClaimReader;
   /** The same wiki under the compiled-page view the query tools and the up-front hits use. */
   wiki?: WikiReader;
+  /** The semantic lane for lesson and wiki retrieval; absent → keyword-only, honestly marked. */
+  embeddings?: EmbeddingService;
   /** Defaults to the seam that resolves nothing: the Philosopher fails closed until PR-21. */
   anchors?: AnchorResolver;
   /** Committed, course-linked pages the anchor resolver may choose from. */
@@ -176,7 +179,7 @@ export async function runChatTurn(req: ChatRequest, deps: HarnessDeps, emit: (ev
   // Context assembly: retrieval happens up front so even models weak at tool use stay grounded.
   ctx.status('Reading your lessons…');
   const pool = can(req.teacher, 'lesson:support_pool') ? await deps.content.supportLessons() : await deps.content.academicLessons();
-  const hits = searchLessons(pool, question, 3);
+  const hits = (await searchLessonsHybrid(pool, question, { limit: 3, embed: deps.embeddings?.for('lessons') })).hits;
   const sourceKind = can(req.teacher, 'lesson:support_pool') ? 'support' : 'lesson';
   for (const h of hits) ctx.addSource({ kind: sourceKind, id: h.lesson.id, title: h.lesson.title }, `${h.lesson.title}\n${h.excerpt}`);
 
@@ -205,7 +208,7 @@ export async function runChatTurn(req: ChatRequest, deps: HarnessDeps, emit: (ev
     // metadata is shown; bodies come through read_wiki_page, which marks generated pages
     // withheld so their model prose can never count as evidence.
     if (can(req.teacher, 'context:wiki_index') && deps.wiki) {
-      const wikiHits = await new WikiQuery(deps.wiki).search(question, 3);
+      const wikiHits = (await new WikiQuery(deps.wiki, deps.embeddings?.for('pages')).search(question, 3)).hits;
       ctx.contextBlocks.push(
         wikiHits.length
           ? `WIKI PAGES THAT ALREADY COVER THIS (read one with read_wiki_page before leaning on it; a source_summary, synthesis or question page is generated text, citable as context but never evidence):\n${UNTRUSTED_CONTENT_NOTE}\n${wikiHits
@@ -248,7 +251,21 @@ export async function runChatTurn(req: ChatRequest, deps: HarnessDeps, emit: (ev
     req.teacher,
     instructions,
     resolved,
-    buildTools(req.teacher, { content: deps.content, brain: deps.brain, searxngUrl: settings.searxngUrl, claims: deps.claims, wiki: deps.wiki, webConsented, webAnchorTopic: webTopic }, ctx),
+    buildTools(
+      req.teacher,
+      {
+        content: deps.content,
+        brain: deps.brain,
+        searxngUrl: settings.searxngUrl,
+        claims: deps.claims,
+        wiki: deps.wiki,
+        lessonEmbeddings: deps.embeddings?.for('lessons'),
+        wikiEmbeddings: deps.embeddings?.for('pages'),
+        webConsented,
+        webAnchorTopic: webTopic,
+      },
+      ctx,
+    ),
   );
 
   /**

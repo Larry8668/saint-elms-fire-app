@@ -9,8 +9,11 @@ export interface SettingsReader {
   get(): Promise<StoredSettings>;
 }
 
+/** A PUT body after validation: a role patch may name only some roles; unspecified ones keep their config. */
+export type SettingsPatch = Omit<Partial<StoredSettings>, 'roles'> & { roles?: Partial<StoredSettings['roles']> };
+
 export interface SettingsSource extends SettingsReader {
-  update(patch: Partial<StoredSettings>): Promise<StoredSettings>;
+  update(patch: SettingsPatch): Promise<StoredSettings>;
 }
 
 function defaultSettings(): StoredSettings {
@@ -27,6 +30,7 @@ function defaultSettings(): StoredSettings {
       tutor: { provider: 'ollama', model: d.tutorModel },
       brain: { provider: 'ollama', model: d.brainModel },
       vision: { provider: 'ollama', model: d.visionModel },
+      embed: { provider: 'ollama', model: d.embedModel },
     },
   };
 }
@@ -41,7 +45,9 @@ export class SettingsStore implements SettingsSource {
     if (!this.current) {
       const stored = await readJson<Partial<StoredSettings> | null>(this.filePath, null);
       const { studentName: _n, cohortId: _c, ...rest } = (stored ?? {}) as Partial<StoredSettings> & { studentName?: string; cohortId?: string };
-      this.current = { ...defaultSettings(), ...rest };
+      const defaults = defaultSettings();
+      // Roles merge over defaults so a settings file from before a role existed still gains it.
+      this.current = { ...defaults, ...rest, roles: { ...defaults.roles, ...(rest.roles ?? {}) } };
       if (!stored) {
         await writeJson(this.filePath, this.current);
         log.info('settings_created', { file: this.filePath });
@@ -50,10 +56,10 @@ export class SettingsStore implements SettingsSource {
     return this.current;
   }
 
-  async update(patch: Partial<StoredSettings>): Promise<StoredSettings> {
+  async update(patch: SettingsPatch): Promise<StoredSettings> {
     const existing = await this.get();
     const providers = patch.providers ? mergeProviders(existing.providers, patch.providers) : existing.providers;
-    this.current = { ...existing, ...patch, providers };
+    this.current = { ...existing, ...patch, providers, roles: { ...existing.roles, ...(patch.roles ?? {}) } };
     await writeJson(this.filePath, this.current);
     log.info('settings_updated', { fields: Object.keys(patch) });
     return this.current;
@@ -86,7 +92,7 @@ export class ProfileSettingsStore implements SettingsSource {
       const defaults = defaultSettings();
       this.current = {
         providers: stored?.providers ?? defaults.providers,
-        roles: stored?.roles ?? defaults.roles,
+        roles: { ...defaults.roles, ...(stored?.roles ?? {}) },
         thinking: stored?.thinking ?? defaults.thinking,
       };
     }
@@ -98,7 +104,7 @@ export class ProfileSettingsStore implements SettingsSource {
     return { ...device, ...privateSettings };
   }
 
-  async update(patch: Partial<StoredSettings>): Promise<StoredSettings> {
+  async update(patch: SettingsPatch): Promise<StoredSettings> {
     const devicePatch: Partial<StoredSettings> = {};
     if (patch.uniServerUrl !== undefined) devicePatch.uniServerUrl = patch.uniServerUrl;
     if (patch.searxngUrl !== undefined) devicePatch.searxngUrl = patch.searxngUrl;
@@ -107,7 +113,7 @@ export class ProfileSettingsStore implements SettingsSource {
     const existing = await this.privateSettings();
     this.current = {
       providers: patch.providers ? mergeProviders(existing.providers, patch.providers) : existing.providers,
-      roles: patch.roles ?? existing.roles,
+      roles: { ...existing.roles, ...(patch.roles ?? {}) },
       thinking: patch.thinking ?? existing.thinking,
     };
     await writeJson(this.filePath, this.current);

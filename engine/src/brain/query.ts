@@ -1,15 +1,18 @@
 import {
   CONTRACT_VERSION,
   IdentifierSchema,
+  type SearchMode,
   type SourceRecord,
   type WikiClaimView,
   type WikiIndex,
   type WikiLink,
   type WikiPageEntry,
+  type WikiPageHit,
   type WikiPageSource,
   type WikiPageView,
 } from '@sef/shared';
 import { queryTerms } from '../content/search';
+import { EMBED_TEXT_MAX, mergeHits, type EmbedSearchFn } from '../embed/hybrid';
 import { evaluateClaim, evidenceIndexFrom } from './claim-evidence';
 import { legacyPageSummary } from './wiki-page-format';
 import type { PageSnapshot } from './wiki-store';
@@ -26,8 +29,10 @@ export interface WikiReader {
   readSource(id: string): Promise<SourceRecord | null>;
 }
 
-export interface WikiPageHit extends WikiPageEntry {
-  score: number;
+export interface WikiPageSearch {
+  hits: WikiPageHit[];
+  /** 'keyword_only' when the semantic lane could not run — the hits are real, just keyword-scored. */
+  searchMode: SearchMode;
 }
 
 const MAX_SEARCH_TEXT = 24_000;
@@ -50,6 +55,17 @@ function searchText(snapshot: PageSnapshot): { title: string; summary: string; c
     claims: '',
     body: snapshot.body.slice(0, MAX_SEARCH_TEXT),
   };
+}
+
+/** The text a page contributes to its vector — the same surface the keyword scorer reads. */
+export function pageEmbedText(snapshot: PageSnapshot): string {
+  const text = searchText(snapshot);
+  return [text.title, text.summary, text.claims, text.body].join('\n').slice(0, EMBED_TEXT_MAX);
+}
+
+/** The key a page's vector is stored under — a revision bump re-embeds and evicts the old key. */
+export function pageEmbedKey(snapshot: PageSnapshot): string {
+  return `${snapshot.id}@${snapshot.revision}`;
 }
 
 function entryOf(snapshot: PageSnapshot): WikiPageEntry {
@@ -79,7 +95,10 @@ function entryOf(snapshot: PageSnapshot): WikiPageEntry {
  * stay non-assertable so their prose can be named but never leaned on as evidence.
  */
 export class WikiQuery {
-  constructor(private readonly reader: WikiReader) {}
+  constructor(
+    private readonly reader: WikiReader,
+    private readonly embed?: EmbedSearchFn,
+  ) {}
 
   /** The compiled catalogue plus source counts — what index.md summarises, as data. */
   async index(): Promise<WikiIndex> {
@@ -95,32 +114,46 @@ export class WikiQuery {
   }
 
   /**
-   * Weighted keyword search over title, summary, claims and body — the same offline scorer
-   * the lesson pool uses, pointed at compiled pages instead of raw courseware.
+   * Hybrid retrieval over the same pages the keyword scorer reads: weighted keyword
+   * scoring plus the embedding lane, union-merged. When the embed model is down or
+   * unconfigured the lane answers `null` and the result is the honest keyword-only
+   * set, marked so a caller can say which mode produced it.
    */
-  async search(query: string, limit = 5): Promise<WikiPageHit[]> {
+  async search(query: string, limit = 5): Promise<WikiPageSearch> {
+    const snapshots = await this.reader.listPages();
     const terms = queryTerms(query);
-    if (!terms.length) return [];
     const count = (field: string, term: string) => field.toLowerCase().split(/[^a-z0-9]+/).filter((word) => word === term).length;
-    const scored = (await this.reader.listPages()).map((snapshot) => {
-      const text = searchText(snapshot);
-      let covered = 0;
-      const score = terms.reduce((total, term) => {
-        const t = count(text.title, term) * 8;
-        const s = count(text.summary, term) * 6;
-        const c = Math.min(count(text.claims, term), 4) * 3;
-        const b = Math.min(count(text.body, term), 5);
-        if (t + s + c + b > 0) covered += 1;
-        return total + t + s + c + b;
-      }, 0);
-      return { snapshot, score: score * (covered / terms.length) };
-    });
-    const ranked = scored.filter((s) => s.score > 0).sort((a, b) => b.score - a.score);
-    const floor = (ranked[0]?.score ?? 0) * 0.35;
-    return ranked
-      .filter((s) => s.score >= floor)
+    const keyword = new Map<string, number>();
+    if (terms.length) {
+      const scored = snapshots.map((snapshot) => {
+        const text = searchText(snapshot);
+        let covered = 0;
+        const score = terms.reduce((total, term) => {
+          const t = count(text.title, term) * 8;
+          const s = count(text.summary, term) * 6;
+          const c = Math.min(count(text.claims, term), 4) * 3;
+          const b = Math.min(count(text.body, term), 5);
+          if (t + s + c + b > 0) covered += 1;
+          return total + t + s + c + b;
+        }, 0);
+        return { snapshot, score: score * (covered / terms.length) };
+      });
+      const ranked = scored.filter((s) => s.score > 0).sort((a, b) => b.score - a.score);
+      const floor = (ranked[0]?.score ?? 0) * 0.35;
+      for (const { snapshot, score } of ranked) {
+        if (score >= floor) keyword.set(snapshot.id, score);
+      }
+    }
+
+    const corpus = new Map(snapshots.map((snapshot) => [pageEmbedKey(snapshot), pageEmbedText(snapshot)]));
+    const semantic = this.embed ? await this.embed(corpus, query) : null;
+    const byId = new Map(snapshots.map((snapshot) => [snapshot.id, snapshot]));
+
+    const hits = mergeHits(keyword, semantic)
+      .filter((merged) => byId.has(merged.id))
       .slice(0, limit)
-      .map((s) => ({ ...entryOf(s.snapshot), score: Math.round(s.score * 100) / 100 }));
+      .map((merged) => ({ ...entryOf(byId.get(merged.id)!), score: Math.round(merged.score * 100) / 100, match: merged.match }));
+    return { hits, searchMode: semantic ? 'hybrid' : 'keyword_only' };
   }
 
   /**

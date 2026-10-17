@@ -15,10 +15,12 @@ import {
 import { generateStructured } from '../../agents/factory';
 import { errorFields, log } from '../../config';
 import type { ContentStore } from '../../content/store';
+import type { EmbedPairsFn } from '../../embed/hybrid';
 import { resolveModel } from '../../models/registry';
 import type { SettingsReader } from '../../settings/store';
 import { buildCourseGraph, type CourseGraph } from '../course-graph';
 import { listProposalRecords, pendingProposalRecord, writeProposalRecord } from '../proposals';
+import { pageEmbedKey, pageEmbedText } from '../query';
 import type { WikiStore } from '../wiki-store';
 import { structuralFindings, type StructuralInput } from './checks';
 import { findingId } from './findings';
@@ -48,6 +50,8 @@ export class MaintenanceService {
       content: ContentStore;
       settings: SettingsReader;
       identity: () => Promise<ProfileIdentity>;
+      /** The similarity signal for review page selection; absent or unavailable → claims+recency only. */
+      similarPages?: EmbedPairsFn;
       /** Test seam: produce the review draft without a model. */
       propose?: ProposeFn;
     },
@@ -130,7 +134,11 @@ export class MaintenanceService {
    */
   async review(): Promise<SemanticReviewResult> {
     const input = await this.structuralInput();
-    const pages = selectReviewPages(input.pages);
+    const corpus = new Map(
+      input.pages.filter((page) => page.format !== null && page.state === 'ok').map((page) => [pageEmbedKey(page), pageEmbedText(page)]),
+    );
+    const similarPairs = this.deps.similarPages ? await this.deps.similarPages(corpus) : null;
+    const pages = selectReviewPages(input.pages, { similarPairs });
     const started = Date.now();
     let draft: SemanticReviewDraft;
     let model = 'reviewer';

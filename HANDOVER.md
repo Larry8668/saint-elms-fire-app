@@ -96,7 +96,7 @@ scripts/preflight.sh   demo-machine checklist
 ```bash
 pnpm install
 cp .env.example .env     # the demo opts in here (SEED_DEMO/VITE_DEMO_MODE); every other value has a default
-pnpm ollama:pull         # pulls gemma4:e4b + embeddinggemma (the latter is reserved — no code uses it yet)
+pnpm ollama:pull         # pulls gemma4:e4b + embeddinggemma (the embed role's semantic search lane)
 pnpm search:up           # SearXNG on :8888 (the Philosopher degrades gracefully without it)
 pnpm dev                 # uni :4200, engine :4100, UI :5173
 pnpm preflight           # green/red checklist before a demo

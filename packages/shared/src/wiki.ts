@@ -479,6 +479,21 @@ export const WikiPageEntrySchema = z.strictObject({
 });
 export type WikiPageEntry = z.infer<typeof WikiPageEntrySchema>;
 
+/** Which retrieval lane admitted a hit: the keyword scorer, the embedding index, or both. */
+export const SearchMatchKindSchema = z.enum(['keyword', 'semantic', 'both']);
+export type SearchMatchKind = z.infer<typeof SearchMatchKindSchema>;
+
+/** Which retrieval produced the answer set — 'keyword_only' means the embedding lane could not run. */
+export const SearchModeSchema = z.enum(['hybrid', 'keyword_only']);
+export type SearchMode = z.infer<typeof SearchModeSchema>;
+
+/** A catalogue row that came back from search — the entry plus how it was found. */
+export const WikiPageHitSchema = WikiPageEntrySchema.extend({
+  score: z.number(),
+  match: SearchMatchKindSchema,
+});
+export type WikiPageHit = z.infer<typeof WikiPageHitSchema>;
+
 export const WikiIndexSchema = z.strictObject({
   schemaVersion: ContractVersionSchema,
   counts: z.strictObject({

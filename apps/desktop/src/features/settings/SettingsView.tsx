@@ -1,6 +1,6 @@
 import type { ModelRole, ProviderConfig } from '@sef/shared';
 import { useQuery } from '@tanstack/react-query';
-import { CheckCircle2, Cpu, Eye, KeyRound, Plus, Server, Trash2, XCircle } from 'lucide-react';
+import { CheckCircle2, Cpu, Eye, KeyRound, Plus, Search, Server, Trash2, XCircle } from 'lucide-react';
 import { useEffect, useState } from 'react';
 import { Button } from '@/components/ui/button';
 import { Switch } from '@/components/ui/overlays';
@@ -15,6 +15,7 @@ const ROLE_INFO: Record<ModelRole, { label: string; hint: string; icon: typeof C
   tutor: { label: 'Teachers', hint: 'Chat for the Friend, Guide and Philosopher. Needs tool calling.', icon: Cpu },
   brain: { label: 'Brain keeper', hint: 'Structured proposals and quizzes. Needs JSON-schema output.', icon: Cpu },
   vision: { label: 'Vision', hint: 'Reads photos of notes and diagrams. Needs image input.', icon: Eye },
+  embed: { label: 'Embeddings', hint: 'Meaning-based search over your pages and lessons. Optional — search works without it.', icon: Search },
 };
 
 const KIND_LABEL: Record<ProviderConfig['kind'], string> = {

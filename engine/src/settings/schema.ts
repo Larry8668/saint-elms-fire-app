@@ -17,7 +17,7 @@ export const SettingsPatchSchema = z
     uniServerUrl: z.string().url(),
     searxngUrl: z.string().url(),
     providers: z.array(ProviderSchema).max(20),
-    roles: z.object({ tutor: RoleSchema, brain: RoleSchema, vision: RoleSchema }),
+    roles: z.object({ tutor: RoleSchema.optional(), brain: RoleSchema.optional(), vision: RoleSchema.optional(), embed: RoleSchema.optional() }),
     thinking: z.boolean(),
   })
   .partial();

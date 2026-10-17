@@ -8,8 +8,11 @@ import { VaultPortabilityService } from '../brain/portable/service';
 import { BrainService } from '../brain/service';
 import { SourceIngestor, SourceRejection } from '../brain/sources/ingest';
 import { BrainVault } from '../brain/vault';
+import { META_DIRECTORY, META_EMBEDDINGS_DIRECTORY, vaultPath } from '../brain/vault-layout';
 import { WikiStore } from '../brain/wiki-store';
 import { log, profilePaths, type ProfilePaths } from '../config';
+import { EmbeddingIndex } from '../embed/index';
+import { EmbeddingService } from '../embed/service';
 import { LogisticsStore } from '../logistics/store';
 import { ProfileSettingsStore } from '../settings/store';
 import { ContentStore } from '../content/store';
@@ -34,6 +37,8 @@ export interface Workspace {
   /** Export and restore of the student's own vault — independent of enrolment or network. */
   portable: VaultPortabilityService;
   brain: BrainService;
+  /** The semantic lane: a derived, vault-scoped vector index over the student's own pages and lessons. */
+  embeddings: EmbeddingService;
   sessions: SessionStore;
   sync: ContentSync;
   peerShares: PeerShareService;
@@ -98,6 +103,11 @@ export class WorkspaceManager {
 
     const sources = new SourceIngestor(wiki, identity);
     const compiler = new WikiCompiler(wiki, { settings, content, profile: identity });
+    // The index lives inside the vault's .meta — profile-scoped, atomic, rebuildable.
+    const embeddings = new EmbeddingService({
+      index: new EmbeddingIndex(vaultPath(paths.brain, META_DIRECTORY, META_EMBEDDINGS_DIRECTORY)),
+      settings,
+    });
     const workspace: Workspace = {
       profile: { ...profile },
       paths,
@@ -107,7 +117,7 @@ export class WorkspaceManager {
       wiki,
       sources,
       compiler,
-      maintenance: new MaintenanceService({ wiki, content, settings, identity }),
+      maintenance: new MaintenanceService({ wiki, content, settings, identity, similarPages: embeddings.pairsFor('pages') }),
       // Identity for export provenance tolerates an unlinked profile: portability cannot wait
       // on enrolment state, so the fallback only names who held the vault.
       portable: new VaultPortabilityService(wiki, {
@@ -120,6 +130,7 @@ export class WorkspaceManager {
         },
       }),
       brain: new BrainService(content, vault, settings, paths.quizzes, { wiki, sources, identity }),
+      embeddings,
       sessions: new SessionStore(paths.sessions),
       sync: new ContentSync(settings, content, async () => {
         const currentProfile = await this.registry.get(profileId);

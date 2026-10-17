@@ -2,6 +2,8 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import {
   LearningEventSchema,
+  SearchMatchKindSchema,
+  SearchModeSchema,
   SourceCitationSchema,
   SourceLocatorSchema,
   SourceRecordSchema,
@@ -10,6 +12,7 @@ import {
   WikiJobSchema,
   WikiLinkSchema,
   WikiPageDraftSchema,
+  WikiPageHitSchema,
   WikiPageSchema,
   WikiProposalSchema,
 } from './wiki';
@@ -133,6 +136,33 @@ test('wiki edits admit no raw-write or mastery operations', () => {
   ]) {
     rejects(WikiEditSchema, op);
   }
+});
+
+test('a search hit carries its match lane and the mode enum round-trips', () => {
+  const entry = {
+    id: 'page-mechanics',
+    kind: 'concept',
+    title: 'Mechanics',
+    summary: 'Force and motion.',
+    revision: 'rev-3',
+    updatedAt: null,
+    state: 'ok',
+    sourceIds: [],
+    claims: 2,
+    links: 1,
+  };
+  const hit = { ...entry, score: 0.91, match: 'both' };
+  assert.deepEqual(WikiPageHitSchema.parse(hit), hit);
+  for (const match of ['keyword', 'semantic', 'both']) {
+    assert.equal(SearchMatchKindSchema.parse(match), match);
+  }
+  rejects(WikiPageHitSchema, { ...hit, match: 'vibes' });
+  rejects(WikiPageHitSchema, { ...hit, match: undefined }, 'a hit without its lane is not a hit');
+
+  for (const mode of ['hybrid', 'keyword_only']) {
+    assert.equal(SearchModeSchema.parse(mode), mode);
+  }
+  rejects(SearchModeSchema, 'embeddings');
 });
 
 test('jobs tie error to failed and proposal to review stages', () => {
