@@ -35,3 +35,15 @@ test('an already-escaped LaTeX backslash is not doubled again', () => {
 test('the repair count reports what changed', () => {
   assert.equal(repairJsonEscapes(String.raw`{"t": "\text and \alpha and \n"}`).repaired, 2);
 });
+
+test('backspace or form feed before a letter is always LaTeX, even for commands not listed', () => {
+  const raw = String.raw`{"t": "$\boldsymbol{v}$, $\bigl( x \bigr)$, $\fbox{1}$, $\frac12$"}`;
+  assert.equal(parse(raw).t, String.raw`$\boldsymbol{v}$, $\bigl( x \bigr)$, $\fbox{1}$, $\frac12$`);
+  assert.doesNotMatch(parse(raw).t, /[\b\f]/);
+});
+
+test('common text and delimiter commands that open with t, r or n survive', () => {
+  const raw = String.raw`{"t": "$\texttt{x}$ $\textsf{y}$ $\therefore$ $\rbrace$ $\rVert v \rVert$ $a \nleq b$ $\tbinom{n}{k}$"}`;
+  assert.equal(parse(raw).t, String.raw`$\texttt{x}$ $\textsf{y}$ $\therefore$ $\rbrace$ $\rVert v \rVert$ $a \nleq b$ $\tbinom{n}{k}$`);
+  assert.doesNotMatch(parse(raw).t, /[\t\r\n]/);
+});
