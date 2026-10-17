@@ -54,7 +54,7 @@ export function screeningPrompt(text: string): string {
   ].join('\n');
 }
 
-/** First token decides the verdict; policy names found afterwards become the categories. */
+/** First token decides the verdict; policy names claimed affirmatively become the categories. */
 export function readScreeningAnswer(answer: string, model: string): ShareScreening {
   const trimmed = answer.trim();
   const verdict = /^yes\b/i.test(trimmed) ? 'flagged' : /^no\b/i.test(trimmed) ? 'clean' : null;
@@ -63,9 +63,41 @@ export function readScreeningAnswer(answer: string, model: string): ShareScreeni
     return { status: 'unavailable', categories: [], model };
   }
   if (verdict === 'clean') return { status: 'clean', categories: [], model };
-  const tail = trimmed.toLowerCase();
-  const categories = POLICIES.filter((p) => tail.includes(p.name)).map((p) => p.name);
+  const categories = POLICIES.filter((p) => claimsViolation(trimmed, p.name)).map((p) => p.name);
   return { status: 'flagged', categories, model };
+}
+
+const NEGATION = /\b(no|not|nor|never|neither|without|doesn'?t|don'?t|isn'?t|aren'?t|didn'?t|won'?t|wasn'?t|lack\w*|free\s+of)\b/;
+const VERB = /\b(violat\w*|contain\w*|is|are|was|were|be|been|being|has|have|had|promot\w*|includ\w*|breach\w*|target\w*|express\w*|incit\w*|facilitat\w*|instruct\w*|constitut\w*|qualif\w*|fall\w*|count\w*|amount\w*|warrant\w*)\b/;
+const RESTATEMENT = /polic|guideline|categor|definition/;
+
+/**
+ * A policy is attributed only when its name is *claimed*, not merely mentioned:
+ * a clause that negates it ("no hate speech"), a bare list item trailing a
+ * negated verb ("does not contain harassment, dangerous content"), a restated
+ * policy list ("our policies are …", `"dangerous": …`), or a heading before the
+ * name does not count — so a chatty or echoing model cannot flag every category
+ * at once. Contrast markers ("but", "however") reopen the claim ("not X but Y"
+ * attributes Y). Anything ambiguous is dropped: a flagged verdict with no
+ * categories is honest, a wrong category is not.
+ */
+function claimsViolation(answer: string, name: string): boolean {
+  // Contrast words are kept as split delimiters so "not A but B" re-evaluates B.
+  const parts = answer.toLowerCase().split(/([,;.!?\n]+|\bbut\b|\bhowever\b|\byet\b)/);
+  let carriedNegation = false;
+  for (let i = 0; i < parts.length; i += 2) {
+    const clause = parts[i]!.trim();
+    if (!clause) continue;
+    if (i > 0 && /^(but|however|yet)$/.test(parts[i - 1]!.trim())) carriedNegation = false;
+    const hasVerb = VERB.test(clause);
+    const ownNegation = NEGATION.test(clause);
+    const negated = hasVerb ? ownNegation : ownNegation || carriedNegation;
+    if (hasVerb || ownNegation) carriedNegation = ownNegation;
+    if (!clause.includes(name) || negated || RESTATEMENT.test(clause)) continue;
+    if (new RegExp(`"?${name}"?\\s*:`).test(clause)) continue; // a restated `"name": rule` definition head
+    return true;
+  }
+  return false;
 }
 
 /** The one-shot completion endpoint each provider kind serves — a plain POST, not a chat model. */

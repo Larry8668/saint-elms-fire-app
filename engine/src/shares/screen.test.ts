@@ -53,6 +53,31 @@ test('the verdict parses the first token; categories come from named policies', 
   assert.equal(readScreeningAnswer('I cannot say either way.', 'm').status, 'unavailable', 'an unparsed answer is unavailable, never guessed');
 });
 
+test('mentioned is not claimed: negated and restated policy names are not attributed', () => {
+  // A verdict that names one violation and clears the rest must only carry the one.
+  assert.deepEqual(
+    readScreeningAnswer('Yes — the post is harassment. It does not contain hate speech, sexually explicit material, or dangerous content.', 'm'),
+    { status: 'flagged', categories: ['harassment'], model: 'm' },
+  );
+  // The prompt's own policy list echoed back is not a claim.
+  assert.deepEqual(
+    readScreeningAnswer('Yes — it is harassment.\n\nOur policies are:\n1. "hate speech": …\n2. "sexually explicit": …\n3. "dangerous": …', 'm'),
+    { status: 'flagged', categories: ['harassment'], model: 'm' },
+  );
+  // A contrast reopens the claim — "not X but Y" attributes Y, not X.
+  assert.deepEqual(readScreeningAnswer('Yes. It is not hate speech but it is harassment.', 'm'), {
+    status: 'flagged',
+    categories: ['harassment'],
+    model: 'm',
+  });
+  // The model's own bullet style still names the claimed policies.
+  assert.deepEqual(readScreeningAnswer('Yes\n- harassment\n- dangerous', 'm'), {
+    status: 'flagged',
+    categories: ['harassment', 'dangerous'],
+    model: 'm',
+  });
+});
+
 test('a clean answer reports clean with the model named', async () => {
   const seen: string[] = [];
   const s = screener({
