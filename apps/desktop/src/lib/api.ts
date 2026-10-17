@@ -65,6 +65,7 @@ import type {
   Feed,
   FeedsResponse,
   PlansResponse,
+  MetricsReport,
   StudyPlan,
   VaultExport,
   VaultImportPreview,
@@ -198,6 +199,8 @@ export const api = {
   proposePlan: (body: { goal: string; deadlineAt?: string }) => post<StudyPlan>('/api/plans', body),
   approvePlan: (id: string) => post<StudyPlan>(`/api/plans/${encodeURIComponent(id)}/approve`),
   abandonPlan: (id: string) => post<StudyPlan>(`/api/plans/${encodeURIComponent(id)}/abandon`),
+  metrics: () => request<MetricsReport>('/api/metrics'),
+  recordMetrics: (events: Array<{ kind: string; ref: string; tag?: string }>) => post<{ recorded: number }>('/api/metrics/events', { events }),
 
   syncStatus: () => request<SyncStatus>('/api/sync/status'),
   /** The full published curriculum for an approved student; refusals arrive as typed errors. */

@@ -5,6 +5,7 @@ import { Skeleton } from '@/components/ui/primitives';
 import { Tooltip } from '@/components/ui/overlays';
 import { cn } from '@/lib/cn';
 import { log } from '@/lib/log';
+import { metrics, useReportShown } from '@/lib/metrics';
 import { useSuggestions } from '@/lib/queries';
 import { railState, readHidden, whyText, writeHidden } from './suggestions';
 
@@ -42,6 +43,7 @@ export function SuggestionRail({ teacher, busy, onPick }: { teacher: TeacherId; 
   };
 
   const state = railState({ pending: query.isPending, data: query.data, hidden });
+  useReportShown('suggestion_shown', state.kind === 'ready' ? state.questions.map((q) => ({ ref: q.id, tag: teacher })) : [], state.kind === 'ready');
 
   if (state.kind === 'hidden') {
     return (
@@ -68,7 +70,10 @@ export function SuggestionRail({ teacher, busy, onPick }: { teacher: TeacherId; 
           <li key={q.id}>
             <Tooltip content={whyText(q, state.worded)}>
               <button
-                onClick={() => onPick(q.text)}
+                onClick={() => {
+                  metrics.report('suggestion_sent', q.id, teacher);
+                  onPick(q.text);
+                }}
                 disabled={busy}
                 className={cn(
                   'glass max-w-full cursor-pointer truncate rounded-full px-3 py-1.5 text-left text-[12.5px] text-night-300 transition',

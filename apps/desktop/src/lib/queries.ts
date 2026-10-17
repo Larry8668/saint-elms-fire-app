@@ -2,6 +2,7 @@ import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import type { LogisticsWriteInput, TeacherId, WikiJob } from '@sef/shared';
 import { toast } from 'sonner';
 import { api, type StoredSettings } from './api';
+import { metrics } from './metrics';
 
 /**
  * Query keys are scoped by profile id. A response that arrives after a sign-out is written
@@ -44,6 +45,7 @@ export const keys = {
     suggestionsAll: (p: string) => ['profile', p, 'suggestions'] as const,
     feeds: (p: string) => ['profile', p, 'feeds'] as const,
     plans: (p: string) => ['profile', p, 'plans'] as const,
+    metrics: (p: string) => ['profile', p, 'metrics'] as const,
     suggestions: (p: string, teacher: string) => ['profile', p, 'suggestions', teacher] as const,
   },
 };
@@ -54,6 +56,7 @@ let activeProfile: string | null = null;
 
 /** The session provider sets this on activate/clear; it is never client-chosen. */
 export const setActiveProfile = (profileId: string | null) => {
+  if (profileId !== activeProfile) metrics.reset();
   activeProfile = profileId;
 };
 
@@ -383,6 +386,9 @@ export function usePlanActions() {
     abandon: useMutation({ mutationFn: api.abandonPlan, onSuccess: refresh, onError }),
   };
 }
+
+/** Local evaluation counters; read on demand, they change too slowly to poll. */
+export const useMetrics = () => useQuery({ queryKey: keys.scoped.metrics(profile()), queryFn: api.metrics, staleTime: 60_000 });
 
 /** Attention items. A minute's polling is enough: the engine re-evaluates on its own when stale. */
 export const useAttention = () => useQuery({ queryKey: keys.scoped.attention(profile()), queryFn: api.attention, refetchInterval: 60_000 });

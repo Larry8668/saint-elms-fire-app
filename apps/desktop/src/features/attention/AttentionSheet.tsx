@@ -6,6 +6,7 @@ import { Sheet, Tooltip } from '@/components/ui/overlays';
 import { Badge } from '@/components/ui/primitives';
 import { RowListSkeleton } from '@/components/ui/skeletons';
 import { cn } from '@/lib/cn';
+import { metrics, useReportShown } from '@/lib/metrics';
 import { useNav } from '@/lib/nav';
 import { useAttention, useAttentionActions } from '@/lib/queries';
 import { destination, dueLabel, KIND_LABEL, SNOOZE_OPTIONS, unseenKeys } from './attention';
@@ -29,6 +30,7 @@ export function AttentionSheet({ open, onOpenChange }: { open: boolean; onOpenCh
   const attention = useAttention();
   const actions = useAttentionActions();
   const items = attention.data?.items ?? [];
+  useReportShown('nudge_shown', items.map((item) => ({ ref: item.key, tag: item.kind })), open && attention.data?.nudges === true);
 
   // Opening the rail is looking at it: whatever was new is now seen, but keeps its
   // "new" mark for this visit so the student can still tell which items arrived.
@@ -111,6 +113,7 @@ function AttentionRow({ item, isNew, onNavigate }: { item: AttentionItem; isNew:
                 size="sm"
                 variant="outline"
                 onClick={() => {
+                  metrics.report('nudge_clicked', item.key, item.kind);
                   go(target.view, target.params);
                   onNavigate();
                 }}
