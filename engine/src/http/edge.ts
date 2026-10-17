@@ -35,6 +35,8 @@ const DEFAULT_TRUSTED_PROXIES = '127.0.0.0/8,::1';
 
 export const hostName = (host: string | undefined): string => {
   if (!host) return '';
+  // RFC 7230 brackets IPv6 in Host, but a bare literal must not lose its colons to the port split.
+  if (isIP(host) === 6) return host.toLowerCase();
   const bracketed = host.match(/^\[(.+)\]/)?.[1];
   return (bracketed ?? host.split(':')[0]!).toLowerCase();
 };

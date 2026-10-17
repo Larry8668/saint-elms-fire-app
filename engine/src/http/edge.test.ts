@@ -21,6 +21,9 @@ test('Host gate and forwarded headers, case by case', async () => {
   const edgeHeaders = { host: '127.0.0.1:4100', 'x-forwarded-host': SEAT, 'x-forwarded-for': '198.51.100.7', 'x-forwarded-proto': 'https' };
   const table: Array<{ name: string; env: NodeJS.ProcessEnv; peer: string | null; headers: Record<string, string>; admits: boolean; client: string; scheme: string }> = [
     { name: 'loopback engine, direct loopback caller', env: {}, peer: '127.0.0.1', headers: { host: '127.0.0.1:4100' }, admits: true, client: '127.0.0.1', scheme: 'http' },
+    { name: 'loopback engine, bracketed IPv6 loopback', env: {}, peer: '::1', headers: { host: '[::1]:4100' }, admits: true, client: '::1', scheme: 'http' },
+    { name: 'loopback engine, bare IPv6 loopback literal', env: {}, peer: '::1', headers: { host: '::1' }, admits: true, client: '::1', scheme: 'http' },
+    { name: 'loopback engine, bare non-loopback IPv6', env: {}, peer: '::1', headers: { host: '2001:db8::1' }, admits: false, client: '::1', scheme: 'http' },
     { name: 'loopback engine, rebound name', env: {}, peer: '127.0.0.1', headers: { host: 'rebound.evil.test' }, admits: false, client: '127.0.0.1', scheme: 'http' },
     {
       name: 'loopback engine ignores forwarded headers entirely',

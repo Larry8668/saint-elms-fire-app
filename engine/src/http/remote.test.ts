@@ -126,6 +126,19 @@ test('the sixth bad sign-in in a minute is 429 with retryAfter; good sign-ins ne
   }
 });
 
+test('login and offline-login share one guessing budget per client', async () => {
+  const { call } = await harness();
+  await captureWarnings(async () => {
+    for (let i = 0; i < 3; i += 1) await login(call, 'nobody@example.test', 'guess');
+    for (let i = 0; i < 2; i += 1) {
+      await call('/api/auth/offline-login', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ profileId: 'guessed' }) });
+    }
+  });
+  assert.equal((await login(call, 'nobody@example.test', 'guess')).status, 429);
+  const offline = await call('/api/auth/offline-login', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ profileId: 'guessed' }) });
+  assert.equal(offline.status, 429);
+});
+
 test('behind a trusted edge each client has its own bucket — one attacker cannot lock out every student', async () => {
   const { call } = await harness({ ENGINE_PUBLIC_HOST: SEAT, ENGINE_TRUST_PROXY: '1' });
   await captureWarnings(async () => {
