@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
 import { parseObjectStoreConfig } from '../config';
-import { accountPrefix, assertAccountId, blobKey, ObjectKeyError, vaultKey } from './keys';
+import { accountPrefix, assertAccountId, blobKey, ObjectKeyError, syncManifestKey, vaultKey } from './keys';
 
 const hash = 'ab'.repeat(32);
 
@@ -12,6 +12,10 @@ test('vault and blob keys live under one per-account prefix, in separate subtree
   // A vault file named like the blob subtree still lands under files/.
   assert.ok(vaultKey('acc_1', `blobs/sha256/ab/${hash}`).startsWith('vaults/acc_1/files/'));
   assert.equal(accountPrefix('Xy9-AbC'), 'vaults/Xy9-AbC/');
+  // The sync manifest sits beside files/ and blobs/, so no vault file can be named onto it.
+  assert.equal(syncManifestKey('acc_1'), 'vaults/acc_1/manifest.json');
+  assert.notEqual(vaultKey('acc_1', 'manifest.json'), syncManifestKey('acc_1'));
+  assert.throws(() => syncManifestKey('../x'), ObjectKeyError);
 });
 
 test('account ids are a strict, case-preserving charset', () => {

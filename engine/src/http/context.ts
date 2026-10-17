@@ -4,12 +4,15 @@ import type { AuthService } from '../profiles/auth';
 import type { AnonymousDataManager } from '../profiles/anonymous';
 import type { Workspace, WorkspaceManager } from '../profiles/workspace';
 import type { SettingsStore } from '../settings/store';
+import type { VaultSyncHandle } from '../sync';
 
 export interface EngineDeps {
   settings: SettingsStore;
   auth: AuthService;
   workspaces: WorkspaceManager;
   anonymousData: AnonymousDataManager;
+  /** Present only on a session VM with vault sync on (OBJECT_STORE_* plus VAULT_SYNC_ACCOUNT). */
+  vaultSync?: VaultSyncHandle;
 }
 
 export type EngineEnv = { Variables: { me: EngineMe; ws: Workspace; token: string } };

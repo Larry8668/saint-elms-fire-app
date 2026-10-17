@@ -12,6 +12,7 @@ import { meRoutes } from './routes/me';
 import { shareRoutes } from './routes/shares';
 import { staffRoutes } from './routes/staff';
 import { studentRoutes } from './routes/student';
+import { sessionAdminRoutes, sessionRoutes } from './sessions/routes';
 
 export type { UniDeps } from './deps';
 
@@ -90,9 +91,11 @@ export function createApp(deps: UniDeps) {
   app.route('/', portalRoutes(deps));
   app.route('/v1/admin', adminRoutes(deps));
   app.route('/v1/admin', staffRoutes(deps));
+  app.route('/v1/admin', sessionAdminRoutes(deps));
   app.route('/v1', meRoutes(deps));
   app.route('/v1', shareRoutes(deps));
   app.route('/v1', studentRoutes(deps));
+  app.route('/v1', sessionRoutes(deps));
 
   return app;
 }

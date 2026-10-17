@@ -2,6 +2,7 @@ import type { CoursewareIndex, ProgrammeManifestResult } from './courseware';
 import type { CourseAvailability } from '@sef/shared';
 import type { Pool } from 'pg';
 import type { AccountAuth } from './account-auth';
+import type { SessionOrchestrator } from './sessions/orchestrator';
 import type { SigningKeys } from './signing';
 import type { AccountStore } from './store/accounts';
 import type { AuditLog } from './store/audit';
@@ -25,4 +26,6 @@ export interface UniDeps {
   accountAuth?: AccountAuth | null;
   /** Admission/staff persistence; absent without UNI_DATABASE_URL (routes fail closed). */
   pool?: Pool;
+  /** Per-login Instabox VMs (PR-42); absent unless INSTABOX_API_KEY and SEF_GOLDEN_SNAPSHOT_ID are set. */
+  sessions?: SessionOrchestrator | null;
 }

@@ -23,6 +23,7 @@ import { studentRoutes } from './routes/student';
 import { systemRoutes } from './routes/system';
 import { MAX_ENVELOPE_CHARS, sourceRoutes } from './routes/sources';
 import { staticUiRoutes } from './static-ui';
+import { internalSyncRoutes } from './routes/internal-sync';
 import { vaultRoutes } from './routes/vault';
 import { wikiRoutes } from './routes/wiki';
 
@@ -77,6 +78,25 @@ export function createApp(deps: EngineDeps) {
     return bodyLimit({ maxSize, onError: (inner) => inner.json({ error: 'Request too large' }, 413) })(c, next);
   });
 
+  // A session VM serves nothing of the student's until their vault is back: an empty vault
+  // served (and then pushed) in the meantime would look like a vault wiped clean.
+  const vaultSync = deps.vaultSync?.sync;
+  if (vaultSync) {
+    app.use('/api/*', async (c, next) => {
+      if (vaultSync.restored || c.req.path === '/api/health' || c.req.path.startsWith('/api/internal/sync/')) return next();
+      const failed = vaultSync.state === 'error';
+      return c.json(
+        { error: failed ? 'Your workspace could not be restored.' : 'Your workspace is still being restored.', code: failed ? 'vault_restore_failed' : 'vault_restoring' },
+        503,
+      );
+    });
+    // Every successful mutation may have written the profile; the push is debounced.
+    app.use('/api/*', async (c, next) => {
+      await next();
+      if (c.req.method !== 'GET' && c.req.method !== 'HEAD' && c.req.method !== 'OPTIONS' && c.res.ok) vaultSync.markDirty();
+    });
+  }
+
   app.use('/api/*', async (c, next) => {
     const started = Date.now();
     await next();
@@ -103,7 +123,10 @@ export function createApp(deps: EngineDeps) {
    */
   app.get('/api/health', async (c) => {
     const settings = await deps.settings.get();
-    return c.json({ ok: true, engine: config.version, uni: { reachable: await publicUniReachable(settings.uniServerUrl) } } satisfies HealthLiveness);
+    const body: HealthLiveness = { ok: true, engine: config.version, uni: { reachable: await publicUniReachable(settings.uniServerUrl) } };
+    // One word, no data: the orchestrator waits for 'ready' before handing the URL over.
+    if (vaultSync) body.sync = { state: vaultSync.state };
+    return c.json(body);
   });
 
   /** The full model, uni and web report, for a signed-in client. */
@@ -117,9 +140,14 @@ export function createApp(deps: EngineDeps) {
       models,
       web: { reachable: web },
     };
+    if (vaultSync) {
+      const { state, savedAt, pending } = vaultSync.status();
+      body.sync = { state, savedAt, pending };
+    }
     return c.json(body);
   });
 
+  if (deps.vaultSync) app.route('/api', internalSyncRoutes(deps.vaultSync));
   app.route('/api/auth', authRoutes(deps));
   app.route('/api', settingsRoutes(deps));
   app.route('/api', systemRoutes(deps));

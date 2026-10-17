@@ -103,9 +103,12 @@ export class S3ObjectStore implements ObjectStore {
       'content-type': options.contentType ?? 'application/octet-stream',
     };
     if (options.ifNoneMatch) headers['if-none-match'] = options.ifNoneMatch;
+    if (options.ifMatch) headers['if-match'] = `"${options.ifMatch}"`;
     const response = await this.send('PUT', this.url(key), { headers, body: bytes });
     // 409 ConditionalRequestConflict: a concurrent conditional write to the same key won.
-    if (response.status === 412 || (options.ifNoneMatch && response.status === 409)) {
+    // A missing key under If-Match is 404 NoSuchKey on S3/MinIO: the expected version is gone too.
+    const conditional = Boolean(options.ifNoneMatch || options.ifMatch);
+    if (response.status === 412 || (conditional && response.status === 409) || (options.ifMatch && response.status === 404)) {
       await response.body?.cancel();
       throw new PreconditionFailedError(key, response.status);
     }
