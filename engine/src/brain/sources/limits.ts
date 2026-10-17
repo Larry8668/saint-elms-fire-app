@@ -15,6 +15,10 @@ export const INGEST_LIMITS = {
   /** Pixel dimensions for an image, before any vision call. */
   maxImageDimension: 4096,
   maxImagePixels: 4096 * 4096,
+  /** Bytes for one audio recording — a compressed four-hour lecture sits far under this. */
+  maxAudioBytes: 256 * 1024 * 1024,
+  /** Recording length in seconds. Longer is refused, never partially transcribed. */
+  maxAudioSeconds: 4 * 60 * 60,
   /** Concurrent extraction jobs for one profile. */
   maxActiveJobs: 4,
   /** Sources attached to a single job. */
@@ -45,10 +49,13 @@ export const ACCEPTED_MEDIA_TYPES: ReadonlySet<string> = new Set<string>(Object.
  */
 export function checkMediaType(mediaType: string): Rejection | null {
   const base = mediaType.split(';')[0]!.trim().toLowerCase();
-  if (!base || !ACCEPTED_MEDIA_TYPES.has(base)) {
+  // The audio family is accepted wholesale: containers vary wildly (voice memos arrive as
+  // 3gpp, m4a, ogg, weba…), and ffmpeg decides readability — a file it cannot parse is
+  // refused by name at probe time rather than guessed at from a mime list.
+  if (!base || (!ACCEPTED_MEDIA_TYPES.has(base) && !base.startsWith('audio/'))) {
     return {
       code: 'unsupported_media',
-      message: `Files of type '${mediaType.trim() || 'unknown'}' cannot be kept here — notes and plain text, PDFs, and PNG or JPEG images only.`,
+      message: `Files of type '${mediaType.trim() || 'unknown'}' cannot be kept here — notes and plain text, PDFs, PNG or JPEG images, and audio recordings only.`,
     };
   }
   return null;
@@ -65,12 +72,14 @@ export interface Limits {
   maxExtractedChars?: number;
   maxImageDimension?: number;
   maxImagePixels?: number;
+  maxAudioBytes?: number;
+  maxAudioSeconds?: number;
   maxActiveJobs?: number;
   maxSourcesPerJob?: number;
 }
 
 export interface Rejection {
-  code: 'empty' | 'too_large' | 'unsupported_media' | 'unsafe_filename' | 'too_many_pages' | 'image_too_large';
+  code: 'empty' | 'too_large' | 'unsupported_media' | 'unsafe_filename' | 'too_many_pages' | 'image_too_large' | 'audio_too_long';
   message: string;
 }
 
@@ -85,12 +94,26 @@ const MEDIA_EXTENSIONS: Record<string, string> = {
   'image/jpeg': '.jpg',
   'text/markdown': '.md',
   'text/plain': '.txt',
+  'audio/mpeg': '.mp3',
+  'audio/wav': '.wav',
+  'audio/x-wav': '.wav',
+  'audio/mp4': '.m4a',
+  'audio/x-m4a': '.m4a',
+  'audio/aac': '.aac',
+  'audio/ogg': '.ogg',
+  'audio/webm': '.weba',
+  'audio/flac': '.flac',
+  'audio/3gpp': '.3gp',
+  'audio/3gpp2': '.3g2',
 };
 
+/** Downloads keep a usable name even when the declared type was only the family. */
+export function mediaExtension(mediaType: string): string {
+  return MEDIA_EXTENSIONS[mediaType.trim().toLowerCase()] ?? (mediaType.trim().toLowerCase().startsWith('audio/') ? '.audio' : '.bin');
+}
+
 export function safeSourceFilename(id: string, mediaType: string): string {
-  // Exact match only — a media type we do not know gets the opaque `.bin`, not a guessed name.
-  const extension = MEDIA_EXTENSIONS[mediaType.trim().toLowerCase()] ?? '.bin';
-  return `${id}${extension}`;
+  return `${id}${mediaExtension(mediaType)}`;
 }
 
 /**
@@ -123,6 +146,45 @@ export function checkBytes(bytes: Uint8Array, limits: Limits = {}): Rejection | 
     return { code: 'too_large', message: `That file is ${formatBytes(bytes.byteLength)}; the limit is ${formatBytes(max)}.` };
   }
   return null;
+}
+
+/**
+ * Size gate with the media family taken into account: audio recordings run to a
+ * dedicated, much larger cap because a lecture's bytes are legitimately long.
+ */
+export function checkSourceBytes(bytes: Uint8Array, mediaType: string, limits: Limits = {}): Rejection | null {
+  const base = mediaType.split(';')[0]!.trim().toLowerCase();
+  if (base.startsWith('audio/')) {
+    const max = limits.maxAudioBytes ?? INGEST_LIMITS.maxAudioBytes;
+    if (bytes.byteLength === 0) return { code: 'empty', message: 'That file is empty.' };
+    if (bytes.byteLength > max) {
+      return { code: 'too_large', message: `That recording is ${formatBytes(bytes.byteLength)}; the audio limit is ${formatBytes(max)}.` };
+    }
+    return null;
+  }
+  return checkBytes(bytes, limits);
+}
+
+/** Probed length of a recording, refused outright — a long file is never half-transcribed. */
+export function checkAudioDuration(seconds: number, limits: Limits = {}): Rejection | null {
+  const max = limits.maxAudioSeconds ?? INGEST_LIMITS.maxAudioSeconds;
+  if (!Number.isFinite(seconds) || seconds <= 0) {
+    return { code: 'unsupported_media', message: 'That file does not read as audio.' };
+  }
+  if (seconds > max) {
+    return { code: 'audio_too_long', message: `That recording is ${formatDuration(seconds)}; the audio limit is ${formatDuration(max)}.` };
+  }
+  return null;
+}
+
+/** h:mm:ss for short lengths, "N hours" phrased for the message's own readability. */
+export function formatDuration(seconds: number): string {
+  const s = Math.round(seconds);
+  const h = Math.floor(s / 3600);
+  const m = Math.floor((s % 3600) / 60);
+  const rest = s % 60;
+  if (h === 0) return `${m}:${String(rest).padStart(2, '0')}`;
+  return `${h}:${String(m).padStart(2, '0')}:${String(rest).padStart(2, '0')}`;
 }
 
 export function checkImageDimensions(width: number, height: number, limits: Limits = {}): Rejection | null {

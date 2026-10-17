@@ -13,9 +13,10 @@ import {
 } from '@sef/shared';
 import type { ContentfulStatusCode } from 'hono/utils/http-status';
 import { errorFields, log } from '../../config';
-import { extractPdf, extractText, recordStudentCorrection, sha256, type ExtractionMethod, type ExtractionResult } from './extract';
+import { AudioTranscribeError, type AudioProbe, type AudioTranscription } from '../../media/audio';
+import { extractPdf, extractText, recordAudioTranscript, recordStudentCorrection, sha256, type ExtractionMethod, type ExtractionResult } from './extract';
 import { assertJobCapacity, advanceJob, cancelJob, createJob, jobStore, JobConflictError, JobStateError, listProfileJobs, retryJob } from './jobs';
-import { checkBytes, checkMediaType, countChars, sanitiseTitle, sliceChars, titleIsSafe, INGEST_LIMITS, type Limits } from './limits';
+import { checkAudioDuration, checkMediaType, checkSourceBytes, countChars, sanitiseTitle, sliceChars, titleIsSafe, INGEST_LIMITS, type Limits } from './limits';
 import { openPdf, PdfParseError } from './pdf';
 import type { WikiStore } from '../wiki-store';
 
@@ -35,7 +36,13 @@ export class SourceRejection extends Error {
   }
 }
 
-export type IngestKind = 'note' | 'document' | 'image' | 'session' | 'answer' | 'peer';
+export type IngestKind = 'note' | 'document' | 'image' | 'audio' | 'session' | 'answer' | 'peer';
+
+/** What the audio lane must answer — the recording's length up front, its transcript on read. */
+export interface AudioReader {
+  probe(bytes: Uint8Array, mediaType: string): Promise<AudioProbe>;
+  transcribe(bytes: Uint8Array, mediaType: string, opts?: { seconds?: number; maxSeconds?: number }): Promise<AudioTranscription>;
+}
 
 /** The committed transcript range a session source covers — the checkpoint written with it. */
 export interface SessionRef {
@@ -90,6 +97,7 @@ const ORIGIN: Record<IngestKind, 'student' | 'external' | 'peer' | 'model'> = {
   note: 'student',
   document: 'external',
   image: 'student',
+  audio: 'student',
   session: 'student',
   answer: 'model',
   peer: 'peer',
@@ -100,6 +108,7 @@ const ALLOWED_ORIGIN: Record<IngestKind, ReadonlyArray<'student' | 'external' | 
   note: ['student'],
   document: ['external'],
   image: ['student', 'external'],
+  audio: ['student', 'external'],
   session: ['student'],
   answer: ['model'],
   peer: ['peer'],
@@ -111,6 +120,7 @@ export class SourceIngestor {
   constructor(
     private readonly store: WikiStore,
     private readonly profile: () => Promise<ProfileIdentity>,
+    private readonly audio?: AudioReader,
   ) {
     // Jobs live under the vault's own .meta/jobs — the same place WikiStore.readJob looks.
     this.jobs = jobStore(store.root);
@@ -124,8 +134,16 @@ export class SourceIngestor {
     if (!titleIsSafe(input.title)) throw new SourceRejection('That title cannot be used.', 'unsafe_title', 400);
     const mediaRejection = checkMediaType(input.mediaType);
     if (mediaRejection) throw new SourceRejection(mediaRejection.message, mediaRejection.code, 415);
-    const rejection = checkBytes(input.bytes, limits);
+    const rejection = checkSourceBytes(input.bytes, input.mediaType, limits);
     if (rejection) throw new SourceRejection(rejection.message, rejection.code, rejection.code === 'empty' ? 400 : 413);
+
+    // The audio family pins the kind both ways: an audio mime filed as a document would
+    // transcribe without the duration probe, and an 'audio' kind over text would probe
+    // bytes that were never a recording.
+    const isAudioMedia = input.mediaType.split(';')[0]!.trim().toLowerCase().startsWith('audio/');
+    if ((input.kind === 'audio') !== isAudioMedia) {
+      throw new SourceRejection(`Audio recordings are filed as kind 'audio' — a '${input.kind}' cannot declare ${input.mediaType}.`, 'kind_mismatch', 400);
+    }
 
     const identity = await this.profile();
     const { active } = await listProfileJobs(this.jobs, identity);
@@ -140,6 +158,27 @@ export class SourceIngestor {
     const origin = input.origin ?? ORIGIN[input.kind];
     if (!ALLOWED_ORIGIN[input.kind].includes(origin)) {
       throw new SourceRejection(`A ${input.kind} cannot be filed as '${origin}' material.`, 'origin_mismatch', 400);
+    }
+
+    // Audio is probed before the bytes are stored: a recording too long to transcribe is a
+    // named refusal, and one ffmpeg cannot parse is not an audio file at all. With no
+    // transcriber wired the probe is skipped — the stored source then reports why instead.
+    let audioSeconds: number | undefined;
+    if (input.kind === 'audio' && this.audio) {
+      try {
+        const probe = await this.audio.probe(input.bytes, input.mediaType);
+        audioSeconds = probe.seconds;
+        if (Number.isFinite(audioSeconds)) {
+          const duration = checkAudioDuration(audioSeconds, limits);
+          if (duration) throw new SourceRejection(duration.message, duration.code, 413);
+        }
+      } catch (error) {
+        if (error instanceof SourceRejection) throw error;
+        if (error instanceof AudioTranscribeError) {
+          throw new SourceRejection(error.message, error.code === 'ffmpeg_missing' ? 'ffmpeg_missing' : 'unsupported_media', error.code === 'ffmpeg_missing' ? 503 : 415);
+        }
+        throw error;
+      }
     }
     const record = SourceRecordSchema.parse({
       schemaVersion: CONTRACT_VERSION,
@@ -164,7 +203,7 @@ export class SourceIngestor {
     let stored = storedAt;
     log.info('source_stored', { sourceId: stored.id, kind: stored.kind, bytes: stored.bytes, alreadyPresent });
 
-    const extraction = input.extraction ? this.adopted(input.extraction, input.bytes, limits) : await this.extract(stored, input.bytes, limits);
+    const extraction = input.extraction ? this.adopted(input.extraction, input.bytes, limits) : await this.extract(stored, input.bytes, limits, audioSeconds);
     // The extraction pass is part of the record: without it a later listing cannot say
     // whether the source ever produced text. The text itself is frozen beside the record
     // so the compiler reads back the same words rather than re-running the reader.
@@ -191,6 +230,7 @@ export class SourceIngestor {
   private intendedMethod(record: SourceRecord): ExtractionResult['method'] {
     if (record.mediaType.startsWith('application/pdf')) return 'pdf';
     if (record.mediaType.startsWith('image/')) return 'vision';
+    if (record.mediaType.startsWith('audio/')) return 'audio';
     return 'text';
   }
 
@@ -212,9 +252,20 @@ export class SourceIngestor {
   }
 
   /** Reads the source. A failure is reported in the result, never thrown: the original is safe. */
-  private async extract(record: SourceRecord, bytes: Uint8Array, limits: Limits): Promise<ExtractionResult | null> {
+  private async extract(record: SourceRecord, bytes: Uint8Array, limits: Limits, audioSeconds?: number): Promise<ExtractionResult | null> {
     const method = this.intendedMethod(record);
     try {
+      if (method === 'audio') {
+        if (!this.audio) {
+          return this.readFailure(record, 'Audio transcription is not configured on this device.');
+        }
+        const transcript = await this.audio.transcribe(bytes, record.mediaType, {
+          ...(audioSeconds !== undefined ? { seconds: audioSeconds } : {}),
+          ...(limits.maxAudioSeconds !== undefined ? { maxSeconds: limits.maxAudioSeconds } : {}),
+        });
+        const outcome = recordAudioTranscript(bytes, transcript, limits);
+        return outcome.ok ? outcome.result : this.readFailure(record, outcome.rejection.message);
+      }
       if (method === 'pdf') {
         const reader = await openPdf(bytes, limits);
         try {
@@ -234,10 +285,10 @@ export class SourceIngestor {
     } catch (error) {
       // A bug in the extractor is not a "could not read" — keep it visible in the log so a
       // broken reader is not indistinguishable from a corrupt file.
-      if (!(error instanceof PdfParseError)) {
+      if (!(error instanceof PdfParseError || error instanceof AudioTranscribeError)) {
         log.error('source_extraction_unexpected', { sourceId: record.id, mediaType: record.mediaType, ...errorFields(error) });
       }
-      const message = error instanceof PdfParseError ? error.message : 'That source could not be read here.';
+      const message = error instanceof PdfParseError || error instanceof AudioTranscribeError ? error.message : 'That source could not be read here.';
       return this.readFailure(record, message);
     }
   }

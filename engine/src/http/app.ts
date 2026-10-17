@@ -14,7 +14,7 @@ import { logisticsRoutes } from './routes/logistics';
 import { settingsRoutes } from './routes/settings';
 import { shareRoutes } from './routes/shares';
 import { studentRoutes } from './routes/student';
-import { sourceRoutes } from './routes/sources';
+import { MAX_ENVELOPE_CHARS, sourceRoutes } from './routes/sources';
 import { vaultRoutes } from './routes/vault';
 import { wikiRoutes } from './routes/wiki';
 
@@ -83,10 +83,15 @@ export function createApp(deps: EngineDeps) {
     await next();
   });
 
-  // Vault restores carry base64-encoded originals, so the archive ceiling is the decoded
-  // 96 MB vault limit plus encoding overhead; everything else keeps the tighter cap.
+  // Vault restores and source uploads carry base64-encoded originals — audio recordings
+  // run to the 256 MB decoded cap, so the sources envelope sets that route's ceiling.
+  // Everything else keeps the tighter cap.
   app.use('/api/*', (c, next) => {
-    const maxSize = c.req.path.startsWith('/api/vault/import') ? 160 * 1024 * 1024 : 20 * 1024 * 1024;
+    const maxSize = c.req.path.startsWith('/api/vault/import')
+      ? 160 * 1024 * 1024
+      : c.req.path === '/api/sources'
+        ? MAX_ENVELOPE_CHARS + 8 * 1024
+        : 20 * 1024 * 1024;
     return bodyLimit({ maxSize, onError: (inner) => inner.json({ error: 'Request too large' }, 413) })(c, next);
   });
 

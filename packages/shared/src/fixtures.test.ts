@@ -7,8 +7,8 @@ test('fixture sources cover every kind, including the course document', () => {
   const { sources } = makeContractFixtures();
   const records = Object.values(sources);
   const kinds = [...new Set(records.map((s) => s.kind))].sort();
-  assert.deepEqual(kinds, ['answer', 'document', 'image', 'note', 'peer', 'session']);
-  assert.equal(records.length, 7);
+  assert.deepEqual(kinds, ['answer', 'audio', 'document', 'image', 'note', 'peer', 'session']);
+  assert.equal(records.length, 8);
   for (const record of records) {
     assert.equal(SourceRecordSchema.safeParse(record).success, true);
   }

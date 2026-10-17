@@ -247,6 +247,12 @@ export function makeContractFixtures() {
     origin: 'student',
     extractions: [{ revision: 'rev-1', method: 'vision' as const, sha256: HASH_C, createdAt: T1 }],
   });
+  const audioSource = SourceRecordSchema.parse({
+    ...sourceBase('source-lecture-audio', 'rev-1', 'Lecture voice memo', HASH_A, 'audio/wav'),
+    kind: 'audio',
+    origin: 'student',
+    extractions: [{ revision: 'rev-1', method: 'audio' as const, sha256: HASH_A, createdAt: T1 }],
+  });
   const sessionSource = SourceRecordSchema.parse({
     ...sourceBase('source-session', 'rev-1', 'Guide session on oscillations', HASH_A, 'application/x-sef-session'),
     kind: 'session',
@@ -569,6 +575,7 @@ export function makeContractFixtures() {
       courseDocument,
       externalDocument,
       studentImage,
+      audio: audioSource,
       session: sessionSource,
       answer: answerSource,
       peer: peerSource,

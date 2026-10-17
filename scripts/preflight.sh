@@ -29,6 +29,7 @@ need_cmd pnpm bad "corepack enable"
 need_cmd ollama bad "https://ollama.com/download"
 need_cmd docker warn "only needed for docker compose"
 need_cmd cargo warn "only needed for the Tauri desktop build"
+need_cmd "${FFMPEG_PATH:-ffmpeg}" warn "only needed for audio source ingestion"
 
 section "Models"
 if tags=$(curl -fsS --max-time 3 "$OLLAMA_URL/api/tags" 2>/dev/null); then

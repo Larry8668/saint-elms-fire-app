@@ -2,9 +2,11 @@ import assert from 'node:assert/strict';
 import { test } from 'node:test';
 import {
   ACCEPTED_MEDIA_TYPES,
+  checkAudioDuration,
   checkBytes,
   checkImageDimensions,
   checkMediaType,
+  checkSourceBytes,
   checkPageCount,
   checkSourceCount,
   countChars,
@@ -116,4 +118,35 @@ test('characters are counted as code points, not UTF-16 code units', () => {
   assert.equal(sliceChars(books, 7), `${'📚'.repeat(5)}ab`);
   // A slice may never end inside a surrogate pair.
   assert.equal(sliceChars('a📚b', 2), 'a📚');
+});
+
+test('audio recordings are accepted as a family — ffmpeg decides readability, not a mime list', () => {
+  assert.equal(checkMediaType('audio/wav'), null);
+  assert.equal(checkMediaType('audio/mpeg'), null);
+  assert.equal(checkMediaType('Audio/MP4; codecs=mp4a'), null, 'case and parameters tolerated');
+  assert.equal(checkMediaType('audio/x-uncommon-container'), null, 'an uncommon audio type still reaches the probe');
+  // Neighbouring families stay refused: the family check is not a wildcard.
+  assert.equal(checkMediaType('video/mp4')?.code, 'unsupported_media');
+  assert.equal(checkMediaType('application/ogg')?.code, 'unsupported_media');
+});
+
+test('audio byte size runs against the audio cap, and duration is a named refusal', () => {
+  // A note-sized check would refuse a lecture recording; the audio cap is its own.
+  assert.equal(checkSourceBytes(new Uint8Array(INGEST_LIMITS.maxSourceBytes + 1), 'audio/mpeg'), null);
+  assert.equal(checkSourceBytes(new Uint8Array(8), 'audio/mpeg', { maxAudioBytes: 4 })?.code, 'too_large');
+  assert.equal(checkSourceBytes(new Uint8Array(0), 'audio/mpeg')?.code, 'empty');
+  // Non-audio keeps the document cap.
+  assert.equal(checkSourceBytes(new Uint8Array(INGEST_LIMITS.maxSourceBytes + 1), 'text/plain')?.code, 'too_large');
+
+  assert.equal(checkAudioDuration(3600), null);
+  assert.equal(checkAudioDuration(INGEST_LIMITS.maxAudioSeconds + 1)?.code, 'audio_too_long');
+  assert.equal(checkAudioDuration(0)?.code, 'unsupported_media', 'a stream with no length did not read as audio');
+  assert.match(checkAudioDuration(INGEST_LIMITS.maxAudioSeconds + 61)!.message, /4:00:00/);
+});
+
+test('audio downloads keep a playable extension; unknown audio keeps an honest one', () => {
+  assert.equal(safeSourceFilename('src_abc', 'audio/mpeg'), 'src_abc.mp3');
+  assert.equal(safeSourceFilename('src_abc', 'audio/wav'), 'src_abc.wav');
+  assert.equal(safeSourceFilename('src_abc', 'audio/x-m4a'), 'src_abc.m4a');
+  assert.equal(safeSourceFilename('src_abc', 'audio/x-strange'), 'src_abc.audio');
 });

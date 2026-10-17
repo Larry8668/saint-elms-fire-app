@@ -66,7 +66,7 @@ const MODES: Array<{ value: Mode; label: string }> = [
   { value: 'conversation', label: 'From a conversation' },
 ];
 
-const UPLOAD_ACCEPT = '.pdf,.txt,.md,.markdown,.png,.jpg,.jpeg,.webp,.heic,image/*,application/pdf,text/plain,text/markdown';
+const UPLOAD_ACCEPT = '.pdf,.txt,.md,.markdown,.png,.jpg,.jpeg,.webp,.heic,.mp3,.wav,.m4a,.aac,.ogg,.flac,.weba,.3gp,image/*,audio/*,application/pdf,text/plain,text/markdown';
 
 /**
  * The contribution desk: everything a student files — a note, a paste, a photo, a PDF, a
@@ -209,7 +209,7 @@ export function ContributionComposer({ onFiled }: { onFiled: (receipt: SourceRec
               <span className="block">
                 <FileUp className="mx-auto mb-2 size-6 text-beacon-300" />
                 <span className="block text-[14px] font-medium text-night-100">Drop a file, or click to choose</span>
-                <span className="mt-1 block text-[12px] text-night-500">PDF · image of notes · markdown or text · stays on this device</span>
+                <span className="mt-1 block text-[12px] text-night-500">PDF · image of notes · audio recording · markdown or text · stays on this device</span>
               </span>
             )}
           </button>
@@ -224,7 +224,7 @@ export function ContributionComposer({ onFiled }: { onFiled: (receipt: SourceRec
             <Label htmlFor="contrib-file-title">Title</Label>
             <Input id="contrib-file-title" value={title} onChange={(e) => setTitle(e.target.value)} placeholder="What is this?" />
           </div>
-          {file?.mediaType.startsWith('image/') ? (
+          {file?.mediaType.startsWith('image/') || file?.mediaType.startsWith('audio/') ? (
             <OriginToggle own={own} onChange={setOwn} />
           ) : (
             file && <p className="rounded-xl bg-black/20 px-3 py-2 text-[12px] text-night-400">Documents file as external material — if these are your own words, paste them under “Write”.</p>
