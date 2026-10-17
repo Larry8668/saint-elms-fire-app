@@ -8,6 +8,8 @@ export interface PutOptions {
   contentType?: string;
   /** `'*'`: create only. The put fails with PreconditionFailedError if the key already exists. */
   ifNoneMatch?: '*';
+  /** Compare-and-swap: write only while the object's ETag is still this one, else PreconditionFailedError. */
+  ifMatch?: string;
 }
 
 export interface ObjectInfo {
@@ -57,7 +59,7 @@ export class ObjectStoreError extends Error {
   }
 }
 
-/** A conditional write lost: the key already exists (ifNoneMatch) or changed concurrently. */
+/** A conditional write lost: the key already exists (ifNoneMatch), or its ETag moved on (ifMatch). */
 export class PreconditionFailedError extends ObjectStoreError {
   constructor(key: string, status?: number, code?: string) {
     super(`Precondition failed for ${key}`, status, code);

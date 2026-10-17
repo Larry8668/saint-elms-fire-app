@@ -20,6 +20,7 @@ import {
 import { errorFields, log } from '../config';
 import { readBytes, readJson, readText, writeFileAtomic, writeFileExclusive } from '../lib/fs';
 import { sha256Hex } from '../lib/hash';
+import { syncHooks } from '../sync/hooks';
 import { deriveGrowthEvents } from './growth';
 import { renderIndex, type IndexEntry } from './index-format';
 import { recentLogEntries, renderLogEntry } from './log-format';
@@ -614,6 +615,7 @@ export class WikiStore {
 
   async writeJob(job: WikiJob): Promise<void> {
     await writeJob(this.root, job);
+    syncHooks.written(this.root);
   }
 
   readJob(id: string): Promise<WikiJob | null> {
@@ -783,6 +785,7 @@ export class WikiStore {
       throw error;
     }
     await completeJournal(this.root, journal.id);
+    syncHooks.written(this.root);
     return journal.id;
   }
 }

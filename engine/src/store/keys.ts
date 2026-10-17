@@ -4,6 +4,7 @@
  *
  *   vaults/<accountId>/files/<relPath>          the vault tree (pages, .meta, .history)
  *   vaults/<accountId>/blobs/sha256/<hh>/<hash> content-addressed media
+ *   vaults/<accountId>/manifest.json            the sync manifest, written only by compare-and-swap
  */
 export const VAULTS_PREFIX = 'vaults/';
 
@@ -65,4 +66,9 @@ export function blobKey(accountId: string, sha256: string): string {
     throw new ObjectKeyError('Blob hash must be 64 lowercase hex characters (sha256)');
   }
   return `${accountPrefix(accountId)}blobs/sha256/${sha256.slice(0, 2)}/${sha256}`;
+}
+
+/** The sync manifest (engine/src/sync): which files and blobs make up the vault's latest version. */
+export function syncManifestKey(accountId: string): string {
+  return `${accountPrefix(accountId)}manifest.json`;
 }

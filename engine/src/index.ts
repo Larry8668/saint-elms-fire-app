@@ -1,6 +1,6 @@
 import { mkdir } from 'node:fs/promises';
 import { serve } from '@hono/node-server';
-import { config, errorFields, log } from './config';
+import { config, errorFields, log, profilePaths } from './config';
 import { createCredentialStore } from './credentials/store';
 import { bootstrapDemo } from './demo/bootstrap';
 import { createApp } from './http/app';
@@ -12,6 +12,8 @@ import { enforceSeatOwner, SeatOwner } from './profiles/seat-owner';
 import { AuthSessions } from './profiles/sessions';
 import { WorkspaceManager } from './profiles/workspace';
 import { SettingsStore } from './settings/store';
+import { createObjectStore } from './store';
+import { createVaultSync, parseVaultSyncConfig } from './sync';
 import { startSignalScheduler } from './signals/scheduler';
 
 async function main() {
@@ -32,13 +34,21 @@ async function main() {
   await enforceSeatOwner(seat, sessions);
   const auth = new AuthService(settings, registry, sessions, credentials, undefined, { seat });
 
+  // Vault sync (PR-41b): off unless OBJECT_STORE_* and VAULT_SYNC_ACCOUNT are all set.
+  const syncConfig = parseVaultSyncConfig(process.env, config.objectStore);
+  for (const warning of syncConfig.warnings) log.warn('vault_sync_config_warning', { warning });
+  const store = syncConfig.config ? createObjectStore(config.objectStore) : null;
+  const vaultSync = syncConfig.config && store ? createVaultSync(syncConfig.config, store, profilePaths(syncConfig.config.account).root) : undefined;
+
   if (config.seedDemo) await bootstrapDemo(registry, workspaces);
 
-  const app = createApp({ settings, auth, workspaces, anonymousData: new AnonymousDataManager() });
+  const app = createApp({ settings, auth, workspaces, anonymousData: new AnonymousDataManager(), vaultSync });
   serve({ fetch: app.fetch, port: config.port, hostname: config.host }, (info) => {
-    log.info('engine_listening', { url: `http://${config.host}:${info.port}`, data: config.paths.data, seedDemo: config.seedDemo });
+    log.info('engine_listening', { url: `http://${config.host}:${info.port}`, data: config.paths.data, seedDemo: config.seedDemo, vaultSync: Boolean(vaultSync) });
   });
   startSignalScheduler(() => workspaces.opened());
+  // Restore runs while liveness health answers `sync.state: 'restoring'`; /api/* waits for it.
+  if (vaultSync) void vaultSync.sync.start();
 }
 
 main().catch((error) => {
