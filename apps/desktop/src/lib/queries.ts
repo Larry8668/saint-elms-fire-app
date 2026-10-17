@@ -11,6 +11,7 @@ import { api, type StoredSettings } from './api';
 export const keys = {
   /** Engine-wide, not student data: shared by everyone looking at this machine. */
   health: ['health'] as const,
+  capability: ['device-capability'] as const,
   scoped: {
     settings: (p: string) => ['profile', p, 'settings'] as const,
     sync: (p: string) => ['profile', p, 'sync'] as const,
@@ -96,6 +97,8 @@ export function useInvalidateSource(id: string) {
 }
 
 export const useHealth = () => useQuery({ queryKey: keys.health, queryFn: api.health, refetchInterval: 15_000, retry: false });
+/** Hardware does not change under a running engine; one fetch per app session is enough. */
+export const useCapability = () => useQuery({ queryKey: keys.capability, queryFn: api.capability, staleTime: Infinity, retry: false });
 export const useSettings = () => useQuery({ queryKey: keys.scoped.settings(profile()), queryFn: api.settings });
 export const useSyncStatus = () => useQuery({ queryKey: keys.scoped.sync(profile()), queryFn: api.syncStatus });
 /**

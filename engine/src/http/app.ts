@@ -14,6 +14,7 @@ import { logisticsRoutes } from './routes/logistics';
 import { settingsRoutes } from './routes/settings';
 import { shareRoutes } from './routes/shares';
 import { studentRoutes } from './routes/student';
+import { systemRoutes } from './routes/system';
 import { MAX_ENVELOPE_CHARS, sourceRoutes } from './routes/sources';
 import { vaultRoutes } from './routes/vault';
 import { wikiRoutes } from './routes/wiki';
@@ -122,6 +123,7 @@ export function createApp(deps: EngineDeps) {
 
   app.route('/api/auth', authRoutes(deps));
   app.route('/api', settingsRoutes(deps));
+  app.route('/api', systemRoutes(deps));
   app.route('/api', studentRoutes(deps));
   app.route('/api', anchorRoutes(deps));
   app.route('/api', sourceRoutes(deps));

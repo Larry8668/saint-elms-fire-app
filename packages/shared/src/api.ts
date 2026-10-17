@@ -269,6 +269,17 @@ export interface SyncStatus {
   }>;
 }
 
+/** Roles sized to the device; embed and safety are fixed small models. */
+export type TieredRole = Extract<ModelRole, 'tutor' | 'brain' | 'vision'>;
+
+/** GET /api/system/capability — advisory only: the engine never applies a suggestion itself. */
+export interface DeviceCapability {
+  /** Null when memory could not be read; suggestions then fall back to the configured defaults. */
+  ramGb: number | null;
+  gpu?: string;
+  suggested: Record<TieredRole, string>;
+}
+
 export interface HealthResponse {
   ok: boolean;
   engine: string;

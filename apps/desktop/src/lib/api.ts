@@ -17,6 +17,7 @@ import type {
   EngineMe,
   EngineSettings,
   GraphResponse,
+  DeviceCapability,
   HealthResponse,
   IngestResult,
   JobList,
@@ -175,6 +176,7 @@ export const api = {
   settings: () => request<StoredSettings>('/api/settings'),
   saveSettings: (patch: Partial<StoredSettings>) => request<StoredSettings>('/api/settings', { method: 'PUT', body: JSON.stringify(patch) }),
   providerModels: (id: string) => request<{ models: string[]; error?: string }>(`/api/providers/${encodeURIComponent(id)}/models`),
+  capability: () => request<DeviceCapability>('/api/system/capability'),
 
   syncStatus: () => request<SyncStatus>('/api/sync/status'),
   /** The full published curriculum for an approved student; refusals arrive as typed errors. */

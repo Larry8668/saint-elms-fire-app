@@ -49,6 +49,32 @@ else
   bad "Ollama not reachable at $OLLAMA_URL — run: ollama serve"
 fi
 
+section "Device"
+# Mirrors engine/src/system/capability.ts: RAM a Gemma 4 tag is comfortable on. Advisory — warns, never fails.
+comfortable_gb() {
+  case "$1" in
+    gemma4:31b*) echo 48 ;;
+    gemma4:26b*) echo 32 ;;
+    gemma4:e4b*) echo 12 ;;
+    *) echo 0 ;;
+  esac
+}
+ram_bytes=$( (sysctl -n hw.memsize 2>/dev/null) || (awk '/MemTotal/ {print $2 * 1024}' /proc/meminfo 2>/dev/null) )
+if [ -n "$ram_bytes" ] && [ "$ram_bytes" -gt 0 ] 2>/dev/null; then
+  ram_gb=$((ram_bytes / 1073741824))
+  ok "${ram_gb} GB memory"
+  for role in TUTOR BRAIN VISION; do
+    var="${role}_MODEL"; model="${!var:-gemma4:e4b}"
+    need=$(comfortable_gb "$model")
+    # 5% slack: the OS reports a little under the installed size.
+    if [ $((ram_gb * 100)) -lt $((need * 95)) ]; then
+      warn "$model ($(tr '[:upper:]' '[:lower:]' <<<"$role")) wants ~${need} GB — expect slow or failed loads; Settings shows a device recommendation"
+    fi
+  done
+else
+  warn "could not read device memory — model sizing is unchecked"
+fi
+
 section "Services"
 # /ready, not /health: liveness answers while the database is dead; readiness fails then.
 probe "University server" "$UNI_URL/ready" bad "pnpm dev:uni or docker compose up -d uni"
