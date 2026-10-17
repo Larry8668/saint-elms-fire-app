@@ -41,6 +41,8 @@ export const keys = {
     proposal: (p: string, id: string) => ['profile', p, 'proposal', id] as const,
     logistics: (p: string) => ['profile', p, 'logistics'] as const,
     attention: (p: string) => ['profile', p, 'attention'] as const,
+    suggestionsAll: (p: string) => ['profile', p, 'suggestions'] as const,
+    suggestions: (p: string, teacher: string) => ['profile', p, 'suggestions', teacher] as const,
   },
 };
 
@@ -234,6 +236,7 @@ export function useSaveSettings() {
       void client.invalidateQueries({ queryKey: keys.health });
       // Proactivity settings change which attention items are shown.
       void client.invalidateQueries({ queryKey: keys.scoped.attention(profile()) });
+      void client.invalidateQueries({ queryKey: keys.scoped.suggestionsAll(profile()) });
       toast.success('Settings saved');
     },
     onError: (error) => toast.error((error as Error).message),
@@ -332,6 +335,13 @@ export function useInstallCourses() {
     onError: (error) => toast.error((error as Error).message),
   });
 }
+
+/**
+ * Suggested questions for one teacher. The engine caches them, so a modest stale time is
+ * enough; drafted wording lands in the cache in the background and arrives on the next fetch.
+ */
+export const useSuggestions = (teacher: TeacherId) =>
+  useQuery({ queryKey: keys.scoped.suggestions(profile(), teacher), queryFn: () => api.suggestions(teacher), staleTime: 60_000, refetchInterval: 5 * 60_000 });
 
 /** Attention items. A minute's polling is enough: the engine re-evaluates on its own when stale. */
 export const useAttention = () => useQuery({ queryKey: keys.scoped.attention(profile()), queryFn: api.attention, refetchInterval: 60_000 });

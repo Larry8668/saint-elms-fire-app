@@ -21,6 +21,7 @@ import { Composer, type Attachments, type ComposerHandle } from './Composer';
 import { HistoryButton } from './ConversationHistory';
 import { AssistantMessage, ThreadSkeleton, UserMessage } from './MessageRow';
 import { ReflectDialog } from './ReflectDialog';
+import { SuggestionRail } from './SuggestionRail';
 import { TeacherIntro } from './TeacherIntro';
 import { TEACHER_LOOK } from './teacher-meta';
 
@@ -128,6 +129,13 @@ export function TeachersView() {
     void send(teacher, trimmed, attachments.length ? attachments : undefined);
     setDraft('');
     setAttachments([]);
+    scroll.scrollToBottom();
+  };
+
+  /** A chip is its own message: the student's half-typed draft and attachments stay put. */
+  const sendSuggestion = (text: string) => {
+    if (thread.busy) return;
+    void send(teacher, text);
     scroll.scrollToBottom();
   };
 
@@ -261,6 +269,7 @@ export function TeachersView() {
             onDismissChoices={() => clearAnchorChoices('philosopher')}
           />
         )}
+        <SuggestionRail teacher={teacher} busy={thread.busy} onPick={sendSuggestion} />
         <Composer
           ref={composer}
           teacher={teacher}
