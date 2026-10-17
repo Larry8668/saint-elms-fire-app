@@ -2,6 +2,7 @@ import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import type { LogisticsWriteInput, TeacherId, WikiJob } from '@sef/shared';
 import { toast } from 'sonner';
 import { api, type StoredSettings } from './api';
+import { metrics } from './metrics';
 
 /**
  * Query keys are scoped by profile id. A response that arrives after a sign-out is written
@@ -42,6 +43,9 @@ export const keys = {
     logistics: (p: string) => ['profile', p, 'logistics'] as const,
     attention: (p: string) => ['profile', p, 'attention'] as const,
     suggestionsAll: (p: string) => ['profile', p, 'suggestions'] as const,
+    feeds: (p: string) => ['profile', p, 'feeds'] as const,
+    plans: (p: string) => ['profile', p, 'plans'] as const,
+    metrics: (p: string) => ['profile', p, 'metrics'] as const,
     suggestions: (p: string, teacher: string) => ['profile', p, 'suggestions', teacher] as const,
   },
 };
@@ -52,6 +56,7 @@ let activeProfile: string | null = null;
 
 /** The session provider sets this on activate/clear; it is never client-chosen. */
 export const setActiveProfile = (profileId: string | null) => {
+  if (profileId !== activeProfile) metrics.reset();
   activeProfile = profileId;
 };
 
@@ -342,6 +347,48 @@ export function useInstallCourses() {
  */
 export const useSuggestions = (teacher: TeacherId) =>
   useQuery({ queryKey: keys.scoped.suggestions(profile(), teacher), queryFn: () => api.suggestions(teacher), staleTime: 60_000, refetchInterval: 5 * 60_000 });
+
+/** Subject feeds and their latest headlines; polling happens engine-side on its own tick. */
+export const useFeeds = () => useQuery({ queryKey: keys.scoped.feeds(profile()), queryFn: api.feeds, refetchInterval: 5 * 60_000 });
+
+/** Feed changes apply at once and can change attention items and Philosopher suggestions. */
+export function useFeedActions() {
+  const client = useQueryClient();
+  const p = profile();
+  const refresh = () => {
+    void client.invalidateQueries({ queryKey: keys.scoped.feeds(p) });
+    void client.invalidateQueries({ queryKey: keys.scoped.attention(p) });
+    void client.invalidateQueries({ queryKey: keys.scoped.suggestionsAll(p) });
+  };
+  const onError = (error: unknown) => toast.error((error as Error).message);
+  return {
+    add: useMutation({ mutationFn: api.addFeed, onSuccess: refresh, onError }),
+    consent: useMutation({ mutationFn: ({ id, enabled }: { id: string; enabled: boolean }) => api.setFeedConsent(id, enabled), onSuccess: refresh, onError }),
+    remove: useMutation({ mutationFn: api.removeFeed, onSuccess: refresh, onError }),
+  };
+}
+
+/** Study plans. Progress is recomputed engine-side on every read, so polling picks up new evidence. */
+export const usePlans = () => useQuery({ queryKey: keys.scoped.plans(profile()), queryFn: api.plans, refetchInterval: 60_000 });
+
+/** Plan changes alter which next steps the Guide suggests. Proposal errors stay with the caller's form. */
+export function usePlanActions() {
+  const client = useQueryClient();
+  const p = profile();
+  const refresh = () => {
+    void client.invalidateQueries({ queryKey: keys.scoped.plans(p) });
+    void client.invalidateQueries({ queryKey: keys.scoped.suggestionsAll(p) });
+  };
+  const onError = (error: unknown) => toast.error((error as Error).message);
+  return {
+    propose: useMutation({ mutationFn: api.proposePlan, onSuccess: refresh }),
+    approve: useMutation({ mutationFn: api.approvePlan, onSuccess: refresh, onError }),
+    abandon: useMutation({ mutationFn: api.abandonPlan, onSuccess: refresh, onError }),
+  };
+}
+
+/** Local evaluation counters; read on demand, they change too slowly to poll. */
+export const useMetrics = () => useQuery({ queryKey: keys.scoped.metrics(profile()), queryFn: api.metrics, staleTime: 60_000 });
 
 /** Attention items. A minute's polling is enough: the engine re-evaluates on its own when stale. */
 export const useAttention = () => useQuery({ queryKey: keys.scoped.attention(profile()), queryFn: api.attention, refetchInterval: 60_000 });
