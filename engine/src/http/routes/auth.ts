@@ -1,12 +1,13 @@
 import { Hono, type Context } from 'hono';
 import { z } from 'zod';
-import { LoginRequestSchema } from '@sef/shared';
+import { DeviceLabelSchema, EngineLoginRequestSchema, type AuthSessionList } from '@sef/shared';
 import { log } from '../../config';
 import { AuthError } from '../../profiles/auth';
 import { UniUnreachableError } from '../../uni/client';
 import { requireProfile, type EngineDeps, type EngineEnv } from '../context';
 import { edgePolicy } from '../edge';
 import { rateLimit, SlidingWindowLimiter } from '../rate-limit';
+import { deviceLabelFor } from '../user-agent';
 
 const STATUS: Record<AuthError['code'], 400 | 401 | 403 | 503> = {
   invalid_credentials: 401,
@@ -25,8 +26,8 @@ const AUTH_FAILURES = new Set<AuthError['code']>(['invalid_credentials', 'offlin
 /** One shared bucket for the whole engine. */
 const ENGINE_WIDE = { client: () => 'engine' };
 
-const PollBodySchema = z.object({ flowKey: z.string().min(1).max(128).optional() }).nullable();
-const OfflineBodySchema = z.object({ profileId: z.string().min(1).max(128) });
+const PollBodySchema = z.object({ flowKey: z.string().min(1).max(128).optional(), deviceLabel: DeviceLabelSchema.optional() }).nullable();
+const OfflineBodySchema = z.object({ profileId: z.string().min(1).max(128), deviceLabel: DeviceLabelSchema.optional() });
 
 export function authRoutes(deps: EngineDeps) {
   const app = new Hono<EngineEnv>();
@@ -59,10 +60,11 @@ export function authRoutes(deps: EngineDeps) {
   app.get('/profiles', async (c) => c.json(remote(c) ? [] : await deps.auth.profiles()));
 
   app.post('/login', signInLimit, loginGlobalLimit, async (c) => {
-    const parsed = LoginRequestSchema.safeParse(await c.req.json().catch(() => null));
+    const parsed = EngineLoginRequestSchema.safeParse(await c.req.json().catch(() => null));
     if (!parsed.success) return c.json({ error: 'Enter an email and password', code: 'invalid_request' }, 400);
     try {
-      return c.json(await deps.auth.login(parsed.data.email, parsed.data.password));
+      const label = parsed.data.deviceLabel || deviceLabelFor(c.req.header('user-agent'));
+      return c.json(await deps.auth.login(parsed.data.email, parsed.data.password, label));
     } catch (error) {
       if (error instanceof AuthError) return failed(c, error);
       throw error;
@@ -86,7 +88,13 @@ export function authRoutes(deps: EngineDeps) {
     const parsed = PollBodySchema.safeParse(await c.req.json().catch(() => null));
     if (!parsed.success) return c.json({ error: 'Invalid poll', code: 'invalid_request' }, 400);
     try {
-      return c.json(await deps.auth.pollDeviceSignIn({ flowKey: parsed.data?.flowKey, requireFlowKey: remote(c) }));
+      return c.json(
+        await deps.auth.pollDeviceSignIn({
+          flowKey: parsed.data?.flowKey,
+          requireFlowKey: remote(c),
+          deviceLabel: parsed.data?.deviceLabel || deviceLabelFor(c.req.header('user-agent')),
+        }),
+      );
     } catch (error) {
       if (error instanceof AuthError) return failed(c, error);
       if (error instanceof UniUnreachableError) {
@@ -107,7 +115,7 @@ export function authRoutes(deps: EngineDeps) {
     const parsed = OfflineBodySchema.safeParse(await c.req.json().catch(() => null));
     if (!parsed.success) return c.json({ error: 'Pick a profile', code: 'invalid_request' }, 400);
     try {
-      const result = await deps.auth.unlockOffline(parsed.data.profileId);
+      const result = await deps.auth.unlockOffline(parsed.data.profileId, parsed.data.deviceLabel || deviceLabelFor(c.req.header('user-agent')));
       if (!result) {
         log.warn('auth_failed', { route: c.req.path, code: 'unknown_profile', address: edge.client(c) });
         return c.json({ error: 'Unknown profile', code: 'unauthenticated' }, 401);
@@ -120,6 +128,21 @@ export function authRoutes(deps: EngineDeps) {
   });
 
   app.get('/me', requireProfile(deps), (c) => c.json(c.get('me')));
+
+  /** The signed-in profile's own sessions on this engine; tokens and their hashes never leave it. */
+  app.get('/sessions', requireProfile(deps), async (c) => {
+    const body: AuthSessionList = { sessions: await deps.auth.listSessions(c.get('me').profile.id, c.get('token')) };
+    return c.json(body);
+  });
+
+  /** Revoking a lost device is a safety action, so a limited session may do it too. */
+  app.delete('/sessions/:id', requireProfile(deps, { limitedWrites: true }), async (c) => {
+    const id = c.req.param('id');
+    if (id.length > 64 || !(await deps.auth.revokeSession(c.get('me').profile.id, id))) {
+      return c.json({ error: 'No such session', code: 'not_found' }, 404);
+    }
+    return c.body(null, 204);
+  });
 
   /** Signing out is always allowed — a limited session must be able to end itself. */
   app.post('/logout', requireProfile(deps, { limitedWrites: true }), async (c) => {

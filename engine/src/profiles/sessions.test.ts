@@ -58,3 +58,49 @@ test('the access decided at issue time persists across a reload', async () => {
   assert.deepEqual((await reloaded.resolve(limited))?.access, { mode: 'limited', reason: 'entitlement_expired' });
   assert.deepEqual((await reloaded.resolve(plain))?.access, { mode: 'full' });
 });
+
+test('hashed rows from before session ids keep working, gain a stable id, and are never signed out', async () => {
+  const { createHash } = await import('node:crypto');
+  const token = 'legacy-but-hashed-token';
+  const key = createHash('sha256').update(token).digest('hex');
+  const expiresAt = new Date(Date.now() + 86400000).toISOString();
+  await writeFile(config.paths.authSessions, JSON.stringify({ [key]: { profileId: 'elder', mode: 'online', expiresAt } }));
+
+  const first = new AuthSessions();
+  assert.equal((await first.resolve(token))?.profileId, 'elder', 'the legacy session still signs in');
+  const [listed] = await first.list('elder', token);
+  assert.ok(listed && /^[0-9a-f]{32}$/.test(listed.id) && listed.id !== key.slice(0, 32), 'an id that is not the token hash');
+  assert.equal(listed.createdAt, null, 'unknown issue time is reported as unknown, not invented');
+  assert.equal(listed.deviceLabel, 'Unknown device');
+  assert.equal(listed.current, true);
+
+  const reloaded = new AuthSessions();
+  assert.equal((await reloaded.list('elder'))[0]?.id, listed.id, 'the id is stable across reloads');
+  assert.equal(await reloaded.revokeById('elder', listed.id), true);
+  assert.equal(await reloaded.resolve(token), null);
+});
+
+test('lastSeenAt is refreshed at most every few minutes, not on every request', async () => {
+  const sessions = new AuthSessions();
+  const token = await sessions.create('frequent', 'online');
+  const before = (await sessionFile()) as Record<string, { lastSeenAt: string }>;
+  for (let i = 0; i < 20; i += 1) await sessions.resolve(token);
+  assert.deepEqual(await sessionFile(), before, 'no rewrite while lastSeenAt is fresh');
+
+  // Age the row past the resolution: the next resolve records the visit once.
+  const stale = new Date(Date.now() - 10 * 60_000).toISOString();
+  const aged = Object.fromEntries(Object.entries(before).map(([k, v]) => [k, { ...v, lastSeenAt: v.lastSeenAt && stale }]));
+  await writeFile(config.paths.authSessions, JSON.stringify(aged));
+  const reloaded = new AuthSessions();
+  await reloaded.resolve(token);
+  const row = Object.values((await sessionFile()) as Record<string, { profileId: string; lastSeenAt: string }>).find((r) => r.profileId === 'frequent')!;
+  assert.ok(Date.parse(row.lastSeenAt) > Date.parse(stale));
+});
+
+test('revokeById never reaches another profile’s session', async () => {
+  const sessions = new AuthSessions();
+  const victim = await sessions.create('victim', 'online');
+  const [row] = await sessions.list('victim');
+  assert.equal(await sessions.revokeById('attacker', row!.id), false);
+  assert.equal((await sessions.resolve(victim))?.profileId, 'victim');
+});
