@@ -2,7 +2,7 @@ import assert from 'node:assert/strict';
 import { test } from 'node:test';
 import type { ChatRequest, ChatStreamEvent, WikiClaim } from '@sef/shared';
 import type { StoredSettings } from '../settings/store';
-import { runChatTurn, type HarnessDeps } from './harness';
+import { MODEL_UNAVAILABLE, runChatTurn, type HarnessDeps } from './harness';
 import { ACADEMIC_REDIRECT, PRIVACY_REFUSAL } from './lanes';
 import { UNTRUSTED_CONTENT_NOTE } from './prompts';
 import type { ClaimReader } from '../brain/claim-evidence';
@@ -555,4 +555,18 @@ test('a text-only Friend turn never reaches for the extraction seam', async () =
   }) as never;
   await runChatTurn(turn({ teacher: 'friend', messages: [{ role: 'user', content: 'when are fees due?' }] }), h.deps, (e) => h.events.push(e));
   assert.equal(calls, 0, 'no image, no extraction');
+});
+test('a model service that refused or failed is named as such, not blamed on the lessons', async () => {
+  const h = harness('unused');
+  h.deps.makeAgent = ((_id: string, _prompt: string) => ({
+    stream: async () => ({
+      textStream: (async function* () {})(),
+      error: Object.assign(new Error('Unauthorized'), { statusCode: 401 }),
+    }),
+  })) as unknown as HarnessDeps['makeAgent'];
+  await runChatTurn(turn({ teacher: 'guide', messages: [{ role: 'user', content: 'explain resonance' }] }), h.deps, (e) => h.events.push(e));
+  const finished = done(h.events);
+  assert.equal(finished.text, MODEL_UNAVAILABLE);
+  assert.doesNotMatch(finished.text, /released lessons/);
+  assert.ok(finished.verification.checks.some((c) => c.id === 'model' && !c.passed));
 });

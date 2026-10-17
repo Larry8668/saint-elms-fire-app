@@ -1,6 +1,7 @@
 node_modules/
 dist/
 dist-portal/
+dist-workspace/
 build/
 .turbo/
 *.tsbuildinfo

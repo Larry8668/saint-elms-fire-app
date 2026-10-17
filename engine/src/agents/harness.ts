@@ -90,6 +90,8 @@ function capabilityChecks(denied: CapabilityId[]): VerificationCheck[] {
  * before the first await, so nothing reaches a model — and no image bytes are handed to one —
  * until the deterministic checks have passed.
  */
+export const MODEL_UNAVAILABLE = 'The model service is unavailable right now, so I can’t answer. Nothing was checked or invented; try again in a moment.';
+
 export async function runChatTurn(req: ChatRequest, deps: HarnessDeps, emit: (event: ChatStreamEvent) => void): Promise<void> {
   const started = Date.now();
   const ctx = new TurnContext(emit);
@@ -295,6 +297,13 @@ export async function runChatTurn(req: ChatRequest, deps: HarnessDeps, emit: (ev
   // immediately, the model's text does not — it is buffered, checked, then served once.
   let text = '';
   for await (const chunk of stream.textStream) text += chunk;
+  // A provider that refused or failed (the gateway's 401/503, a stopped Ollama) ends the stream
+  // with no text. Say that, instead of letting the evidence checks blame the lessons.
+  const streamError = (stream as { error?: unknown }).error;
+  if (!text.trim() && streamError) {
+    log.warn('model_unavailable', { teacher: req.teacher, status: (streamError as { statusCode?: number }).statusCode ?? null });
+    return finish(MODEL_UNAVAILABLE, resolved, [{ id: 'model', label: 'The model service did not answer', passed: false }]);
+  }
   text = text.trim() || "I couldn't put an answer together just now. Could you rephrase that?";
 
   // 5. What the model read out of an image is untrusted input. Re-classified, and never served
