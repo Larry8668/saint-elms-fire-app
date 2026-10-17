@@ -20,3 +20,4 @@ export * from './signals';
 export * from './suggest';
 export * from './feeds';
 export * from './plans';
+export * from './metrics';

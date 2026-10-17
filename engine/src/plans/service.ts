@@ -1,6 +1,7 @@
 import { randomUUID } from 'node:crypto';
 import { CONTRACT_VERSION, MAX_ACTIVE_PLANS, MAX_PROPOSED_PLANS, type CreatePlanRequest, type PlanStep, type StudyPlan } from '@sef/shared';
 import { log } from '../config';
+import type { RecordMetric } from '../eval/service';
 import { PLANNER_INSTRUCTIONS, plannerPrompt, type PlanDrafter } from './planner';
 import { proposeRevision, pruneAtApproval, recompute } from './progress';
 import type { PlanStore } from './store';
@@ -28,6 +29,7 @@ export interface PlanServiceDeps {
   draft: PlanDrafter;
   now?: () => Date;
   newId?: () => string;
+  record?: RecordMetric;
 }
 
 /**
@@ -78,6 +80,7 @@ export class PlanService {
       const plan: StudyPlan = { schemaVersion: CONTRACT_VERSION, id: this.newId(), goal: request.goal, createdAt: stamp, updatedAt: stamp, deadlineAt, status: 'proposed', steps, notes };
       await this.deps.store.put(plan);
       log.info('plan_proposed', { id: plan.id, steps: steps.length, dropped: draft.steps.length - steps.length });
+      this.deps.record?.('plan_proposed', plan.id);
       return { ok: true, plan };
     });
   }
@@ -113,6 +116,7 @@ export class PlanService {
       }
       await this.deps.store.put(approved);
       log.info('plan_approved', { id, steps: approved.steps.length, replaced: replaced?.id });
+      this.deps.record?.('plan_approved', id);
       return { ok: true, plan: approved };
     });
   }
@@ -125,6 +129,7 @@ export class PlanService {
       const closed: StudyPlan = { ...plan, status: 'abandoned', updatedAt: this.now().toISOString() };
       await this.deps.store.put(closed);
       log.info('plan_abandoned', { id, was: plan.status });
+      this.deps.record?.('plan_abandoned', id);
       return { ok: true, plan: closed };
     });
   }
@@ -135,6 +140,12 @@ export class PlanService {
     return plans
       .filter((p) => p.status === 'active')
       .flatMap((p) => p.steps.filter((s) => s.state === 'pending').map((step) => ({ planId: p.id, goal: p.goal, deadlineAt: p.deadlineAt, step })));
+  }
+
+  private recordProgress(before: StudyPlan, after: StudyPlan): void {
+    const wasDone = new Set(before.steps.filter((s) => s.state === 'done').map((s) => s.id));
+    for (const step of after.steps) if (step.state === 'done' && !wasDone.has(step.id)) this.deps.record?.('plan_step_completed', `${after.id}:${step.id}`, step.kind);
+    if (after.status === 'completed' && before.status !== 'completed') this.deps.record?.('plan_completed', after.id);
   }
 
   /**
@@ -156,6 +167,7 @@ export class PlanService {
         plans[i] = next;
         await this.deps.store.put(next);
         log.info('plan_progress', { id: next.id, status: next.status, done: next.steps.filter((s) => s.state === 'done').length, stale: next.steps.filter((s) => s.state === 'stale').length });
+        this.recordProgress(plan, next);
         const hasRevision = plans.some((p) => p.revisionOf === next.id && p.status === 'proposed');
         const revision = hasRevision ? null : proposeRevision(next, this.newId(), world.now);
         if (revision) {

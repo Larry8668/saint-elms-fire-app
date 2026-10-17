@@ -171,3 +171,34 @@ test('when everything a proposal pointed at is gone, approval refuses with nothi
   assert.ok(!result.ok && result.code === 'nothing_left');
   assert.equal((await service.get(r.plan.id))!.status, 'proposed');
 });
+
+test('lifecycle events are reported to the metrics hook: proposed, approved, step done, completed, abandoned', async () => {
+  const dir = await mkdtemp(path.join(tmpdir(), 'sef-plans-metrics-'));
+  const world = makeWorld();
+  const seen: string[] = [];
+  let n = 0;
+  const service = new PlanService({
+    store: new PlanStore(dir),
+    world: async () => world,
+    draft: async () => ({ steps: [{ title: 'Review entropy', kind: 'review_page', entityRefs: ['page:entropy'] }] }),
+    now: () => world.now,
+    newId: () => `plan_${String(++n).padStart(12, '0')}`,
+    record: (kind, ref, tag) => seen.push([kind, ref, tag].filter(Boolean).join(' ')),
+  });
+  const a = await service.propose({ goal: 'One' });
+  const b = await service.propose({ goal: 'Two' });
+  assert.ok(a.ok && b.ok);
+  await service.approve(a.plan.id);
+  world.events.push({ pageId: 'entropy', at: new Date(NOW.getTime() + 1000).toISOString() });
+  await service.list();
+  await service.list();
+  await service.abandon(b.plan.id);
+  assert.deepEqual(seen, [
+    'plan_proposed plan_000000000001',
+    'plan_proposed plan_000000000002',
+    'plan_approved plan_000000000001',
+    'plan_step_completed plan_000000000001:st_1 review_page',
+    'plan_completed plan_000000000001',
+    'plan_abandoned plan_000000000002',
+  ]);
+});

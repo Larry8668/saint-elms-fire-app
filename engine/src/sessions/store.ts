@@ -92,6 +92,12 @@ export class SessionStore {
     return [...new Set((await this.all()).flatMap((s) => s.lessonIds))];
   }
 
+  /** Teacher turns, and how many were refused by policy — the refusal rate's evidence. */
+  async turnOutcomes(): Promise<{ total: number; refused: number }> {
+    const answers = (await this.all()).flatMap((s) => s.turns.filter((t) => t.role === 'assistant'));
+    return { total: answers.length, refused: answers.filter((t) => t.verification?.lane === 'refused').length };
+  }
+
   /** When a conversation last drew on each lesson — the evidence a plan's read-lesson step waits for. */
   async lessonActivity(): Promise<Array<{ lessonId: string; at: string }>> {
     return (await this.all()).flatMap((s) => s.lessonIds.map((lessonId) => ({ lessonId, at: s.updatedAt })));
