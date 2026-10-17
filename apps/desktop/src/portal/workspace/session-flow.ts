@@ -124,6 +124,17 @@ export function safeWorkspaceUrl(raw: string | undefined): string | null {
 }
 
 /**
+ * Where the browser goes once the workspace is ready. With the web app hosted apart from the
+ * VM (`VITE_APP_URL`, e.g. on Vercel), that is the app, told which workspace to use; the app
+ * validates the URL again before it calls it. Without one, the VM serves its own UI: go there.
+ */
+export function handoffUrl(workspaceUrl: string, appUrl: string | undefined): string {
+  const app = appUrl?.trim().replace(/\/+$/, '');
+  if (!app) return workspaceUrl;
+  return `${app}/?workspace=${encodeURIComponent(workspaceUrl)}`;
+}
+
+/**
  * Runs the whole flow, emitting every state it passes through, and resolves with the terminal
  * one (`ready` or `failed`). Aborting the signal resolves with the last state and emits nothing more.
  */

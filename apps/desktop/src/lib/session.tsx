@@ -3,7 +3,7 @@ import { type DevicePollResult, type DeviceProfile, type DeviceSignInStart, type
 import { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 import { toast } from 'sonner';
 import { api, EngineError, setEngineSession } from './api';
-import { currentEngineTarget } from './seat';
+import { currentEngineTarget, isWorkspaceTarget } from './seat';
 import { log } from './log';
 import { setActiveProfile } from './queries';
 
@@ -137,7 +137,7 @@ export function SessionProvider({ children }: { children: ReactNode }) {
     if (state.status === 'signed-in') {
       // A hosted workspace ends with the sign-out: the university saves the notes and deletes the VM.
       // It must go first, while the engine still holds the university credential it relays with.
-      if (currentEngineTarget().kind === 'served') await endWorkspaceOnSignOut();
+      if (isWorkspaceTarget(currentEngineTarget())) await endWorkspaceOnSignOut();
       await api.logout().catch((error) => log.warn('logout_failed', { error: String(error) }));
     }
     clear('user_signed_out');

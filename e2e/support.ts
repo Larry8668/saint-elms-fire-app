@@ -19,6 +19,15 @@ export const INSTABOX_PORT = Number(process.env.E2E_INSTABOX_PORT ?? 4312);
  * `VITE_ENGINE_URL=same-origin VITE_DEMO_MODE=false pnpm --filter @sef/desktop exec vite build --outDir dist-workspace`.
  */
 export const WORKSPACE_UI_DIR = process.env.E2E_WORKSPACE_UI_DIR ?? new URL('../apps/desktop/dist-workspace', import.meta.url).pathname;
+/**
+ * The web app hosted apart from the engine (PR-45d, the Vercel shape), served by `vite preview`
+ * on its own origin when this build exists. Build it, and the portal that hands off to it:
+ * `VITE_WORKSPACE_HOST_SUFFIX=127.0.0.1 VITE_UNI_URL=<uni> pnpm --filter @sef/desktop exec vite build --outDir dist-app`
+ * `VITE_APP_URL=<APP_URL> pnpm --filter @sef/desktop build:portal`
+ */
+export const APP_PORT = Number(process.env.E2E_APP_PORT ?? 4313);
+export const APP_URL = `http://127.0.0.1:${APP_PORT}`;
+export const APP_DIR = process.env.E2E_APP_DIR ?? new URL('../apps/desktop/dist-app', import.meta.url).pathname;
 /** Where account mail lands when the dev Mailpit profile is running. */
 export const MAILPIT_URL = process.env.E2E_MAILPIT_URL ?? 'http://127.0.0.1:8025';
 
@@ -29,4 +38,6 @@ export interface E2EStatus {
   engineDataDir?: string;
   uniUrl?: string;
   workspaceUi?: boolean;
+  /** Set when the web app runs on its own origin (APP_URL) and the engine allows only that one. */
+  appUrl?: string;
 }

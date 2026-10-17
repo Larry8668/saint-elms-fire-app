@@ -2,7 +2,7 @@ import { useQuery } from '@tanstack/react-query';
 import { useEffect, useState } from 'react';
 import { api, EngineError } from '@/lib/api';
 import { log } from '@/lib/log';
-import { currentEngineTarget } from '@/lib/seat';
+import { currentEngineTarget, isWorkspaceTarget } from '@/lib/seat';
 import { portalUrl } from '@/lib/uni-url';
 import { beatOutcomeOf, startHeartbeat } from './heartbeat';
 
@@ -17,12 +17,12 @@ export function workspacePortalUrl(): string {
   }
 }
 
-/** Is this engine a hosted workspace? Only the UI an engine serves itself can be one. */
+/** Is this engine a hosted workspace? Only an engine serving its own UI, or one the portal handed to the web app, can be one. */
 export function useWorkspaceInfo() {
   const query = useQuery({
     queryKey: ['workspace'],
     queryFn: api.workspace,
-    enabled: currentEngineTarget().kind === 'served',
+    enabled: isWorkspaceTarget(currentEngineTarget()),
     staleTime: Number.POSITIVE_INFINITY,
     retry: false,
   });

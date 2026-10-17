@@ -2,7 +2,7 @@ import assert from 'node:assert/strict';
 import { execFileSync } from 'node:child_process';
 import { readFileSync } from 'node:fs';
 import path from 'node:path';
-import { expect, request as newRequest, test, type APIRequestContext } from '@playwright/test';
+import { expect, request as newRequest, test, type APIRequestContext, type Page } from '@playwright/test';
 import { ENGINE_URL, MAILPIT_URL, UNI_URL, type E2EStatus } from './support';
 
 /**
@@ -60,6 +60,81 @@ const registerVerified = async (email: string, name: string): Promise<APIRequest
   return ctx;
 };
 
+/**
+ * The app on APP_URL drives the VM (ENGINE_URL) cross-origin: the hand-off stored the workspace
+ * and left the address bar clean, the device sign-in and a chat turn's SSE stream cross origins
+ * in the browser, and a page on any other origin is refused.
+ */
+async function crossOriginWorkspace(page: Page, student: APIRequestContext, appUrl: string) {
+  assert.equal(new URL(page.url()).searchParams.has('workspace'), false, 'the hand-off parameter is stripped');
+  const stored = await page.evaluate(() => localStorage.getItem('sef.workspace'));
+  assert.deepEqual(JSON.parse(stored ?? 'null'), { engineUrl: ENGINE_URL });
+  await expect(page.getByText(`Signing in to ${new URL(ENGINE_URL).host}`)).toBeVisible();
+
+  // Device sign-in: the app starts and polls the grant on the VM, the student approves on the uni.
+  await page.getByRole('button', { name: 'Continue with your university account' }).click();
+  await expect(page.locator('code').first()).toBeVisible();
+  const code = (await page.locator('code').first().textContent())?.trim() ?? '';
+  assert.match(code, /^[A-Z0-9]{4}-?[A-Z0-9]{4}$/, `user code: ${code}`);
+  const claim = await student.get(`/v1/auth/device?user_code=${encodeURIComponent(code)}`);
+  assert.ok(claim.ok(), `device claim failed: ${claim.status()}`);
+  const approve = await student.post('/v1/auth/device/approve', { data: { userCode: code } });
+  assert.ok(approve.ok(), `device approve failed: ${approve.status()} ${await approve.text()}`);
+  const readToken = () => page.evaluate(() => (JSON.parse(sessionStorage.getItem('sef.session') ?? '{}') as { token?: string }).token ?? null);
+  // The app's own poll (cross-origin) picks up the approval and stores the engine session.
+  await expect.poll(readToken, { timeout: 30_000 }).not.toBeNull();
+  const token = (await readToken())!;
+
+  // One chat turn from the app's origin, read as the app reads it: fetch + a stream reader.
+  const turn = await page.evaluate(
+    async ({ engine, token }) => {
+      const headers = { authorization: `Bearer ${token}`, 'content-type': 'application/json' };
+      const opened = await fetch(`${engine}/api/chat/sessions`, { method: 'POST', headers, body: JSON.stringify({ teacher: 'guide' }) });
+      const { sessionId } = (await opened.json()) as { sessionId: string };
+      const res = await fetch(`${engine}/api/chat/turn`, {
+        method: 'POST',
+        headers,
+        body: JSON.stringify({ schemaVersion: 2, sessionId, teacher: 'guide', clientMessageId: `xo-${Date.now()}`, message: 'Say hello in five words.' }),
+      });
+      const reader = res.body!.getReader();
+      const decoder = new TextDecoder();
+      let text = '';
+      let chunks = 0;
+      for (;;) {
+        const { done, value } = await reader.read();
+        if (done) break;
+        chunks += 1;
+        text += decoder.decode(value, { stream: true });
+      }
+      const types = text.split('\n').filter((l) => l.startsWith('data:')).map((l) => (JSON.parse(l.slice(5)) as { type: string }).type);
+      return { status: res.status, contentType: res.headers.get('content-type'), chunks, types };
+    },
+    { engine: ENGINE_URL, token },
+  );
+  assert.equal(turn.status, 200);
+  assert.match(turn.contentType ?? '', /text\/event-stream/);
+  assert.ok(turn.types.length > 0, 'SSE events reached the app across origins');
+  assert.ok(turn.types.includes('done') || turn.types.includes('error'), `a terminal event: ${turn.types.join(',')}`);
+  console.log(`cross-origin turn: ${turn.chunks} chunks, events ${[...new Set(turn.types)].join(',')}`);
+
+  // Any other origin: the browser refuses the read, and the engine refuses the write.
+  await page.goto(`${ORIGIN}/app/`);
+  const foreign = await page.evaluate(async (engine) => {
+    try {
+      await fetch(`${engine}/api/auth/device/start`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: '{}' });
+      return 'readable';
+    } catch {
+      return 'blocked';
+    }
+  }, ENGINE_URL);
+  assert.equal(foreign, 'blocked', 'a page on the portal origin cannot read the VM');
+  const forged = await fetch(`${ENGINE_URL}/api/auth/device/start`, { method: 'POST', headers: { origin: 'https://attacker.example', 'content-type': 'application/json' }, body: '{}' });
+  assert.equal(forged.status, 403);
+  assert.equal(((await forged.json()) as { code?: string }).code, 'forbidden_origin');
+  const allowed = await fetch(`${ENGINE_URL}/api/auth/me`, { method: 'OPTIONS', headers: { origin: appUrl, 'access-control-request-method': 'GET', 'access-control-request-headers': 'authorization' } });
+  assert.equal(allowed.headers.get('access-control-allow-origin'), appUrl);
+}
+
 test('an approved student opens a workspace: progress, ready, hand-off to the VM', async ({ page }) => {
   const stack = status();
   test.skip(!stack?.ok, stack?.reason ?? 'The e2e stack did not start.');
@@ -111,12 +186,16 @@ test('an approved student opens a workspace: progress, ready, hand-off to the VM
     // The real steps, as the university reports them while the fake's operations run.
     await expect(page.getByText(/Creating your workspace|Starting it up|Giving it an address/).first()).toBeVisible();
 
-    await page.waitForURL(`${ENGINE_URL}/**`, { timeout: 60_000 });
+    // With the web app on its own origin (PR-45d) the portal hands off to the app, not the VM.
+    const landing = stack!.appUrl ?? ENGINE_URL;
+    await page.waitForURL(`${landing}/**`, { timeout: 60_000 });
     await expect(page.getByRole('button', { name: 'Continue with your university account' })).toBeVisible();
 
     const session = (await (await student.get('/v1/session')).json()) as { state: string; url?: string };
     assert.equal(session.state, 'ready');
     assert.equal(session.url, ENGINE_URL);
+
+    if (stack!.appUrl) await crossOriginWorkspace(page, student, stack!.appUrl);
   } finally {
     // Logout path: the uni flushes (the fake exec) and deletes the fake machine.
     await student.delete('/v1/session');

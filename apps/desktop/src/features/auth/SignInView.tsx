@@ -9,6 +9,7 @@ import { EngineError } from '@/lib/api';
 import { cn } from '@/lib/cn';
 import { DEMO_MODE } from '@/lib/demo';
 import { useHealth } from '@/lib/queries';
+import { currentEngineTarget, forgetWorkspace } from '@/lib/seat';
 import { useSession } from '@/lib/session';
 import { UNI_URL } from '@/lib/uni-url';
 import { WorkspaceWakeNotice, useWorkspaceWake } from '@/features/workspace/WorkspaceWakeNotice';
@@ -43,6 +44,7 @@ export function SignInView() {
       <div className="relative grid w-full max-w-5xl gap-12 lg:grid-cols-[1fr_420px] lg:items-center">
         <Pitch mode={mode} />
         <section className="glass-strong rounded-3xl p-7 animate-rise [animation-delay:80ms]">
+          {mode === 'hosted' && <WorkspaceHost />}
           {mode === 'hosted' && (engineDown || wake.phase !== 'idle') ? (
             <WorkspaceWakeNotice failed={engineDown} />
           ) : engineDown ? (
@@ -61,6 +63,31 @@ export function SignInView() {
           )}
         </section>
       </div>
+    </div>
+  );
+}
+
+/** Where this sign-in goes, so a student can see the workspace host before approving the code. */
+function WorkspaceHost() {
+  const target = currentEngineTarget();
+  const host = target.kind === 'workspace' ? target.host : location.host;
+  return (
+    <div className="mb-3 flex flex-wrap items-center justify-between gap-2 rounded-xl border border-white/[0.08] bg-white/[0.03] px-3 py-2 text-[12.5px] text-night-300">
+      <span>
+        Signing in to <span className="font-mono text-night-100">{host}</span>
+      </span>
+      {target.kind === 'workspace' && (
+        <Button
+          size="sm"
+          variant="ghost"
+          onClick={() => {
+            forgetWorkspace();
+            location.reload();
+          }}
+        >
+          Forget workspace
+        </Button>
+      )}
     </div>
   );
 }
