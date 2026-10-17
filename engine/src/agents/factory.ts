@@ -2,6 +2,7 @@ import { Agent } from '@mastra/core/agent';
 import type { ChatAttachment } from '@sef/shared';
 import { z } from 'zod';
 import { log } from '../config';
+import { repairJsonEscapes } from '../lib/json-escapes';
 import { parsePartialJson } from '../lib/partial-json';
 import { OLLAMA_OPTIONS, ollamaHeaders, type ResolvedModel } from '../models/registry';
 import { imageParts } from './messages';
@@ -105,8 +106,10 @@ async function ollamaStructured<T extends z.ZodTypeAny>(req: StructuredRequest<T
     clearTimeout(timer);
   }
 
-  if (stopReason === 'stop') return JSON.parse(content);
-  const recovered = parsePartialJson(content);
+  const { text, repaired } = repairJsonEscapes(content);
+  if (repaired) log.info('structured_output_escapes_repaired', { agent: req.agentId, repaired });
+  if (stopReason === 'stop') return JSON.parse(text);
+  const recovered = parsePartialJson(text);
   log.warn('structured_output_recovered', {
     agent: req.agentId,
     reason: stopReason,
