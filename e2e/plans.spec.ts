@@ -45,7 +45,7 @@ test.describe('study plans', () => {
     await expect(proposal.or(error)).toBeVisible({ timeout: 240_000 });
 
     if (await error.isVisible()) {
-      await expect(error).toHaveText(/not reachable|None of the proposed steps|waiting for a decision/);
+      await expect(error).toHaveText(/not reachable|None of the proposed steps|could not be turned into a study plan|waiting for a decision/);
       return;
     }
     // Every listed step names what it points at before the student approves anything.

@@ -119,6 +119,21 @@ export const SCENARIOS: readonly Scenario[] = [
     },
   },
   {
+    name: 'a plan survives a model that drops the ref prefixes',
+    async run({ dir }) {
+      const bare: PlanDrafter = async () => ({
+        steps: [
+          { title: 'Read heat engines', kind: 'read_lesson', entityRefs: ['l-heat-engines'] },
+          { title: 'Quiz on entropy', kind: 'quiz', entityRefs: ['entropy'] },
+          { title: 'Open the admin page', kind: 'review_page', entityRefs: ['admin-secrets'] },
+        ],
+      });
+      const result = await planHarness(dir, makeWorld(), bare).propose({ goal: 'Revise thermodynamics' });
+      if (!result.ok) return outcome('lesson:l-heat-engines · page:entropy · 1 dropped', result.code);
+      return outcome('lesson:l-heat-engines · page:entropy · 1 dropped', `${result.plan.steps.map((s) => s.entityRefs[0]).join(' · ')} · ${result.plan.notes.length} dropped`);
+    },
+  },
+  {
     name: 'a growth event ticks a plan step without bookkeeping',
     async run({ dir }) {
       const world = makeWorld();
