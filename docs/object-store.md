@@ -105,7 +105,8 @@ for now (see the risks below).
 ## Vault sync (PR-41b)
 
 `engine/src/sync/`. On when the object store is configured **and** `VAULT_SYNC_ACCOUNT` names the
-seat owner's uni account id (it must be in `ENGINE_SEAT_OWNER` when that is set, or boot fails).
+seat owner's uni account id. It must be in `ENGINE_SEAT_OWNER`, which a hosted seat
+(`ENGINE_PUBLIC_HOST`) must set, or boot fails.
 It syncs one profile: `ENGINE_DATA_DIR/profiles/<VAULT_SYNC_ACCOUNT>/`.
 
 ### What is synced
@@ -153,7 +154,8 @@ it does, sync refuses: no merge and no retry. It logs `vault_sync_conflict`, hea
 bucket versioning keeps everything.
 
 **Deletes** become tombstones in the manifest (kept 90 days, at most 20,000); a machine restoring
-a newer version deletes those paths locally. Erasing a source in the vault removes its `raw/` file,
+a newer version deletes those paths locally, unless its copy is an edit it never pushed (kept,
+logged, and pushed back). Erasing a source in the vault removes its `raw/` file,
 so the next push tombstones it and deletes its blob.
 
 **Restore** runs at boot, before `/api/*` is served: until it finishes, every `/api/*` route except

@@ -48,7 +48,8 @@ async function main() {
   });
   startSignalScheduler(() => workspaces.opened());
   // Restore runs while liveness health answers `sync.state: 'restoring'`; /api/* waits for it.
-  if (vaultSync) void vaultSync.sync.start();
+  // start() never rejects (a failed restore is logged and leaves `sync.state: 'error'`); the catch is a backstop.
+  if (vaultSync) vaultSync.sync.start().catch((error) => log.error('vault_sync_start_failed', errorFields(error)));
 }
 
 main().catch((error) => {

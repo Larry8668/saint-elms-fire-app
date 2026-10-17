@@ -161,13 +161,21 @@ export class VaultSync {
       const unchanged = saved !== null && remote !== null && saved.etag === remote.etag;
       if (unchanged) return this.finishRestore(manifest, remote.etag, report, started);
 
-      for (const relPath of Object.keys(manifest.tombstones)) {
-        if (!manifest.files[relPath] && local.has(relPath)) {
-          await rm(this.abs(relPath), { force: true });
-          delete this.stats[relPath];
-          report.removed += 1;
+      const keptEdits: string[] = [];
+      for (const [relPath, tombstone] of Object.entries(manifest.tombstones)) {
+        const here = local.get(relPath);
+        if (manifest.files[relPath] || !here) continue;
+        // Delete only the version that was deleted, or one this machine never edited. An edit made
+        // here and never pushed is kept (and pushed back), so a delete elsewhere cannot eat it.
+        if (here.sha256 !== tombstone.sha256 && saved?.manifest.files[relPath]?.sha256 !== here.sha256) {
+          keptEdits.push(relPath);
+          continue;
         }
+        await rm(this.abs(relPath), { force: true });
+        delete this.stats[relPath];
+        report.removed += 1;
       }
+      if (keptEdits.length) log.warn('vault_sync_tombstone_skipped_local_edit', { account: this.options.account, files: keptEdits.length, sample: keptEdits.slice(0, 5) });
       const fetches: Array<() => Promise<void>> = [];
       const replaced: string[] = [];
       for (const [relPath, file] of Object.entries(manifest.files)) {
