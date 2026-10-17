@@ -60,6 +60,7 @@ Compare the three students on the same **Mechanics** course to see how one curri
 Full setup, demo script and troubleshooting are in **[HANDOVER.md](HANDOVER.md)**. Coding agents start at **[AGENTS.md](AGENTS.md)**. Deep dives:
 
 - **[docs/agentic-layer.md](docs/agentic-layer.md)**: the teachers and workers, their tools, the chat-turn harness, source attribution, chat history and model providers.
+- **[docs/model-gateway.md](docs/model-gateway.md)**: the authenticated, load-balanced model gateway that operator-hosted engines use instead of a local Ollama, with tokens, limits, scaling and privacy.
 - **[docs/knowledge-graph.md](docs/knowledge-graph.md)**: the course sky, the second brain, mastery rules, the brain-update pipeline and the Sky view.
 
 ## Architecture
