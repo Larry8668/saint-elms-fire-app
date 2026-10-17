@@ -13,6 +13,7 @@ import {
   type PackageFile,
   type PackageManifest,
   type ProgrammeManifestResponse,
+  type SubjectFeedRef,
   type SyncStatus,
 } from '@sef/shared';
 import { log } from '../config';
@@ -40,6 +41,8 @@ export interface VerifiedPackage {
   files: Array<{ path: string; content: string }>;
   /** False when the manifest predates signed metadata; still installable, but flagged. */
   signedMetadata: boolean;
+  /** Only ever from signed metadata — the unsigned catalogue cannot add an egress host. */
+  subjectFeeds?: SubjectFeedRef[];
 }
 
 /** Rejects absolute paths, `..` segments and anything that would land outside the course dir. */
@@ -114,7 +117,7 @@ export function verifyPackage(pkg: { manifest: PackageManifest; signature: strin
     throw new PackageVerificationError(`Manifest version ${manifest.version} does not match its own contents (${derived})`);
   }
 
-  return { courseId: manifest.courseId, version: manifest.version, files: pkg.files, signedMetadata };
+  return { courseId: manifest.courseId, version: manifest.version, files: pkg.files, signedMetadata, subjectFeeds: signedMetadata ? manifest.metadata!.subjectFeeds : undefined };
 }
 
 /** Pulls catalogue + signed course packages from the university server for one profile. */
@@ -236,7 +239,7 @@ export class ContentSync {
     const keyPem = await this.trustedKey();
     const verified = verifyPackage(pkg, keyPem, courseId, await this.issuer());
 
-    await this.store.install({ ...course, version: verified.version } satisfies CourseSummary, verified.files, verified.signedMetadata);
+    await this.store.install({ ...course, version: verified.version, subjectFeeds: verified.subjectFeeds } satisfies CourseSummary, verified.files, verified.signedMetadata);
     if (!verified.signedMetadata) {
       // Honest about what this install is: hashes were verified, academic metadata was not signed.
       log.warn('package_installed_without_signed_metadata', { courseId, version: verified.version });

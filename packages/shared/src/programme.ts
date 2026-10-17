@@ -6,6 +6,7 @@ import {
   NonemptyIdentifiersSchema,
   RevisionSchema,
 } from './contracts';
+import { MAX_UNI_FEEDS_PER_COURSE, SubjectFeedRefSchema } from './feeds';
 
 export const CourseTypeSchema = z.enum([
   'Bridge Course',
@@ -49,6 +50,7 @@ export const ProgrammeRowSchema = z
     packageTemplate: z.string().min(1).optional(),
     contentPath: z.string().min(1).optional(),
     notes: z.string().optional(),
+    subjectFeeds: z.array(SubjectFeedRefSchema).max(MAX_UNI_FEEDS_PER_COURSE).optional(),
   })
   .superRefine((value, ctx) => {
     if ((value.courseType === 'Administrative Support') !== (value.semesterNumber === 0)) {

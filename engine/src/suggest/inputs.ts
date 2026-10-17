@@ -14,6 +14,7 @@ export interface SeedSources {
   concepts: () => Promise<ConceptPage[]>;
   lessons: () => Promise<Lesson[]>;
   studiedLessonIds: () => Promise<string[]>;
+  feedItems?: () => Promise<NonNullable<SeedInputs['feedItems']>>;
 }
 
 const read = <T>(source: string, fn: () => Promise<T>) => attempt('suggestion_input_failed', source, fn);
@@ -41,7 +42,7 @@ export function lessonSummaries(lessons: Lesson[]): LessonSummary[] {
 }
 
 export async function gatherSeedInputs(sources: SeedSources): Promise<Omit<SeedInputs, 'now'>> {
-  const [logistics, pages, events, report, concepts, lessons, studiedLessonIds] = await Promise.all([
+  const [logistics, pages, events, report, concepts, lessons, studiedLessonIds, feedItems] = await Promise.all([
     read('logistics', sources.logistics),
     read('pages', sources.pages),
     read('events', sources.events),
@@ -49,6 +50,7 @@ export async function gatherSeedInputs(sources: SeedSources): Promise<Omit<SeedI
     read('concepts', sources.concepts),
     read('lessons', sources.lessons),
     read('sessions', sources.studiedLessonIds),
+    sources.feedItems ? read('feeds', sources.feedItems) : undefined,
   ]);
   return {
     logistics,
@@ -58,5 +60,6 @@ export async function gatherSeedInputs(sources: SeedSources): Promise<Omit<SeedI
     pages: pages && pageSummaries(pages),
     questions: pages && events ? questionPages(pages, events) : undefined,
     findings: report?.findings.map((f) => ({ id: f.id, kind: f.kind, pageIds: f.pageIds })),
+    feedItems,
   };
 }

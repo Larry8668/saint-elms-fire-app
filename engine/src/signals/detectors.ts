@@ -20,6 +20,11 @@ export interface FindingSummary {
   pageIds: string[];
 }
 
+export interface FeedSnapshot {
+  items: Array<{ id: string; feedId: string; feedTitle: string; title: string; summary: string; fetchedAt: string }>;
+  dead: Array<{ id: string; title: string }>;
+}
+
 /** Each source is optional: undefined means it could not be read this time, not that it is empty. */
 export interface SignalInputs {
   now: Date;
@@ -29,6 +34,7 @@ export interface SignalInputs {
   questions?: QuestionPage[];
   findings?: FindingSummary[];
   health?: HealthProbe;
+  feeds?: FeedSnapshot;
 }
 
 export type DetectedSignal = Omit<Signal, 'createdAt' | 'updatedAt'>;
@@ -221,6 +227,38 @@ export const connectivityDetector: Detector = {
   },
 };
 
+const FEED_FRESH_MS = 3 * DAY;
+/** Feeds are low-volume awareness: a handful of headlines at most, never a flood. */
+const MAX_FEED_SIGNALS = 3;
+
+export const feedDetector: Detector = {
+  kind: 'feed_item',
+  detect: ({ feeds, now }) => {
+    if (!feeds) return null;
+    const fresh = feeds.items.filter((item) => now.getTime() - Date.parse(item.fetchedAt) <= FEED_FRESH_MS).slice(0, MAX_FEED_SIGNALS);
+    return [
+      ...fresh.map((item) => ({
+        key: `feed_item:${item.id}`,
+        kind: 'feed_item' as const,
+        title: clip(`In the news: ${item.title}`, 200),
+        detail: clip(item.summary ? `${item.feedTitle} — ${item.summary}` : item.feedTitle, 500),
+        why: 'A new item in a subject feed you follow',
+        urgency: 'info' as const,
+        entityRefs: [`feed:${item.feedId}`, `feed_item:${item.id}`],
+      })),
+      ...feeds.dead.map((feed) => ({
+        key: `feed_item:dead:${feed.id}`,
+        kind: 'feed_item' as const,
+        title: clip(`The “${feed.title}” feed is not responding`, 200),
+        detail: 'It keeps retrying quietly. You can switch it off in Settings → Feeds.',
+        why: 'A followed feed has failed for three days',
+        urgency: 'info' as const,
+        entityRefs: [`feed:${feed.id}`],
+      })),
+    ];
+  },
+};
+
 export const DETECTORS: readonly Detector[] = [
   deadlineDetector,
   noticeDetector,
@@ -231,4 +269,5 @@ export const DETECTORS: readonly Detector[] = [
   maintenanceDetector,
   modelDetector,
   connectivityDetector,
+  feedDetector,
 ];

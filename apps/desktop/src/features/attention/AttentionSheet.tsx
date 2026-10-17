@@ -1,5 +1,5 @@
 import type { AttentionItem, SignalKind } from '@sef/shared';
-import { AlarmClock, BellOff, BookOpen, CalendarClock, Cpu, FileCheck, HelpCircle, Megaphone, RefreshCw, Users, WifiOff, Wrench, X, type LucideIcon } from 'lucide-react';
+import { AlarmClock, BellOff, BookOpen, CalendarClock, Cpu, FileCheck, HelpCircle, Megaphone, Newspaper, RefreshCw, Users, WifiOff, Wrench, X, type LucideIcon } from 'lucide-react';
 import { useEffect, useState } from 'react';
 import { Button } from '@/components/ui/button';
 import { Sheet, Tooltip } from '@/components/ui/overlays';
@@ -20,6 +20,7 @@ const KIND_ICON: Record<SignalKind, LucideIcon> = {
   maintenance_finding: Wrench,
   model_unavailable: Cpu,
   connectivity: WifiOff,
+  feed_item: Newspaper,
 };
 
 const URGENCY_TONE = { urgent: 'rose', soon: 'gold', info: 'neutral' } as const;

@@ -13,6 +13,7 @@ import {
   type Programme,
   type ProgrammeRow,
 } from '../programme';
+import { MAX_UNI_FEEDS_PER_COURSE, SubjectFeedRefSchema } from '../feeds';
 import { CONTRACT_VERSION, IdentifierListSchema, IdentifierSchema } from '../contracts';
 
 /**
@@ -36,6 +37,7 @@ const RawRowSchema = z.object({
   packageTemplate: z.string().min(1).optional(),
   contentPath: z.string().min(1).optional(),
   notes: z.string().optional(),
+  subjectFeeds: z.array(SubjectFeedRefSchema).max(MAX_UNI_FEEDS_PER_COURSE).optional(),
 });
 
 const RawSectionSchema = z.object({
