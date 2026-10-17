@@ -73,10 +73,12 @@ import type {
   WikiProposalRecord,
 } from '@sef/shared';
 import { log } from './log';
+import { readSeat } from './seat';
 
 const configuredEngineUrl = import.meta.env?.VITE_ENGINE_URL as string | undefined;
 /** `same-origin` builds the UI an engine serves itself (a hosted seat): requests go to the page's own origin. */
-export const ENGINE_URL = configuredEngineUrl === 'same-origin' ? '' : (configuredEngineUrl ?? 'http://127.0.0.1:4100');
+/** Otherwise a claimed hosted seat (lib/seat.ts) wins over the build-time default; read once at startup. */
+export const ENGINE_URL = configuredEngineUrl === 'same-origin' ? '' : (readSeat()?.engineUrl ?? configuredEngineUrl ?? 'http://127.0.0.1:4100');
 
 export class EngineError extends Error {
   constructor(

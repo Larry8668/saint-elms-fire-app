@@ -11,6 +11,7 @@ import { DEMO_MODE } from '@/lib/demo';
 import { useHealth } from '@/lib/queries';
 import { useSession } from '@/lib/session';
 import { UNI_URL } from '@/lib/uni-url';
+import { SeatEntry } from '@/features/seat/SeatEntry';
 import { DeviceSignInCard } from './DeviceSignInCard';
 import { uniOfflineFrom } from './uni-offline';
 
@@ -55,6 +56,7 @@ export function SignInView() {
               {DEMO_MODE && <DemoAccounts />}
             </>
           )}
+          <SeatEntry />
         </section>
       </div>
     </div>
