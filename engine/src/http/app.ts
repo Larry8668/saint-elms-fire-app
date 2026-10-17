@@ -26,6 +26,7 @@ import { staticUiRoutes } from './static-ui';
 import { internalSyncRoutes } from './routes/internal-sync';
 import { vaultRoutes } from './routes/vault';
 import { wikiRoutes } from './routes/wiki';
+import { workspaceRoutes } from './routes/workspace';
 
 export type { EngineDeps } from './context';
 
@@ -171,6 +172,7 @@ export function createApp(deps: EngineDeps) {
   app.route('/api', feedRoutes(deps));
   app.route('/api', planRoutes(deps));
   app.route('/api', metricsRoutes(deps));
+  app.route('/api', workspaceRoutes(deps));
 
   // A hosted seat serves the built UI itself; registered last so it can never shadow /api.
   const staticDir = process.env.ENGINE_STATIC_DIR?.trim();

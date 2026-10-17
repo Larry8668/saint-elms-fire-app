@@ -6,7 +6,7 @@ import { WorkingLabel } from '@/components/ui/loading';
 import { cn } from '@/lib/cn';
 import { currentEngineTarget, isRemoteTarget } from '@/lib/seat';
 import { seatWaker, wakeNoticeOf, type WakeState } from '@/lib/seat-wake';
-import { portalUrl } from '@/lib/uni-url';
+import { workspacePortalUrl } from './use-workspace';
 
 export const useWorkspaceWake = (): WakeState => useSyncExternalStore(seatWaker.subscribe, () => seatWaker.state);
 
@@ -48,7 +48,7 @@ export function WorkspaceWakeNotice({ failed = false, className }: { failed?: bo
           Workspaces end after a period without use, and your notes are saved to your university storage when they do. Open a new one from the university portal.
         </p>
         <div className="mt-3 flex flex-wrap gap-2">
-          <a href={portalUrl()} className="inline-flex items-center rounded-xl bg-beacon-500 px-3 py-1.5 text-[13px] font-medium text-white hover:bg-beacon-400">
+          <a href={workspacePortalUrl()} className="inline-flex items-center rounded-xl bg-beacon-500 px-3 py-1.5 text-[13px] font-medium text-white hover:bg-beacon-400">
             Go to the portal
           </a>
           {state.phase !== 'waking' && (

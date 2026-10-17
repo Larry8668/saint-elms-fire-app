@@ -89,6 +89,13 @@ claims = {"sub": <account id>, "vm": <machine id>, "exp": <unix seconds>}   (at 
 
 The orchestrator mints with `mintGatewayToken` from `packages/shared/src/node/gateway-token.ts`. That file is byte-for-byte the one on PR-43a (#78), including its known-answer vector test, so the gateway's `verifyGatewayToken` accepts these tokens. Whichever PR merges second carries an identical file.
 
+## The client (PR-45)
+
+- **Portal** (`apps/desktop/src/portal`): an approved student's page offers **Open my workspace**. It POSTs `/v1/session`, polls `GET /v1/session` (1 s while spawning, 3 s while queued) and shows the steps' `label`s, the queue `position`, a capacity note, and a failure with retry. On `ready` the browser reads `<url>/api/health` itself (the `/app` CSP allows `SESSION_WORKSPACE_ORIGINS`; the engine lets any origin read public health) and redirects only when it is `ok` and `sync.state` is `ready` or absent.
+- **Sign-in on the VM**: v1 signs in again with the device code. The student is already signed in on the portal in the same browser, so approving the code is one click. There is no email field to pre-fill.
+- **Heartbeat and logout**: the served UI cannot call the uni (its CSP is same-origin, and the uni's cookie is on the uni's origin), so the engine relays them with the credential it already holds for the profile: `POST /api/workspace/heartbeat` → `POST /v1/session/heartbeat`, `DELETE /api/workspace` → `DELETE /v1/session`. Both need an engine session and only work when the engine is a hosted workspace (`ENGINE_PUBLIC_HOST` and `ENGINE_SEAT_OWNER` set). The UI beats every 60 s while the tab is visible and not at all while it is hidden, so a workspace nobody looks at is reaped after `SESSION_IDLE_MINUTES`. Signing out on a workspace ends it first, while the engine still holds the uni credential.
+- **One-time hand-off ticket** (skipping the second sign-in): deferred. See the follow-ups below.
+
 ## Failure modes
 
 | What | What happens |
@@ -113,6 +120,8 @@ The orchestrator mints with `mintGatewayToken` from `packages/shared/src/node/ga
 - **The flush token** is random per session. It lives in the row (never returned) and in the VM's env, and the engine accepts it on loopback only (contract). The gateway token is short-lived and bound to one account and one VM.
 
 ## Limits and follow-ups
+
+- **Hand-off ticket instead of the second sign-in (PR-45 follow-up).** The uni would mint a single-use ticket (≤60 s, audience = the VM's `ENGINE_PUBLIC_HOST`, bound to the account) on the portal, and the engine would redeem it server-to-server at a new uni route. The redeem has to hand the engine a *university credential* for the profile (course sync, shares and this relay all need one), so it amounts to the uni minting a better-auth session for the user without the user approving it on the device page, plus a replay store and engine-side profile creation. That is a new trust path, not a small change, while the device code already makes the second sign-in one click in the same browser. Left for a separate PR with its own review.
 
 - **One uni process.** Spawns are de-duplicated per process. Two uni processes would both re-drive the same `spawning` row after a restart (the idempotency key and adoption still prevent a second VM, but session-start.sh would run twice). Add a row-level worker lease before scaling out.
 - **The gateway token is not refreshed.** It is minted at session start with an 8-hour default lifetime, so sessions longer than that lose the model until PR-43 adds refresh.

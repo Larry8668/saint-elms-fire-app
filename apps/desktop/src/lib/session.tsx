@@ -2,7 +2,8 @@ import { useQueryClient } from '@tanstack/react-query';
 import { type DevicePollResult, type DeviceProfile, type DeviceSignInStart, type EngineLoginResponse, type SessionAccess, type SessionMode } from '@sef/shared';
 import { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 import { toast } from 'sonner';
-import { api, setEngineSession } from './api';
+import { api, EngineError, setEngineSession } from './api';
+import { currentEngineTarget } from './seat';
 import { log } from './log';
 import { setActiveProfile } from './queries';
 
@@ -52,6 +53,17 @@ const store = (session: Session | null) => {
   if (session) sessionStorage.setItem(STORAGE_KEY, JSON.stringify(session));
   else sessionStorage.removeItem(STORAGE_KEY);
 };
+
+async function endWorkspaceOnSignOut(): Promise<void> {
+  try {
+    await api.endWorkspace();
+    log.info('workspace_ended_on_sign_out', {});
+  } catch (error) {
+    if (error instanceof EngineError && (error.code === 'not_hosted' || error.code === 'workspace_ended')) return;
+    log.warn('workspace_end_failed', { code: error instanceof EngineError ? error.code : undefined });
+    toast.warning('Signed out, but the university could not be told to close your workspace. It closes itself after a period without use; your notes are saved to your university storage either way.');
+  }
+}
 
 export function SessionProvider({ children }: { children: ReactNode }) {
   const queryClient = useQueryClient();
@@ -123,6 +135,9 @@ export function SessionProvider({ children }: { children: ReactNode }) {
 
   const signOut = useCallback(async () => {
     if (state.status === 'signed-in') {
+      // A hosted workspace ends with the sign-out: the university saves the notes and deletes the VM.
+      // It must go first, while the engine still holds the university credential it relays with.
+      if (currentEngineTarget().kind === 'served') await endWorkspaceOnSignOut();
       await api.logout().catch((error) => log.warn('logout_failed', { error: String(error) }));
     }
     clear('user_signed_out');
