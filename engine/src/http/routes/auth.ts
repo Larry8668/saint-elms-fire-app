@@ -1,7 +1,7 @@
 import { Hono, type Context } from 'hono';
 import { z } from 'zod';
 import { DeviceLabelSchema, EngineLoginRequestSchema, type AuthSessionList } from '@sef/shared';
-import { log } from '../../config';
+import { config, log } from '../../config';
 import { AuthError } from '../../profiles/auth';
 import { UniUnreachableError } from '../../uni/client';
 import { requireProfile, type EngineDeps, type EngineEnv } from '../context';
@@ -31,7 +31,7 @@ const OfflineBodySchema = z.object({ profileId: z.string().min(1).max(128), devi
 
 export function authRoutes(deps: EngineDeps) {
   const app = new Hono<EngineEnv>();
-  const edge = edgePolicy(process.env);
+  const edge = edgePolicy(process.env, config.port);
   // A hosted seat is reachable by anyone with its URL, and so is any engine a forwarded or
   // non-loopback request reaches: possession of the device proves nothing there, so the
   // profile picker, the password-less offline unlock and keyless device polls close.
