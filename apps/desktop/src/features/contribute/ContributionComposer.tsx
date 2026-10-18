@@ -1,6 +1,6 @@
 import { useMutation } from '@tanstack/react-query';
 import { FileUp, MessagesSquare, Send } from 'lucide-react';
-import { useRef, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { toast } from 'sonner';
 import { TEACHERS, type ContributeBody, type SourceReceipt, type VideoPreview } from '@sef/shared';
 import { Button } from '@/components/ui/button';
@@ -68,7 +68,16 @@ const MODES: Array<{ value: Mode; label: string }> = [
   { value: 'conversation', label: 'From a conversation' },
 ];
 
-const UPLOAD_ACCEPT = '.pdf,.txt,.md,.markdown,.png,.jpg,.jpeg,.webp,.heic,.mp3,.wav,.m4a,.aac,.ogg,.flac,.weba,.3gp,image/*,audio/*,application/pdf,text/plain,text/markdown';
+const UPLOAD_ACCEPT =
+  '.pdf,.txt,.md,.markdown,.png,.jpg,.jpeg,.webp,.heic,.mp3,.wav,.m4a,.aac,.ogg,.flac,.weba,.3gp,.mp4,.mov,.webm,.mkv,image/*,audio/*,video/*,application/pdf,text/plain,text/markdown';
+
+/** The chosen file's own playback, from an object URL rather than the base64 envelope. */
+function MediaPreview({ file }: { file: { name: string; mediaType: string; objectUrl: string } }) {
+  if (file.mediaType.startsWith('video/')) {
+    return <video src={file.objectUrl} aria-label={file.name} controls preload="metadata" className="max-h-56 w-full rounded-lg bg-black/40" onClick={(e) => e.stopPropagation()} />;
+  }
+  return <audio src={file.objectUrl} aria-label={file.name} controls preload="metadata" className="w-full" onClick={(e) => e.stopPropagation()} />;
+}
 
 /**
  * The contribution desk: everything a student files — a note, a paste, a photo, a PDF, a
@@ -81,7 +90,11 @@ export function ContributionComposer({ onFiled }: { onFiled: (receipt: SourceRec
   const [own, setOwn] = useState(true);
   const [creator, setCreator] = useState('');
   const [url, setUrl] = useState('');
-  const [file, setFile] = useState<{ name: string; mediaType: string; data: string; preview: string } | null>(null);
+  const [file, setFile] = useState<{ name: string; mediaType: string; data: string; preview: string; objectUrl: string | null } | null>(null);
+  // Recordings and videos replay from an object URL, released whenever the file changes.
+  useEffect(() => () => {
+    if (file?.objectUrl) URL.revokeObjectURL(file.objectUrl);
+  }, [file?.objectUrl]);
   const [videoUrl, setVideoUrl] = useState('');
   const [preview, setPreview] = useState<VideoPreview | null>(null);
   const [dragging, setDragging] = useState(false);
@@ -149,7 +162,8 @@ export function ContributionComposer({ onFiled }: { onFiled: (receipt: SourceRec
     const mediaType = normalizeMediaType(chosen);
     try {
       const encoded = await fileToBase64(chosen, mediaType);
-      setFile({ name: chosen.name, mediaType, data: encoded.data, preview: encoded.preview });
+      const playable = mediaType.startsWith('audio/') || mediaType.startsWith('video/');
+      setFile({ name: chosen.name, mediaType, data: encoded.data, preview: encoded.preview, objectUrl: playable ? URL.createObjectURL(chosen) : null });
       if (!title) setTitle(chosen.name.replace(/\.[^.]+$/, ''));
     } catch (error) {
       log.error('contribution_file_read_failed', { error: String(error) });
@@ -221,6 +235,13 @@ export function ContributionComposer({ onFiled }: { onFiled: (receipt: SourceRec
             {file ? (
               file.mediaType.startsWith('image/') ? (
                 <img src={file.preview} alt={file.name} className="max-h-44 rounded-lg object-contain" />
+              ) : file.objectUrl ? (
+                <span className="block w-full space-y-2 text-center">
+                  <MediaPreview file={{ name: file.name, mediaType: file.mediaType, objectUrl: file.objectUrl }} />
+                  <span className="block text-[12px] text-night-500">
+                    {file.name} · {file.mediaType}
+                  </span>
+                </span>
               ) : (
                 <span className="block text-center">
                   <FileUp className="mx-auto mb-2 size-6 text-beacon-300" />
@@ -232,7 +253,7 @@ export function ContributionComposer({ onFiled }: { onFiled: (receipt: SourceRec
               <span className="block">
                 <FileUp className="mx-auto mb-2 size-6 text-beacon-300" />
                 <span className="block text-[14px] font-medium text-night-100">Drop a file, or click to choose</span>
-                <span className="mt-1 block text-[12px] text-night-500">PDF · image of notes · audio recording · markdown or text · {whereItIsKept()}</span>
+                <span className="mt-1 block text-[12px] text-night-500">PDF · image of notes · audio recording · lecture video · markdown or text · {whereItIsKept()}</span>
               </span>
             )}
           </button>
@@ -247,7 +268,7 @@ export function ContributionComposer({ onFiled }: { onFiled: (receipt: SourceRec
             <Label htmlFor="contrib-file-title">Title</Label>
             <Input id="contrib-file-title" value={title} onChange={(e) => setTitle(e.target.value)} placeholder="What is this?" />
           </div>
-          {file?.mediaType.startsWith('image/') || file?.mediaType.startsWith('audio/') ? (
+          {file?.mediaType.startsWith('image/') || file?.mediaType.startsWith('audio/') || file?.mediaType.startsWith('video/') ? (
             <OriginToggle own={own} onChange={setOwn} />
           ) : (
             file && <p className="rounded-xl bg-black/20 px-3 py-2 text-[12px] text-night-400">Documents file as external material — if these are your own words, paste them under “Write”.</p>

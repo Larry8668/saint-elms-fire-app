@@ -36,14 +36,15 @@ function SourceImage({ sourceId, title }: { sourceId: string; title: string }) {
   return <img src={url} alt={title} className="max-h-56 w-full rounded-xl border border-white/[0.06] object-contain bg-black/30" />;
 }
 
-/** The kept recording, playable while the student checks its transcript. */
-function SourceAudio({ sourceId, title }: { sourceId: string; title: string }) {
+/** The kept recording or video, playable while the student checks its transcript. */
+function SourceMedia({ sourceId, title, video }: { sourceId: string; title: string; video: boolean }) {
   const blob = useSourceBytes(sourceId);
   const url = useMemo(() => (blob.data ? URL.createObjectURL(blob.data) : null), [blob.data]);
   useEffect(() => () => {
     if (url) URL.revokeObjectURL(url);
   }, [url]);
   if (!url) return null;
+  if (video) return <video src={url} aria-label={title} controls preload="metadata" className="max-h-64 w-full rounded-xl border border-white/[0.06] bg-black/40" />;
   return <audio src={url} aria-label={title} controls className="w-full" />;
 }
 
@@ -175,8 +176,8 @@ export function SourceDetailView({ sourceId, onReviewProposal, onErased }: { sou
       </div>
 
       {record.kind === 'image' && <SourceImage sourceId={record.id} title={record.title} />}
-      {/* A video's kept original is its audio track — the same inline replay applies. */}
-      {(record.kind === 'audio' || record.kind === 'video') && <SourceAudio sourceId={record.id} title={record.title} />}
+      {/* A fetched video's kept original is its audio track; an uploaded one keeps the video itself. */}
+      {(record.kind === 'audio' || record.kind === 'video') && <SourceMedia sourceId={record.id} title={record.title} video={record.mediaType.startsWith('video/')} />}
 
       <section>
         <div className="mb-2 flex items-center justify-between">

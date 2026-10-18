@@ -17,6 +17,8 @@ export const INGEST_LIMITS = {
   maxImagePixels: 4096 * 4096,
   /** Bytes for one audio recording — a compressed four-hour lecture sits far under this. */
   maxAudioBytes: 256 * 1024 * 1024,
+  /** Bytes for one uploaded lecture video — the same ceiling as a recording. */
+  maxVideoBytes: 256 * 1024 * 1024,
   /** Recording length in seconds. Longer is refused, never partially transcribed. */
   maxAudioSeconds: 4 * 60 * 60,
   /** Concurrent extraction jobs for one profile. */
@@ -43,19 +45,31 @@ export type AcceptedKind = keyof typeof ACCEPTED_MEDIA;
 export const ACCEPTED_MEDIA_TYPES: ReadonlySet<string> = new Set<string>(Object.values(ACCEPTED_MEDIA));
 
 /**
+ * Uploaded video containers. Unlike audio this is a closed list: a video's frames are
+ * decoded and handed to the vision model, so only the containers lecture recordings
+ * actually arrive in are accepted.
+ */
+export const ACCEPTED_VIDEO_TYPES: ReadonlySet<string> = new Set<string>(['video/mp4', 'video/quicktime', 'video/webm', 'video/x-matroska']);
+
+/** The base type, lower-cased and stripped of parameters — what every family check compares. */
+export const baseMediaType = (mediaType: string): string => mediaType.split(';')[0]!.trim().toLowerCase();
+export const isAudioMedia = (mediaType: string): boolean => baseMediaType(mediaType).startsWith('audio/');
+export const isVideoMedia = (mediaType: string): boolean => ACCEPTED_VIDEO_TYPES.has(baseMediaType(mediaType));
+
+/**
  * The check behind the allowlist, run before bytes are stored or served. Parameters and
  * case are tolerated (`Text/Markdown; charset=utf-8` is markdown); the base type must be
  * one of the listed few, because the stored type later decides extraction and headers.
  */
 export function checkMediaType(mediaType: string): Rejection | null {
-  const base = mediaType.split(';')[0]!.trim().toLowerCase();
+  const base = baseMediaType(mediaType);
   // The audio family is accepted wholesale: containers vary wildly (voice memos arrive as
   // 3gpp, m4a, ogg, weba…), and ffmpeg decides readability — a file it cannot parse is
   // refused by name at probe time rather than guessed at from a mime list.
-  if (!base || (!ACCEPTED_MEDIA_TYPES.has(base) && !base.startsWith('audio/'))) {
+  if (!base || (!ACCEPTED_MEDIA_TYPES.has(base) && !base.startsWith('audio/') && !ACCEPTED_VIDEO_TYPES.has(base))) {
     return {
       code: 'unsupported_media',
-      message: `Files of type '${mediaType.trim() || 'unknown'}' cannot be kept here — notes and plain text, PDFs, PNG or JPEG images, and audio recordings only.`,
+      message: `Files of type '${mediaType.trim() || 'unknown'}' cannot be kept here — notes and plain text, PDFs, PNG or JPEG images, audio recordings and MP4, MOV, WebM or MKV videos only.`,
     };
   }
   return null;
@@ -74,6 +88,7 @@ export interface Limits {
   maxImagePixels?: number;
   maxAudioBytes?: number;
   maxAudioSeconds?: number;
+  maxVideoBytes?: number;
   maxActiveJobs?: number;
   maxSourcesPerJob?: number;
 }
@@ -105,6 +120,10 @@ const MEDIA_EXTENSIONS: Record<string, string> = {
   'audio/flac': '.flac',
   'audio/3gpp': '.3gp',
   'audio/3gpp2': '.3g2',
+  'video/mp4': '.mp4',
+  'video/quicktime': '.mov',
+  'video/webm': '.webm',
+  'video/x-matroska': '.mkv',
 };
 
 /** Downloads keep a usable name even when the declared type was only the family. */
@@ -151,16 +170,24 @@ export function checkBytes(bytes: Uint8Array, limits: Limits = {}): Rejection | 
 }
 
 /**
- * Size gate with the media family taken into account: audio recordings run to a
- * dedicated, much larger cap because a lecture's bytes are legitimately long.
+ * Size gate with the media family taken into account: audio recordings and videos run to
+ * dedicated, much larger caps because a lecture's bytes are legitimately long.
  */
 export function checkSourceBytes(bytes: Uint8Array, mediaType: string, limits: Limits = {}): Rejection | null {
-  const base = mediaType.split(';')[0]!.trim().toLowerCase();
+  const base = baseMediaType(mediaType);
   if (base.startsWith('audio/')) {
     const max = limits.maxAudioBytes ?? INGEST_LIMITS.maxAudioBytes;
     if (bytes.byteLength === 0) return { code: 'empty', message: 'That file is empty.' };
     if (bytes.byteLength > max) {
       return { code: 'too_large', message: `That recording is ${formatBytes(bytes.byteLength)}; the audio limit is ${formatBytes(max)}.` };
+    }
+    return null;
+  }
+  if (ACCEPTED_VIDEO_TYPES.has(base)) {
+    const max = limits.maxVideoBytes ?? INGEST_LIMITS.maxVideoBytes;
+    if (bytes.byteLength === 0) return { code: 'empty', message: 'That file is empty.' };
+    if (bytes.byteLength > max) {
+      return { code: 'too_large', message: `That video is ${formatBytes(bytes.byteLength)}; the video limit is ${formatBytes(max)}.` };
     }
     return null;
   }

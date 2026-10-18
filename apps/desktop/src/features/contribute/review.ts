@@ -53,10 +53,11 @@ export function flowStep(stage: WikiJob['stage']): number {
   }
 }
 
-/** What a chosen file becomes. Only a photo or a recording can be the student's own material. */
-export function uploadContribution(mediaType: string, own: boolean): { kind: 'document' | 'image' | 'audio'; origin: 'student' | 'external' } {
+/** What a chosen file becomes. Only a photo, a recording or a video can be the student's own material. */
+export function uploadContribution(mediaType: string, own: boolean): { kind: 'document' | 'image' | 'audio' | 'video'; origin: 'student' | 'external' } {
   if (mediaType.startsWith('image/')) return { kind: 'image', origin: own ? 'student' : 'external' };
   if (mediaType.startsWith('audio/')) return { kind: 'audio', origin: own ? 'student' : 'external' };
+  if (mediaType.startsWith('video/')) return { kind: 'video', origin: own ? 'student' : 'external' };
   return { kind: 'document', origin: 'external' };
 }
 
@@ -82,6 +83,10 @@ export function normalizeMediaType(file: { type: string; name: string }): string
   if (name.endsWith('.flac')) return 'audio/flac';
   if (name.endsWith('.weba')) return 'audio/webm';
   if (/\.3gp?$/.test(name) || name.endsWith('.3g2')) return 'audio/3gpp';
+  if (name.endsWith('.mp4') || name.endsWith('.m4v')) return 'video/mp4';
+  if (name.endsWith('.mov')) return 'video/quicktime';
+  if (name.endsWith('.webm')) return 'video/webm';
+  if (name.endsWith('.mkv')) return 'video/x-matroska';
   return 'application/octet-stream';
 }
 

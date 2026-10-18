@@ -100,7 +100,21 @@ export const SourceRecordSchema = z.discriminatedUnion('kind', [
   sourceBase.extend({ kind: z.literal('document'), origin: z.enum(['course', 'external']) }),
   sourceBase.extend({ kind: z.literal('image'), origin: z.enum(['student', 'external']) }),
   sourceBase.extend({ kind: z.literal('audio'), origin: z.enum(['student', 'external']) }),
-  sourceBase.extend({ kind: z.literal('video'), origin: z.literal('external'), link: SourceLinkSchema }),
+  /**
+   * Two lanes share the kind: a fetched link (always external, its audio track kept, the
+   * link frozen beside it) and an uploaded file (the student's own recording or someone
+   * else's, the video bytes kept, no link). The ingest path pins which lane is which.
+   */
+  sourceBase
+    .extend({ kind: z.literal('video'), origin: z.enum(['student', 'external']), link: SourceLinkSchema.optional() })
+    .superRefine((value, ctx) => {
+      if (value.link && value.origin !== 'external') {
+        ctx.addIssue({ code: 'custom', path: ['origin'], message: 'A fetched video is always external material' });
+      }
+      if (!value.link && !value.mediaType.trim().toLowerCase().startsWith('video/')) {
+        ctx.addIssue({ code: 'custom', path: ['link'], message: 'A video kept as its audio track must carry the link it was fetched from' });
+      }
+    }),
   sourceBase.extend({ kind: z.literal('session'), origin: z.literal('student'), session: sessionRef }),
   sourceBase.extend({ kind: z.literal('answer'), origin: z.literal('model'), session: sessionRef }),
   sourceBase.extend({

@@ -428,8 +428,8 @@ test('a fetched video is an external source whose audio track transcribes like a
   const record = await store.readSource(result.source.id);
   assert.equal(record?.kind, 'video');
   if (record?.kind !== 'video') throw new Error('expected a video record');
-  assert.equal(record.link.videoId, 'abc123XYZ_0', 'the URL provenance persists verbatim');
-  assert.equal(record.link.provider, 'youtube');
+  assert.equal(record.link?.videoId, 'abc123XYZ_0', 'the URL provenance persists verbatim');
+  assert.equal(record.link?.provider, 'youtube');
 });
 
 test('a video without its link provenance is refused, and so is a video as own material', async () => {
@@ -444,5 +444,44 @@ test('a video without its link provenance is refused, and so is a video as own m
   const textBytes = await ingestor.ingest(videoFile({ title: 'y', mediaType: 'text/markdown' })).catch((e: unknown) => e);
   assert.ok(textBytes instanceof SourceRejection);
   assert.equal(textBytes.code, 'kind_mismatch');
+  assert.deepEqual(Object.keys(await store.listSources()), []);
+});
+
+const uploadedVideo = (over: Record<string, unknown> = {}) => ({
+  kind: 'video' as const,
+  title: 'Lecture 4 — momentum',
+  mediaType: 'video/mp4',
+  bytes: Buffer.from([0x00, 0x00, 0x00, 0x18, 0x66, 0x74, 0x79, 0x70]),
+  ...over,
+});
+
+test('an uploaded video file is the student’s own by default and carries no link', async () => {
+  const { store, ingestor } = await harness('ingest-video-upload', fakeAudio());
+  const result = await ingestor.ingest(uploadedVideo());
+  assert.equal(result.source.kind, 'video');
+  const record = await store.readSource(result.source.id);
+  assert.equal(record?.kind, 'video');
+  assert.equal(record?.origin, 'student');
+  assert.equal(record?.kind === 'video' ? record.link : 'not a video', undefined, 'an upload has no fetched-from link');
+  assert.equal(record?.mediaType, 'video/mp4', 'the video bytes themselves are kept, not just the audio track');
+
+  const external = await ingestor.ingest(uploadedVideo({ title: 'A lecture someone else recorded', origin: 'external' }));
+  assert.equal((await store.readSource(external.source.id))?.origin, 'external');
+});
+
+test('video bytes only file as a video, and a fetched link is never own material', async () => {
+  const { store, ingestor } = await harness('ingest-video-upload-guards', fakeAudio());
+  const asDocument = await ingestor.ingest(uploadedVideo({ kind: 'document' })).catch((e: unknown) => e);
+  assert.ok(asDocument instanceof SourceRejection);
+  assert.equal(asDocument.code, 'kind_mismatch');
+  const asAudio = await ingestor.ingest(uploadedVideo({ kind: 'audio' })).catch((e: unknown) => e);
+  assert.ok(asAudio instanceof SourceRejection);
+  assert.equal(asAudio.code, 'kind_mismatch');
+  const linkedOwn = await ingestor.ingest(videoFile({ origin: 'student' })).catch((e: unknown) => e);
+  assert.ok(linkedOwn instanceof SourceRejection);
+  assert.equal(linkedOwn.code, 'origin_mismatch');
+  const tooBig = await ingestor.ingest(uploadedVideo(), { maxVideoBytes: 4 }).catch((e: unknown) => e);
+  assert.ok(tooBig instanceof SourceRejection);
+  assert.equal(tooBig.code, 'too_large');
   assert.deepEqual(Object.keys(await store.listSources()), []);
 });

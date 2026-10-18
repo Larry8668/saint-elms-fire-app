@@ -351,6 +351,27 @@ test('only PNG and JPEG render inline; a planted text/html record downloads as o
   assert.equal(png.headers.get('content-disposition'), null);
 });
 
+test('an uploaded video file files as a linkless video source and replays inline', async () => {
+  const mp4 = Buffer.from([0x00, 0x00, 0x00, 0x18, 0x66, 0x74, 0x79, 0x70, 0x69, 0x73, 0x6f, 0x6d]);
+  const { app, store } = await routeHarness('route-video-upload');
+  const filed = await post(app, '/sources', { kind: 'video', title: 'Lecture 4', mediaType: 'video/mp4', data: mp4.toString('base64'), origin: 'student' });
+  assert.equal(filed.status, 201);
+  const receipt = (await filed.json()) as SourceReceipt;
+  assert.equal(receipt.source.kind, 'video');
+  const record = await store.readSource(receipt.source.id);
+  assert.equal(record?.origin, 'student');
+  assert.equal(record?.kind === 'video' ? record.link : 'not a video', undefined);
+
+  const raw = await app.request(`/sources/${receipt.source.id}/raw`, { headers: AUTH });
+  assert.equal(raw.status, 200);
+  assert.equal(raw.headers.get('content-type'), 'video/mp4', 'an accepted video container plays inline');
+  assert.equal(raw.headers.get('x-content-type-options'), 'nosniff');
+  assert.deepEqual(new Uint8Array(await raw.arrayBuffer()), new Uint8Array(mp4));
+
+  const unsupported = await post(app, '/sources', { kind: 'video', title: 'AVI', mediaType: 'video/x-msvideo', data: mp4.toString('base64') });
+  assert.equal(unsupported.status, 415);
+});
+
 test('a video link previews metadata-only, then the consented fetch files a video source', async () => {
   const link = { provider: 'youtube' as const, url: 'https://www.youtube.com/watch?v=abc123XYZ_0', videoId: 'abc123XYZ_0', fetchedAt: new Date().toISOString() };
   const calls: string[] = [];

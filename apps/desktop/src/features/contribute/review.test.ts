@@ -32,6 +32,8 @@ test('uploads map onto kinds the schema allows', () => {
   assert.deepEqual(uploadContribution('text/plain', false), { kind: 'document', origin: 'external' });
   assert.deepEqual(uploadContribution('audio/wav', true), { kind: 'audio', origin: 'student' }, 'a voice memo can be the student’s own');
   assert.deepEqual(uploadContribution('audio/mp4', false), { kind: 'audio', origin: 'external' }, 'a lecture recording can be external material');
+  assert.deepEqual(uploadContribution('video/mp4', true), { kind: 'video', origin: 'student' }, 'a lecture the student filmed is their own');
+  assert.deepEqual(uploadContribution('video/quicktime', false), { kind: 'video', origin: 'external' });
 });
 
 test('typed text can be the student\u2019s own understanding or external material', () => {
@@ -48,6 +50,10 @@ test('media types fall back to the extension when the platform gives none', () =
   assert.equal(normalizeMediaType({ type: '', name: 'lecture.m4a' }), 'audio/mp4');
   assert.equal(normalizeMediaType({ type: '', name: 'memo.WAV' }), 'audio/wav');
   assert.equal(normalizeMediaType({ type: '', name: 'voicemail.3gp' }), 'audio/3gpp');
+  assert.equal(normalizeMediaType({ type: '', name: 'lecture.MP4' }), 'video/mp4');
+  assert.equal(normalizeMediaType({ type: '', name: 'board.mov' }), 'video/quicktime');
+  assert.equal(normalizeMediaType({ type: '', name: 'talk.webm' }), 'video/webm');
+  assert.equal(normalizeMediaType({ type: '', name: 'talk.mkv' }), 'video/x-matroska');
   assert.equal(normalizeMediaType({ type: '', name: 'thing.bin' }), 'application/octet-stream');
 });
 

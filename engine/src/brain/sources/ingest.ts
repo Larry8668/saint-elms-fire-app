@@ -19,7 +19,7 @@ import { ImageReadError, type ImageReader } from '../../media/vision';
 import { extractPdf, extractText, recordAudioTranscript, recordStudentCorrection, recordVisionText, sha256, type ExtractionMethod, type ExtractionResult } from './extract';
 import { probeImageDimensions } from './image';
 import { assertJobCapacity, advanceJob, cancelJob, createJob, jobStore, JobConflictError, JobStateError, listProfileJobs, retryJob } from './jobs';
-import { checkAudioDuration, checkImageDimensions, checkMediaType, checkSourceBytes, countChars, sanitiseTitle, sliceChars, titleIsSafe, INGEST_LIMITS, type Limits } from './limits';
+import { checkAudioDuration, checkImageDimensions, checkMediaType, checkSourceBytes, countChars, isAudioMedia, isVideoMedia, sanitiseTitle, sliceChars, titleIsSafe, INGEST_LIMITS, type Limits } from './limits';
 import { openPdf, PdfParseError } from './pdf';
 import type { WikiStore } from '../wiki-store';
 
@@ -72,7 +72,7 @@ export interface IngestInput {
   session?: SessionRef;
   /** Required for kind 'peer'; carries the share attribution verbatim. */
   share?: PeerShareRef;
-  /** Required for kind 'video'; keeps where the recording was fetched from forever. */
+  /** Required for a fetched video (kind 'video' over its audio track); keeps where it came from forever. Absent on an uploaded video file. */
   link?: SourceLink;
   /**
    * Who the student says wrote this. Kinds restrict the choice: a note is always the
@@ -116,7 +116,7 @@ const ALLOWED_ORIGIN: Record<IngestKind, ReadonlyArray<'student' | 'external' | 
   document: ['external'],
   image: ['student', 'external'],
   audio: ['student', 'external'],
-  video: ['external'],
+  video: ['student', 'external'],
   session: ['student'],
   answer: ['model'],
   peer: ['peer'],
@@ -146,14 +146,17 @@ export class SourceIngestor {
     const rejection = checkSourceBytes(input.bytes, input.mediaType, limits);
     if (rejection) throw new SourceRejection(rejection.message, rejection.code, rejection.code === 'empty' ? 400 : 413);
 
-    // The audio family pins the kind both ways: an audio mime filed as a document would
+    // The media family pins the kind both ways: an audio mime filed as a document would
     // transcribe without the duration probe, and an 'audio'/'video' kind over text would
-    // probe bytes that were never a recording. A video's stored bytes *are* its audio
-    // track, so both kinds accept the family.
-    const isAudioMedia = input.mediaType.split(';')[0]!.trim().toLowerCase().startsWith('audio/');
+    // probe bytes that were never a recording. A fetched video's stored bytes *are* its
+    // audio track, so 'video' accepts the audio family too — but uploaded video bytes are
+    // only ever filed as 'video'.
+    const audioMedia = isAudioMedia(input.mediaType);
+    const videoMedia = isVideoMedia(input.mediaType);
     const isAudioKind = input.kind === 'audio' || input.kind === 'video';
-    if (isAudioKind !== isAudioMedia) {
-      throw new SourceRejection(`Audio bytes are filed as kind 'audio' or 'video' — a '${input.kind}' cannot declare ${input.mediaType}.`, 'kind_mismatch', 400);
+    if (videoMedia ? input.kind !== 'video' : isAudioKind !== audioMedia) {
+      const expected = videoMedia ? "kind 'video'" : "kind 'audio' or 'video'";
+      throw new SourceRejection(`${videoMedia ? 'Video' : 'Audio'} bytes are filed as ${expected} — a '${input.kind}' cannot declare ${input.mediaType}.`, 'kind_mismatch', 400);
     }
 
     const identity = await this.profile();
@@ -166,11 +169,16 @@ export class SourceIngestor {
     if (input.kind === 'peer' && !input.share) {
       throw new SourceRejection('A peer source must name the share it came from.', 'missing_share_ref', 400);
     }
-    if (input.kind === 'video' && !input.link) {
+    // A video kept as its audio track came from a link, and must say which; an uploaded
+    // video file is the student's own bytes and carries none.
+    if (input.kind === 'video' && audioMedia && !input.link) {
       throw new SourceRejection('A video source must carry the link it was fetched from.', 'missing_link_ref', 400);
     }
-    const origin = input.origin ?? ORIGIN[input.kind];
-    if (!ALLOWED_ORIGIN[input.kind].includes(origin)) {
+    const linked = input.kind === 'video' && Boolean(input.link);
+    const origin = input.origin ?? (input.kind === 'video' && !linked ? 'student' : ORIGIN[input.kind]);
+    // A fetched link is never the student's own material, whatever the upload claims.
+    const allowed = linked ? (['external'] as const) : ALLOWED_ORIGIN[input.kind];
+    if (!allowed.includes(origin)) {
       throw new SourceRejection(`A ${input.kind} cannot be filed as '${origin}' material.`, 'origin_mismatch', 400);
     }
 
@@ -179,7 +187,7 @@ export class SourceIngestor {
     // audio track probes exactly the same. With no transcriber wired the probe is skipped —
     // the stored source then reports why instead.
     let audioSeconds: number | undefined;
-    if (isAudioMedia && this.audio) {
+    if ((audioMedia || videoMedia) && this.audio) {
       try {
         const probe = await this.audio.probe(input.bytes, input.mediaType);
         audioSeconds = probe.seconds;
@@ -211,7 +219,7 @@ export class SourceIngestor {
       extractions: [],
       ...(input.kind === 'session' || input.kind === 'answer' ? { session: input.session } : {}),
       ...(input.kind === 'peer' ? { share: input.share } : {}),
-      ...(input.kind === 'video' ? { link: input.link } : {}),
+      ...(linked ? { link: input.link } : {}),
     });
 
     // The original is durable before anything is read out of it.
@@ -247,6 +255,8 @@ export class SourceIngestor {
     if (record.mediaType.startsWith('application/pdf')) return 'pdf';
     if (record.mediaType.startsWith('image/')) return 'vision';
     if (record.mediaType.startsWith('audio/')) return 'audio';
+    // An uploaded video reads through its audio track.
+    if (isVideoMedia(record.mediaType)) return 'audio';
     return 'text';
   }
 
