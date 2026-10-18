@@ -1,5 +1,5 @@
 import type { GraphResponse, PageRecordSummary, WikiGraph } from '@sef/shared';
-import { ChevronDown, Minus, Pause, Play, Plus, RotateCcw, Search, X } from 'lucide-react';
+import { ChevronDown, Minus, Pause, Play, Plus, RotateCcw, Search, Sparkles, X } from 'lucide-react';
 import { useEffect, useMemo, useRef, useState, type PointerEvent as ReactPointerEvent, type ReactNode } from 'react';
 import { Skeleton } from '@/components/ui/primitives';
 import { STATUS_STYLE } from '@/lib/brain-style';
@@ -29,6 +29,16 @@ export interface SearchProps {
 
 type Tip = { index: number; x: number; y: number };
 
+/** Pages an accepted proposal just wrote: lit, replayed into place, and named in a banner. */
+export interface Spotlight {
+  ids: string[];
+  created: number;
+  updated: number;
+  onClear: () => void;
+}
+
+const GROW_MS = 2600;
+
 /**
  * The hero of the Brain section: the student's whole wiki as one living dendrite. See
  * layout.ts for the geometry and renderer.ts for how it stays cheap on a 1,400-page vault.
@@ -42,8 +52,10 @@ export function BrainMapHero({
   onOpen,
   onScrollToList,
   search,
+  spotlight,
 }: {
   search: SearchProps;
+  spotlight?: Spotlight;
   /** True while the course graph or the wiki graph is still arriving — the layout needs both. */
   loading: boolean;
   records: PageRecordSummary[] | undefined;
@@ -55,7 +67,7 @@ export function BrainMapHero({
   const map = useMemo(() => (records && records.length && !loading ? buildBrainMap(records, graph, wiki) : null), [records, graph, wiki]);
   if (!records || loading) return <HeroFrame><Skeleton className="absolute inset-6 rounded-2xl opacity-60" /></HeroFrame>;
   if (!map) return null;
-  return <BrainMapCanvas map={map} onOpen={onOpen} onScrollToList={onScrollToList} search={search} />;
+  return <BrainMapCanvas map={map} onOpen={onOpen} onScrollToList={onScrollToList} search={search} spotlight={spotlight} />;
 }
 
 function HeroFrame({ children, className }: { children: ReactNode; className?: string }) {
@@ -75,7 +87,19 @@ function HeroFrame({ children, className }: { children: ReactNode; className?: s
   );
 }
 
-function BrainMapCanvas({ map, onOpen, onScrollToList, search }: { map: BrainMap; onOpen: (pageId: string) => void; onScrollToList: () => void; search: SearchProps }) {
+function BrainMapCanvas({
+  map,
+  onOpen,
+  onScrollToList,
+  search,
+  spotlight,
+}: {
+  map: BrainMap;
+  onOpen: (pageId: string) => void;
+  onScrollToList: () => void;
+  search: SearchProps;
+  spotlight?: Spotlight;
+}) {
   const reduced = useMediaQuery('(prefers-reduced-motion: reduce)');
   const wrapRef = useRef<HTMLDivElement>(null);
   const canvasRef = useRef<HTMLCanvasElement>(null);
@@ -198,11 +222,18 @@ function BrainMapCanvas({ map, onOpen, onScrollToList, search }: { map: BrainMap
 
   /** Glide the camera to a node, then open its page. */
   const focusNode = (id: string) => {
+    glideTo(id, 3);
+    setSearchOpen(false);
+    onOpen(id);
+  };
+
+  /** Glide the camera to a node without opening it. */
+  const glideTo = (id: string, minK: number) => {
     const r = rendererRef.current;
     const i = indexById.get(id);
     if (r && i !== undefined) {
       const from = r.getView();
-      const to = r.viewFor(i, Math.max(3, from.k));
+      const to = r.viewFor(i, Math.max(minK, from.k));
       if (reduced) setView(to);
       else {
         const t0 = performance.now();
@@ -215,9 +246,47 @@ function BrainMapCanvas({ map, onOpen, onScrollToList, search }: { map: BrainMap
         requestAnimationFrame(step);
       }
     }
-    setSearchOpen(false);
-    onOpen(id);
   };
+
+  // A fresh spotlight replays those pages into place, then centres the camera on them.
+  const spotKey = spotlight?.ids.join('|') ?? '';
+  const spotFound = spotlight ? spotlight.ids.filter((id) => indexById.has(id)) : [];
+  const spotReady = spotFound.length > 0;
+  const playedRef = useRef('');
+  useEffect(() => {
+    if (!spotlight || !spotReady || playedRef.current === spotKey) return;
+    playedRef.current = spotKey;
+    setPlaying(false);
+    const ats = spotFound.map((id) => map.nodes[indexById.get(id)!]!.updatedAt).filter((t) => t > 0);
+    const target = spotFound[0]!;
+    if (reduced || !ats.length) {
+      setCutoff(Infinity);
+      glideTo(target, 2.2);
+      return;
+    }
+    const from = Math.min(...ats) - 1;
+    const to = Math.max(...ats);
+    let raf = 0;
+    const t0 = performance.now();
+    const step = (now: number) => {
+      const u = Math.min(1, (now - t0) / GROW_MS);
+      if (u >= 1) {
+        setCutoff(Infinity);
+        return;
+      }
+      // Hold the old brain for a beat, then let the new pages bloom in.
+      const e = u < 0.35 ? 0 : 1 - (1 - (u - 0.35) / 0.65) ** 3;
+      setCutoff(from + (to - from) * e);
+      raf = requestAnimationFrame(step);
+    };
+    raf = requestAnimationFrame(step);
+    const glide = setTimeout(() => glideTo(target, 2.2), GROW_MS * 0.3);
+    return () => {
+      cancelAnimationFrame(raf);
+      clearTimeout(glide);
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- plays once per spotlight, once its pages are on the map
+  }, [spotKey, spotReady]);
 
   const setView = (view: View) => {
     const r = rendererRef.current;
@@ -382,7 +451,9 @@ function BrainMapCanvas({ map, onOpen, onScrollToList, search }: { map: BrainMap
           <div id="brain-search-count" aria-live="polite" className="mt-1.5 h-4 pl-1 text-[11.5px] text-night-400">
             {search.ask?.on
               ? 'Enter asks · answered only from your own pages, with citations'
-              : search.result &&
+              : spotlight && !search.query
+                ? 'Lit up: the pages you just accepted'
+                : search.result &&
               (search.result.ids.length
                 ? `${search.result.ids.length.toLocaleString('en')} of ${stats.pages.toLocaleString('en')} pages match · the list below is filtered`
                 : 'No page matches')}
@@ -416,6 +487,33 @@ function BrainMapCanvas({ map, onOpen, onScrollToList, search }: { map: BrainMap
           )}
         </div>
       </div>
+
+      {/* Just grown: what the accepted proposal wrote */}
+      {spotlight && (
+        <div data-keepout className="glass-strong absolute bottom-24 left-1/2 z-10 flex max-w-[calc(100%-2rem)] -translate-x-1/2 items-center gap-3 rounded-2xl py-2.5 pr-2 pl-4 shadow-[0_20px_60px_-20px_oklch(0_0_0/0.8)]" role="status">
+          <Sparkles className="size-4 shrink-0 text-aurora-300" aria-hidden />
+          <span className="text-[13px] text-night-100">
+            {spotReady ? 'Your brain just grew' : 'Writing it into your brain…'}
+            <span className="text-night-400">
+              {' · '}
+              {[spotlight.created && `${spotlight.created} new page${spotlight.created === 1 ? '' : 's'}`, spotlight.updated && `${spotlight.updated} updated`].filter(Boolean).join(', ')}
+            </span>
+          </span>
+          {spotFound.slice(0, 3).map((id) => (
+            <button
+              key={id}
+              type="button"
+              onClick={() => focusNode(id)}
+              className="hidden max-w-[180px] cursor-pointer truncate rounded-lg bg-white/[0.06] px-2.5 py-1 text-[12px] text-aurora-200 hover:bg-white/[0.1] sm:inline-block"
+            >
+              {map.nodes[indexById.get(id)!]!.title}
+            </button>
+          ))}
+          <button type="button" aria-label="Clear the highlight" onClick={spotlight.onClear} className="grid size-7 shrink-0 cursor-pointer place-items-center rounded-lg text-night-400 hover:bg-white/[0.07] hover:text-night-100">
+            <X className="size-3.5" />
+          </button>
+        </div>
+      )}
 
       {/* Controls */}
       <div data-keepout className="absolute top-6 right-6 flex items-center gap-1.5">
