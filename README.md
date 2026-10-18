@@ -14,7 +14,7 @@ Designed around GDPR/DPDP-style data minimisation — a technical posture, not a
 
 **In technical terms:** an offline-first study companion with three Socratic AI teachers on Gemma 4 and a second brain that maps what *you* understand onto the course sky — runnable on a student laptop, or as per-student hosted workspaces behind a university portal.
 
-Submission for [Hacktoberfest Hack Day Bengaluru 2026](https://www.mlh.com/events/hacktoberfest-hack-day-bengaluru-a0), October 13–18, 2026 (tracks: *Best Use of Gemma 4* and *Best Open-Source AI Project*).
+Submission for [Hacktoberfest Hack Day Bengaluru 2026](https://www.mlh.com/events/hacktoberfest-hack-day-bengaluru-a0), October 13–18, 2026 — **Track 1: Best Use of Gemma 4 → G3. Multimodal AI Intelligence** (*"combines information such as text, images or audio to understand context and produce meaningful outcomes"*).
 
 **Team The Org of Fine & Curious Individuals:** [Mahesh Shantaram](https://github.com/thecont1/), [Leharaditya Kumar](https://github.com/Larry8668)
 
@@ -129,10 +129,18 @@ flowchart LR
 
 ## Why it fits the tracks
 
-**Best Use of Gemma 4**
-- Every role runs on a Gemma model by default: tutoring with tool calls, structured brain proposals, **vision** for photos of handwritten notes, embeddings for hybrid retrieval, and ShieldGemma as an advisory safety screen on peer shares — with hardware-tiered suggestions so the models match the machine.
-- Small-model reliability is designed in, not hoped for. Schemas are flat, concept names are passed as enums, lane checks run before the model, and output is validated and repaired deterministically afterwards. Thinking mode is used only where it pays off (brain keeper).
-- Plug-and-play: each role can point at Ollama, a university-hosted OpenAI-compatible server (the model gateway on hosted seats), or a hosted API — all from Settings.
+**Track 1 · Best Use of Gemma 4 — G3. Multimodal AI Intelligence**
+
+The product *is* the multimodal pipeline the track asks for: every input format a student hands it becomes a first-class source in one reasoning system, and the models that touch it are all Gemma by default.
+
+- **Images** — a photo of handwritten notes or a campus notice is read on upload by the vision-role Gemma (native `/api/chat` transcription); a photographed notice can become a logistics proposal the Friend later cites.
+- **Audio** — a voice memo or recorded lecture is ffmpeg-normalised and transcribed in timestamped windows through the vision-role provider's `/v1/audio/transcriptions`; a pasted video link is a consent-gated fetch whose audio track feeds the same pipeline.
+- **Text** — pasted or written notes, PDFs (page-wise, with honest partial results), and frozen chat sessions.
+- **Reasoning across formats** — all of it flows through one deterministic *extract → compile → proposal → student review* pipeline, so a single teacher answer can draw on a released lesson, a photographed notice and a lecture recording, with every citation verified before it is shown.
+
+Around that pipeline every model role is a Gemma: tutor (tool-calling chat), brain keeper (structured proposals), vision (images and audio), embed (hybrid retrieval) and ShieldGemma (advisory peer-share screening) — with hardware-tiered suggestions so the models match the machine, and each role swappable between Ollama, the hosted model gateway, or any OpenAI-compatible API, all from Settings.
+
+Small-model reliability is designed in, not hoped for. Schemas are flat, concept names are passed as enums, lane checks run before the model, and output is validated and repaired deterministically afterwards. Thinking mode is used only where it pays off (brain keeper).
 
 **Best Open-Source AI Project**
 - Fully self-hostable: `docker compose up` runs the uni server, SearXNG and the engine; the Ollama profile adds the models.
