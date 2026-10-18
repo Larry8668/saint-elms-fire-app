@@ -92,12 +92,31 @@ function capabilityChecks(denied: CapabilityId[]): VerificationCheck[] {
  */
 export const MODEL_UNAVAILABLE = 'The model service is unavailable right now, so I can’t answer. Nothing was checked or invented; try again in a moment.';
 
+/** The latest user message, plus the one before it when the latest is a short or pointing follow-up. */
+export function groundingQuery(messages: Array<{ role: string; content: string }>): string {
+  const users = messages.filter((m) => m.role === 'user').map((m) => m.content.trim()).filter(Boolean);
+  const latest = users.at(-1) ?? '';
+  const previous = users.at(-2);
+  const words = latest.split(/\s+/).filter(Boolean).length;
+  const pointing = /\b(this|that|it|these|those|above|again|more)\b/i.test(latest);
+  if (previous && (words <= 6 || (pointing && words <= 14))) return `${previous}\n${latest}`;
+  return latest;
+}
+
+/** A topic-only web query aimed at real-world use and what is happening now. */
+export function worldQuery(topic: string, year = new Date().getFullYear()): string {
+  return `${topic} real-world applications latest developments ${year}`;
+}
+
 export async function runChatTurn(req: ChatRequest, deps: HarnessDeps, emit: (event: ChatStreamEvent) => void): Promise<void> {
   const started = Date.now();
   const ctx = new TurnContext(emit);
   const latest = req.messages.at(-1);
   if (!latest || latest.role !== 'user') throw new Error('Last message must be from the user');
   const question = latest.content.trim();
+  // What retrieval and grounding checks look for: a short or pointing follow-up ("Quiz me on this.")
+  // carries the previous question, so it finds the same lessons instead of nothing.
+  const grounding = groundingQuery(req.messages);
   const attachments = latest.attachments ?? [];
   const hasImage = attachments.length > 0;
 
@@ -181,7 +200,7 @@ export async function runChatTurn(req: ChatRequest, deps: HarnessDeps, emit: (ev
   // Context assembly: retrieval happens up front so even models weak at tool use stay grounded.
   ctx.status('Reading your lessons…');
   const pool = can(req.teacher, 'lesson:support_pool') ? await deps.content.supportLessons() : await deps.content.academicLessons();
-  const hits = (await searchLessonsHybrid(pool, question, { limit: 3, embed: deps.embeddings?.for('lessons') })).hits;
+  const hits = (await searchLessonsHybrid(pool, grounding, { limit: 3, embed: deps.embeddings?.for('lessons') })).hits;
   const sourceKind = can(req.teacher, 'lesson:support_pool') ? 'support' : 'lesson';
   for (const h of hits) ctx.addSource({ kind: sourceKind, id: h.lesson.id, title: h.lesson.title }, `${h.lesson.title}\n${h.excerpt}`);
 
@@ -210,7 +229,7 @@ export async function runChatTurn(req: ChatRequest, deps: HarnessDeps, emit: (ev
     // metadata is shown; bodies come through read_wiki_page, which marks generated pages
     // withheld so their model prose can never count as evidence.
     if (can(req.teacher, 'context:wiki_index') && deps.wiki) {
-      const wikiHits = (await new WikiQuery(deps.wiki, deps.embeddings?.for('pages')).search(question, 3)).hits;
+      const wikiHits = (await new WikiQuery(deps.wiki, deps.embeddings?.for('pages')).search(grounding, 3)).hits;
       ctx.contextBlocks.push(
         wikiHits.length
           ? `WIKI PAGES THAT ALREADY COVER THIS (read one with read_wiki_page before leaning on it; a source_summary, synthesis or question page is generated text, citable as context but never evidence):\n${UNTRUSTED_CONTENT_NOTE}\n${wikiHits
@@ -232,7 +251,9 @@ export async function runChatTurn(req: ChatRequest, deps: HarnessDeps, emit: (ev
   if (can(req.teacher, 'tool:web_search') && policy.web === 'explicit_consent' && webConsented) {
     // Nothing the student typed leaves this device: the up-front query is the topic alone,
     // bounded like anything else that may reach the network.
-    const webQuery = sanitizeWebQuery(webTopic ?? question);
+    // The Philosopher's job is the world beyond the syllabus: steer the topic toward real uses
+    // and recent developments (still topic-only, derived in code).
+    const webQuery = sanitizeWebQuery(webTopic ? worldQuery(webTopic) : question);
     ctx.status('Searching the web…');
     try {
       webResults = await (deps.searchWeb ?? webSearch)((await deps.settings.get()).searxngUrl, webQuery, 4);
@@ -329,7 +350,7 @@ export async function runChatTurn(req: ChatRequest, deps: HarnessDeps, emit: (ev
   });
   const assessed = assessAnswer(text, question, evidence, { teacher: req.teacher, hasImage });
 
-  const sources = await attributeSources(assessed.text, question, [...ctx.sources.values()], deps.content);
+  const sources = await attributeSources(assessed.text, grounding, [...ctx.sources.values()], deps.content);
   const verified = new Set(assessed.segments.flatMap((s) => s.sources ?? []));
   for (const s of sources) if (verified.has(s.id)) s.cited = true;
 

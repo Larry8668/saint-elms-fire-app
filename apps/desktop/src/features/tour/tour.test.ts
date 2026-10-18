@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
-import { consumeTourRequest, markTourDone, requestTour, TOUR_DONE_KEY, tourDone } from './tour-state';
+import { consumeTourRequest, markTourDone, requestTour, TOUR_DONE_KEY, tourDone, tourDoneKey } from './tour-state';
 import { firstVisibleAnchor, TOUR_MAX_STEPS, TOUR_STEPS } from './tour-steps';
 
 const memory = () => {
@@ -33,33 +33,36 @@ test('the tour stays light: at most eight steps, each anchor used once, closing 
   assert.deepEqual(TOUR_STEPS.at(-1)!.anchors, []);
 });
 
-test('completion is remembered under sef.tour.done', () => {
+test('completion is remembered per account under sef.tour.done:<account>', () => {
   const store = memory();
-  assert.equal(tourDone(store), false);
-  markTourDone(store);
-  assert.equal(store.data.get(TOUR_DONE_KEY), '1');
-  assert.equal(tourDone(store), true);
+  assert.equal(tourDone('ananya', store), false);
+  markTourDone('ananya', store);
+  assert.equal(store.data.get(tourDoneKey('ananya')), '1');
+  assert.equal(tourDone('ananya', store), true);
+  assert.equal(tourDone('brinda', store), false, 'another student on the same browser still gets the tour');
+  markTourDone(null, store);
+  assert.equal(store.data.get(TOUR_DONE_KEY), '1', 'no account: one shared flag');
 });
 
-test('a requested tour runs once, and never after it was finished', () => {
+test('a requested tour runs once per request, on every sign-in, even after it was finished before', () => {
   const session = memory();
   const local = memory();
-  assert.equal(consumeTourRequest(session, local), false);
+  assert.equal(consumeTourRequest('ananya', session, local), false, 'nothing requested');
   requestTour(session);
-  assert.equal(consumeTourRequest(session, local), true);
-  assert.equal(consumeTourRequest(session, local), false, 'consumed');
-  markTourDone(local);
+  assert.equal(consumeTourRequest('ananya', session, local), true);
+  assert.equal(consumeTourRequest('ananya', session, local), false, 'consumed');
+  markTourDone('ananya', local);
   requestTour(session);
-  assert.equal(consumeTourRequest(session, local), false);
+  assert.equal(consumeTourRequest('ananya', session, local), true, 'the next sign-in shows it again');
 });
 
 test('storage that throws or is missing never breaks the tour', () => {
-  assert.equal(tourDone(broken), false);
-  assert.doesNotThrow(() => markTourDone(broken));
+  assert.equal(tourDone('ananya', broken), false);
+  assert.doesNotThrow(() => markTourDone('ananya', broken));
   assert.doesNotThrow(() => requestTour(broken));
-  assert.equal(consumeTourRequest(broken, broken), false);
-  assert.equal(tourDone(null), false);
-  assert.equal(consumeTourRequest(null, null), false);
+  assert.equal(consumeTourRequest('ananya', broken, broken), false);
+  assert.equal(tourDone('ananya', null), false);
+  assert.equal(consumeTourRequest('ananya', null, null), false);
 });
 
 test('the first anchor laid out on screen is highlighted', () => {

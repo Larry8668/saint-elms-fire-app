@@ -1,3 +1,4 @@
+import { worldQuery } from '../../agents/harness';
 import assert from 'node:assert/strict';
 import { mkdtemp } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
@@ -141,7 +142,7 @@ test('the web preview names the topic-only query and an unreachable engine hones
   const res = await anchors.request('/anchors/damping/web-preview', { headers: AUTH });
   assert.equal(res.status, 200);
   const preview = (await res.json()) as WebPreview;
-  assert.equal(preview.query, 'damping', 'the released course’s label — never the student’s words');
+  assert.equal(preview.query, worldQuery('damping'), 'the released course’s label aimed at the real world — never the student’s words');
   assert.equal(preview.engine, 'searxng');
   assert.equal(preview.reachable, false, 'nothing listens on the test port');
 

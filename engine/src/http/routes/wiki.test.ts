@@ -3,7 +3,7 @@ import { mkdtemp } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { test } from 'node:test';
-import type { CompileResult, EngineSettings, ProposalAcceptance, SourceReceipt, WikiIndex, WikiPageView } from '@sef/shared';
+import type { CompileResult, EngineSettings, ProposalAcceptance, SourceReceipt, WikiAskResult, WikiAskStreamEvent, WikiGraph, WikiIndex, WikiPageView } from '@sef/shared';
 import type { ContentStore } from '../../content/store';
 import type { SettingsReader } from '../../settings/store';
 import { SessionStore, type Session } from '../../sessions/store';
@@ -16,6 +16,7 @@ import { conceptDraft, PROFILE, proposal, T0, tempRoot, vault } from '../../brai
 import type { WikiStore } from '../../brain/wiki-store';
 import { sourceRoutes } from './sources';
 import { studentRoutes } from './student';
+import type { AskComplete } from '../../brain/ask';
 import { wikiRoutes } from './wiki';
 
 process.env.ENGINE_DATA_DIR = await mkdtemp(path.join(tmpdir(), 'sef-wiki-routes-'));
@@ -42,7 +43,7 @@ const pageDraft = (over: Partial<KeeperDraft['pages'][number]> = {}): KeeperDraf
   ...over,
 });
 
-async function harness(prefix: string, opts: { propose?: (prompt: string) => Promise<KeeperDraft>; studentId?: string; store?: WikiStore } = {}) {
+async function harness(prefix: string, opts: { propose?: (prompt: string) => Promise<KeeperDraft>; studentId?: string; store?: WikiStore; complete?: AskComplete } = {}) {
   const identity = { ...PROFILE, studentId: opts.studentId ?? PROFILE.studentId };
   const store = opts.store ?? (await vault(prefix));
   const sources = new SourceIngestor(store, async () => identity);
@@ -52,13 +53,13 @@ async function harness(prefix: string, opts: { propose?: (prompt: string) => Pro
   await vaultView.init();
   const brain = new BrainService(content, vaultView, settings, await tempRoot(`${prefix}-quizzes`), { wiki: store, sources, identity: async () => identity });
   const profile = { id: identity.studentId, name: 'Student', email: 's@example.test', cohortId: 'cohort-a' };
-  const ws = { profile, sources, compiler, wiki: store, brain, sessions };
+  const ws = { profile, sources, compiler, wiki: store, brain, sessions, settings, paths: { root: await tempRoot(`${prefix}-profile`) } };
   const deps = {
     settings: {},
     auth: { resolve: async (token: string) => (token === 'valid' ? { profile, mode: 'offline' as const } : null) },
     workspaces: { get: async () => ws },
   } as never;
-  return { store, sources, sessions, brain, wiki: wikiRoutes(deps), student: studentRoutes(deps), contribution: sourceRoutes(deps) };
+  return { store, sources, sessions, brain, wiki: wikiRoutes(deps, opts.complete ? { complete: () => opts.complete! } : {}), student: studentRoutes(deps), contribution: sourceRoutes(deps) };
 }
 
 const post = (app: { request: (path: string, init?: RequestInit) => Promise<Response> | Response }, path: string, body?: unknown) =>
@@ -93,7 +94,45 @@ test('the wiki catalogue and one page are served over HTTP', async () => {
   assert.match(view.body, /Force changes momentum/);
 
   assert.equal((await wiki.request('/wiki/pages/nothing-here', { headers: AUTH })).status, 404);
+
+  const disputes = await wiki.request('/wiki/disputes', { headers: AUTH });
+  assert.equal(disputes.status, 200);
+  assert.deepEqual(((await disputes.json()) as { disputes: unknown[] }).disputes, [], 'nothing disputed yet');
+  assert.equal((await wiki.request('/wiki/disputes', { headers: { 'content-type': 'application/json' } })).status, 401);
   assert.equal((await wiki.request('/wiki/pages', { headers: { 'content-type': 'application/json' } })).status, 401, 'unauthenticated is refused');
+});
+
+test('the wiki graph is one read: nodes per page, edges only between pages that exist', async () => {
+  const { store, wiki } = await harness('route-wiki-graph');
+  await store.applyProposal(
+    proposal(
+      [
+        { op: 'upsert_page', page: conceptDraft('momentum') },
+        {
+          op: 'upsert_page',
+          page: conceptDraft('damping', {
+            links: [
+              { toPageId: 'momentum', type: 'builds_upon', origin: 'suggested', why: 'Damping removes momentum.', citations: [] },
+              { toPageId: 'momentum', type: 'related_to', origin: 'suggested', why: 'A duplicate pair.', citations: [] },
+              { toPageId: 'not-a-page', type: 'related_to', origin: 'suggested', why: 'Dangling.', citations: [] },
+            ],
+          }),
+        },
+      ],
+      { momentum: null, damping: null },
+    ),
+  );
+
+  const res = await wiki.request('/wiki/graph', { headers: AUTH });
+  assert.equal(res.status, 200);
+  const graph = (await res.json()) as WikiGraph;
+  assert.deepEqual(graph.nodes.map((n) => n.id).sort(), ['damping', 'momentum']);
+  const damping = graph.nodes.find((n) => n.id === 'damping')!;
+  assert.deepEqual(damping.courseIds, ['classical-mechanics']);
+  assert.deepEqual(damping.claimTexts, []);
+  assert.equal(damping.kind, 'concept');
+  assert.deepEqual(graph.edges, [{ source: 'damping', target: 'momentum', type: 'builds_upon', origin: 'suggested' }], 'dangling and duplicate links are dropped');
+  assert.equal((await wiki.request('/wiki/graph', { headers: { 'content-type': 'application/json' } })).status, 401);
 });
 
 test('save → compile → accept writes a synthesis page the wiki index then lists', async () => {
@@ -182,4 +221,66 @@ test('another profile cannot save into or restore this workspace — 404, not le
   assert.equal((await post(foreign.wiki, '/wiki/save', { sessionId: 'sess-private', turnIndex: 1 })).status, 404);
   assert.equal((await foreign.wiki.request('/wiki/pages', { headers: AUTH })).status, 200);
   assert.equal((await post(foreign.student, '/brain/pages/damping/restore', { revision: page?.revision, baseRevision: 'rev-stale' })).status, 409);
+});
+
+const frames = async (res: Response): Promise<WikiAskStreamEvent[]> =>
+  (await res.text())
+    .split('\n\n')
+    .map((frame) => frame.split('\n').filter((l) => l.startsWith('data:')).map((l) => l.slice(5).trimStart()).join('\n'))
+    .filter(Boolean)
+    .map((data) => JSON.parse(data) as WikiAskStreamEvent);
+const doneOf = (events: WikiAskStreamEvent[]): WikiAskResult => {
+  const done = events.find((e) => e.type === 'done');
+  assert.ok(done && done.type === 'done', 'the stream ends in one done frame');
+  return done.result;
+};
+
+test('ask over HTTP: refused without sign-in or a question; an SSE answer cites only pages it read, and saves by askId', async () => {
+  let calls = 0;
+  const complete: AskComplete = async () => {
+    calls += 1;
+    return {
+      label: 'fake · Test',
+      text: (async function* () {
+        yield 'Force changes momentum [[damping]]';
+        yield ' and so on [[not-a-page]].';
+      })(),
+    };
+  };
+  const { store, wiki } = await harness('route-wiki-ask', { complete });
+
+  assert.equal((await wiki.request('/wiki/ask', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ question: 'What is damping?' }) })).status, 401);
+  assert.equal((await post(wiki, '/wiki/ask', {})).status, 400);
+  assert.equal((await post(wiki, '/wiki/ask', { question: 'What is damping?', extra: 1 })).status, 400);
+
+  // Empty brain: an honest answer, no model call, nothing to save.
+  const empty = doneOf(await frames(await post(wiki, '/wiki/ask', { question: 'What is damping?' })));
+  assert.equal(empty.outcome, 'empty_brain');
+  assert.equal(empty.askId, null);
+  assert.equal(calls, 0);
+
+  await store.applyProposal(proposal([{ op: 'upsert_page', page: conceptDraft('damping', { summary: 'Damping takes energy out of an oscillator.' }) }], { damping: null }));
+  const res = await post(wiki, '/wiki/ask', { question: 'What does damping do to an oscillator?' });
+  assert.equal(res.status, 200);
+  assert.match(res.headers.get('content-type') ?? '', /text\/event-stream/);
+  const events = await frames(res);
+  assert.equal(events[0]?.type, 'status', 'progress arrives before any text');
+  const result = doneOf(events);
+  assert.equal(result.outcome, 'answered');
+  assert.equal(result.evidence, 'student_wiki');
+  assert.deepEqual(result.citations, [{ pageId: 'damping', title: 'Concept damping', kind: 'concept', generated: false }]);
+  assert.deepEqual(result.droppedCitations, ['not-a-page']);
+  assert.equal(result.answer, 'Force changes momentum [[damping]] and so on.');
+  assert.equal(calls, 1);
+
+  const saved = await post(wiki, '/wiki/save', { askId: result.askId });
+  assert.equal(saved.status, 201);
+  const receipt = (await saved.json()) as SourceReceipt;
+  assert.equal(receipt.source.kind, 'answer');
+  assert.match(receipt.extraction?.text ?? '', /not course material/);
+  assert.match(receipt.extraction?.text ?? '', /\[brain\] damping/);
+  assert.equal((await store.listPages()).length, 1, 'saving queues a job; no page is written');
+
+  assert.equal((await post(wiki, '/wiki/save', { askId: 'ask-gone' })).status, 404);
+  assert.equal((await post(wiki, '/wiki/save', { askId: result.askId, sessionId: 'sess-http' })).status, 400, 'exactly one of askId and sessionId');
 });

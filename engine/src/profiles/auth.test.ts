@@ -352,3 +352,17 @@ test('keyless polls are for the device itself: they find the latest grant starte
     uni.close();
   }
 });
+
+test('signing out one device keeps the other devices and the uni credential; the last device signs the profile out', async () => {
+  const { auth, registry, credentials, sessions } = await offlineHarness();
+  await registry.recordDeviceSignIn({ id: 'shared-user', name: 'S', email: 'su@test' }, 'uni-shared', new Date(Date.now() + 86400000).toISOString(), 'approved', 'cohort-a');
+  const laptopA = await sessions.create('shared-user', 'offline');
+  const laptopB = await sessions.create('shared-user', 'offline');
+  await auth.logout(laptopA);
+  assert.equal(await sessions.resolve(laptopA), null, 'the device that signed out is out');
+  assert.ok(await sessions.resolve(laptopB), 'the other device keeps working');
+  assert.equal(await credentials.get('uni-session:shared-user'), 'uni-shared', 'the uni credential stays while a device is signed in');
+  await auth.logout(laptopB);
+  assert.equal(await sessions.resolve(laptopB), null);
+  assert.equal(await credentials.get('uni-session:shared-user'), null, 'the last device signs the profile out');
+});

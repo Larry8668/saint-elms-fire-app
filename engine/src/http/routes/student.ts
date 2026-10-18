@@ -6,6 +6,7 @@ import { ConversationRefused, ConversationRegistry, refusalCopy, serverTranscrip
 import { anchorCatalog, matchAnchorPages, profileAnchors } from '../../agents/anchors';
 import { runChatTurn } from '../../agents/harness';
 import { anchorContext } from './anchors';
+import { UnknownConceptError } from '../../brain/service';
 import { SourceRejection } from '../../brain/sources/ingest';
 import { VaultConflictError } from '../../brain/vault-errors';
 import { errorFields, log } from '../../config';
@@ -324,7 +325,22 @@ export function studentRoutes(deps: EngineDeps, conversations: ConversationRegis
     return c.json(SourceReceiptSchema.parse({ schemaVersion: CONTRACT_VERSION, source: result.source, extraction, jobId: result.jobId, reused: result.reused }), 201);
   });
 
-  app.post('/quiz/:key', guard, async (c) => c.json(await c.get('ws').brain.createQuiz(c.req.param('key'))));
+  // Writing a quiz outlives a hosted edge's request timeout, so it runs in the background:
+  // 202 with a job at once, then the client polls GET /quiz/jobs/:jobId until ready or failed.
+  app.post('/quiz/:key', guard, async (c) => {
+    try {
+      const job = await c.get('ws').brain.startQuiz(c.req.param('key'));
+      return c.json({ jobId: job.jobId, key: job.key }, 202);
+    } catch (error) {
+      if (error instanceof UnknownConceptError) return c.json({ error: error.message }, 404);
+      throw error;
+    }
+  });
+  app.get('/quiz/jobs/:jobId', guard, (c) => {
+    const job = c.get('ws').brain.quizJob(c.req.param('jobId'));
+    if (!job) return c.json({ error: 'That quiz is no longer being written (the engine may have restarted). Try again.', code: 'quiz_job_not_found' }, 404);
+    return c.json({ stage: job.stage, ...(job.quiz ? { quiz: job.quiz } : {}), ...(job.error ? { error: job.error } : {}) });
+  });
   app.post('/quiz/:id/submit', guard, async (c) => {
     const body = z.object({ answers: z.array(z.number().int()), attemptId: z.string().max(80).optional() }).safeParse(await c.req.json().catch(() => null));
     if (!body.success) return c.json({ error: 'answers must be an array of option indexes' }, 400);

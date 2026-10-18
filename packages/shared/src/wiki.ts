@@ -534,6 +534,42 @@ export const WikiIndexSchema = z.strictObject({
 export type WikiIndex = z.infer<typeof WikiIndexSchema>;
 
 /**
+ * The wiki as a compact graph, for GET /api/wiki/graph: one node per readable page and one
+ * edge per link whose target page exists. Derived from the same snapshots as the index and
+ * read-only — it exists so a visualization of a 1,000+ page vault is one request, not one
+ * per page. Mastery status is not repeated here; it comes from /api/brain/records.
+ */
+export const WikiGraphNodeSchema = z.strictObject({
+  id: IdentifierSchema,
+  kind: z.enum(['concept', 'source_summary', 'synthesis', 'question']),
+  title: z.string(),
+  summary: z.string(),
+  updatedAt: TimestampSchema.nullable(),
+  claims: z.number().int().nonnegative(),
+  /** The claims' text, so a client-side search can reach what a page asserts, not only its title. */
+  claimTexts: z.array(z.string()),
+  sourceIds: IdentifierListSchema,
+  /** Distinct course ids the page is anchored to, in first-seen order. */
+  courseIds: z.array(z.string()),
+});
+export type WikiGraphNode = z.infer<typeof WikiGraphNodeSchema>;
+
+export const WikiGraphEdgeSchema = z.strictObject({
+  source: IdentifierSchema,
+  target: IdentifierSchema,
+  type: z.enum(EDGE_TYPES),
+  origin: z.enum(['course', 'student', 'peer', 'suggested']),
+});
+export type WikiGraphEdge = z.infer<typeof WikiGraphEdgeSchema>;
+
+export const WikiGraphSchema = z.strictObject({
+  schemaVersion: ContractVersionSchema,
+  nodes: z.array(WikiGraphNodeSchema),
+  edges: z.array(WikiGraphEdgeSchema),
+});
+export type WikiGraph = z.infer<typeof WikiGraphSchema>;
+
+/**
  * One claim as the engine judges it right now: assertable means its provenance resolves
  * against the vault's current sources; a withheld claim may be named, never asserted.
  */
@@ -579,6 +615,48 @@ export const WikiPageViewSchema = z.strictObject({
 });
 export type WikiPageView = z.infer<typeof WikiPageViewSchema>;
 
+/** One version a disagreement keeps — the claim text, whose it is, and what it rests on. */
+export const WikiDisputeSideSchema = z.strictObject({
+  /** Absent for a misconception carried from the earlier vault, which kept no claim ids. */
+  claimId: IdentifierSchema.optional(),
+  text: z.string(),
+  origin: z.enum(['course', 'external', 'student', 'peer', 'model']),
+  /** The sources this side's citations name, resolved where a record still exists. */
+  sources: z.array(WikiPageSourceSchema),
+  missingSourceIds: IdentifierListSchema,
+  /** A course lesson the side points at, when it is the course's version. */
+  lessonRef: z.string().optional(),
+});
+export type WikiDisputeSide = z.infer<typeof WikiDisputeSideSchema>;
+
+/**
+ * Two versions the brain keeps side by side. 'disputed_claims' is the merge policy's
+ * dispute (same subject, different content — both claims stay, marked disputed);
+ * 'misconception' is an unresolved one from the earlier vault: what the student said
+ * against what the course says. Read-only: nothing here resolves anything.
+ */
+export const WikiDisputeSchema = z.strictObject({
+  id: z.string().min(1).max(200),
+  kind: z.enum(['disputed_claims', 'misconception']),
+  pageId: IdentifierSchema,
+  pageTitle: z.string(),
+  pageKind: z.enum(['concept', 'source_summary', 'synthesis', 'question']),
+  /** When the page last changed (or the misconception was flagged), if known. */
+  at: z.string().nullable(),
+  /** Earlier version first. One side only when the other claim is no longer on the page. */
+  sides: z.array(WikiDisputeSideSchema).min(1).max(2),
+  /** A Socratic opener the Guide can start from. */
+  prompt: z.string(),
+});
+export type WikiDispute = z.infer<typeof WikiDisputeSchema>;
+
+/** GET /api/wiki/disputes — every disagreement the vault currently keeps. */
+export const WikiDisputesSchema = z.strictObject({
+  schemaVersion: ContractVersionSchema,
+  disputes: z.array(WikiDisputeSchema),
+});
+export type WikiDisputes = z.infer<typeof WikiDisputesSchema>;
+
 /**
  * POST /api/wiki/save — freeze one assistant answer as an 'answer' source and queue its
  * job. `saveKind` is a hint the keeper reads from the retained document; code never trusts
@@ -586,7 +664,10 @@ export type WikiPageView = z.infer<typeof WikiPageViewSchema>;
  */
 export const SaveAnswerRequestSchema = z
   .strictObject({
-    sessionId: IdentifierSchema,
+    /** The conversation the answer came from. Exactly one of sessionId and askId is sent. */
+    sessionId: IdentifierSchema.optional(),
+    /** An "Ask your brain" answer the engine kept (POST /api/wiki/ask → done.result.askId). */
+    askId: IdentifierSchema.optional(),
     /** Index into the session's turns; must point at an assistant message. Defaults to the latest one. */
     turnIndex: z.number().int().nonnegative().optional(),
     /**
@@ -599,8 +680,62 @@ export const SaveAnswerRequestSchema = z
     title: z.string().trim().min(1).max(300).optional(),
     saveKind: z.enum(['synthesis', 'question']).optional(),
   })
-  .strict();
+  .strict()
+  .refine((body) => (body.sessionId === undefined) !== (body.askId === undefined), { message: 'Send exactly one of sessionId or askId' });
 export type SaveAnswerRequest = z.infer<typeof SaveAnswerRequestSchema>;
+
+/** POST /api/wiki/ask — a question answered only from the student's own compiled pages. */
+export const WikiAskRequestSchema = z.strictObject({
+  question: z.string().trim().min(3).max(1000),
+});
+export type WikiAskRequest = z.infer<typeof WikiAskRequestSchema>;
+
+const askPageRef = z.strictObject({
+  pageId: IdentifierSchema,
+  title: z.string(),
+  kind: WikiPageEntrySchema.shape.kind,
+  /**
+   * A source summary, synthesis or question page is model-written: it can be named as
+   * context but is never evidence — the same rule read_wiki_page applies to teachers.
+   */
+  generated: z.boolean(),
+});
+export const WikiAskPageSchema = askPageRef;
+export type WikiAskPage = z.infer<typeof WikiAskPageSchema>;
+
+/**
+ * What "Ask your brain" answered. Every citation names a page that was in the model's
+ * context — anything else was dropped and is listed. `evidence` is always 'student_wiki':
+ * these are the student's own pages, never course evidence.
+ */
+export const WikiAskResultSchema = z.strictObject({
+  schemaVersion: ContractVersionSchema,
+  /** Present when the answer was kept for "Save to wiki"; null when nothing was composed. */
+  askId: IdentifierSchema.nullable(),
+  question: z.string(),
+  answer: z.string(),
+  outcome: z.enum(['answered', 'empty_brain', 'no_hits', 'model_unavailable']),
+  citations: z.array(askPageRef),
+  /** Citations the model wrote that named no page it was shown — removed from the answer. */
+  droppedCitations: z.array(z.string()),
+  /** Pages in the vault the search ran over. */
+  pagesSearched: z.number().int().nonnegative(),
+  /** The top hits whose permitted views were read into the model's context. */
+  pagesRead: z.array(askPageRef),
+  searchMode: SearchModeSchema,
+  /** The "served by" label, or null when no model was called. */
+  model: z.string().nullable(),
+  evidence: z.literal('student_wiki'),
+});
+export type WikiAskResult = z.infer<typeof WikiAskResultSchema>;
+
+/** The SSE frames of POST /api/wiki/ask: progress first, then text, then one done (or error). */
+export type WikiAskStreamEvent =
+  | { type: 'status'; message: string }
+  | { type: 'pages'; pages: WikiAskPage[] }
+  | { type: 'delta'; text: string }
+  | { type: 'done'; result: WikiAskResult }
+  | { type: 'error'; message: string; code?: string };
 
 /**
  * POST /api/brain/pages/:key/restore — writes the named historical revision as a NEW

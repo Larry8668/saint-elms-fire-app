@@ -1,6 +1,6 @@
 import { useMutation, useQuery } from '@tanstack/react-query';
 import { AudioLines, FileText, Film, Image as ImageIcon, MessagesSquare, NotebookPen, Pencil, ScanText, Share2, ShieldQuestion, Trash2, type LucideIcon } from 'lucide-react';
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useState } from 'react';
 import { toast } from 'sonner';
 import type { SourceRecord } from '@sef/shared';
 import { Markdown } from '@/components/Markdown';
@@ -25,24 +25,35 @@ export const SOURCE_KIND_ICON: Record<SourceRecord['kind'], LucideIcon> = {
   peer: Share2,
 };
 
+/**
+ * An object URL owned by the effect that made it: created and revoked as a pair, so a remount
+ * over cached bytes (a second view of the same source, or StrictMode's double mount) never
+ * renders a URL an earlier cleanup already revoked.
+ */
+function useObjectUrl(blob: Blob | undefined): string | null {
+  const [url, setUrl] = useState<string | null>(null);
+  useEffect(() => {
+    if (!blob) {
+      setUrl(null);
+      return;
+    }
+    const next = URL.createObjectURL(blob);
+    setUrl(next);
+    return () => URL.revokeObjectURL(next);
+  }, [blob]);
+  return url;
+}
+
 /** The retained original, rendered for the student's eyes while they check the reading. */
-function SourceImage({ sourceId, title }: { sourceId: string; title: string }) {
-  const blob = useSourceBytes(sourceId);
-  const url = useMemo(() => (blob.data ? URL.createObjectURL(blob.data) : null), [blob.data]);
-  useEffect(() => () => {
-    if (url) URL.revokeObjectURL(url);
-  }, [url]);
+export function SourceImage({ sourceId, title }: { sourceId: string; title: string }) {
+  const url = useObjectUrl(useSourceBytes(sourceId).data);
   if (!url) return null;
   return <img src={url} alt={title} className="max-h-56 w-full rounded-xl border border-white/[0.06] object-contain bg-black/30" />;
 }
 
 /** The kept recording or video, playable while the student checks its transcript. */
-function SourceMedia({ sourceId, title, video }: { sourceId: string; title: string; video: boolean }) {
-  const blob = useSourceBytes(sourceId);
-  const url = useMemo(() => (blob.data ? URL.createObjectURL(blob.data) : null), [blob.data]);
-  useEffect(() => () => {
-    if (url) URL.revokeObjectURL(url);
-  }, [url]);
+export function SourceMedia({ sourceId, title, video }: { sourceId: string; title: string; video: boolean }) {
+  const url = useObjectUrl(useSourceBytes(sourceId).data);
   if (!url) return null;
   if (video) return <video src={url} aria-label={title} controls preload="metadata" className="max-h-64 w-full rounded-xl border border-white/[0.06] bg-black/40" />;
   return <audio src={url} aria-label={title} controls className="w-full" />;

@@ -1,7 +1,7 @@
 import type { BrainLogEntry, LearningEvent, PageRecordSummary } from '@sef/shared';
-import { AlertTriangle, Brain, FilePlus2, GraduationCap, History, Lightbulb, Link2, MessageCircleQuestion, Network, PenLine, RefreshCw, Sparkles, Waypoints, Wrench } from 'lucide-react';
+import { AlertTriangle, Brain, Search, FilePlus2, GraduationCap, History, Lightbulb, Link2, MessageCircleQuestion, Network, PenLine, RefreshCw, Sparkles, Waypoints, Wrench } from 'lucide-react';
 import { motion } from 'motion/react';
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { Button } from '@/components/ui/button';
 import { Tabs } from '@/components/ui/overlays';
 import { Badge, EmptyState, PageHeader, Panel } from '@/components/ui/primitives';
@@ -10,14 +10,19 @@ import { ProposalReviewDialog } from '@/features/contribute/ProposalReviewDialog
 import { KIND_STYLE, STATUS_STYLE } from '@/lib/brain-style';
 import { markdownToPlainText } from '@/lib/markdown-text';
 import { useNav } from '@/lib/nav';
-import { useBrainLog, useEvents, useGraph, useJobBoard, useLint, useMaintenance, useRecords, useWikiIndex } from '@/lib/queries';
+import { useBrainLog, useEvents, useGraph, useJobBoard, useLint, useMaintenance, useRecords, useWikiGraph, useWikiIndex } from '@/lib/queries';
 import { shortDate } from '@/lib/time';
+import { AskBrainPanel, type AskRequest } from './ask/AskBrainPanel';
+import { BrainMapHero } from './brain-map/BrainMapHero';
+import { buildSearchIndex, searchPages } from './brain-map/search';
 import { ConceptSheet } from './ConceptSheet';
 import { ACTOR_LABEL, EVENT_LABEL } from './GrowthTrail';
 import { MaintenancePanel } from './MaintenancePanel';
 import { RecordSheet } from './RecordSheet';
 import { SourceDetailDialog } from './SourceDetail';
 import { SourcesPanel } from './SourcesPanel';
+import { Contradictions } from './story/Contradictions';
+import { LearnedTimeline } from './story/LearnedTimeline';
 import { WikiIndexPanel } from './WikiIndex';
 import { WikiPageDialog } from './WikiPageDialog';
 
@@ -49,6 +54,28 @@ export function BrainView() {
   const graph = useGraph();
   const board = useJobBoard();
   const wiki = useWikiIndex();
+  const wikiGraph = useWikiGraph();
+  const listRef = useRef<HTMLDivElement>(null);
+
+  // Search: typed text echoes at once; the filter runs 150 ms after the last keystroke.
+  const [query, setQuery] = useState('');
+  const [debounced, setDebounced] = useState('');
+  useEffect(() => {
+    const t = setTimeout(() => setDebounced(query), query ? 150 : 0);
+    return () => clearTimeout(t);
+  }, [query]);
+  const searchIndex = useMemo(() => buildSearchIndex(records.data ?? [], wikiGraph.data), [records.data, wikiGraph.data]);
+  // Ask your brain: the same box, switched to "Ask"; the visualization lights the cited pages.
+  const [askOn, setAskOn] = useState(false);
+  const [askRequest, setAskRequest] = useState<AskRequest | null>(null);
+  const [askLit, setAskLit] = useState<string[]>([]);
+  const closeAsk = () => {
+    setAskRequest(null);
+    setAskLit([]);
+  };
+  const askResult = useMemo(() => (askLit.length ? { ids: askLit, set: new Set(askLit) } : null), [askLit]);
+  const searchResult = useMemo(() => (askOn ? null : searchPages(searchIndex, debounced)), [askOn, searchIndex, debounced]);
+  const shownRecords = useMemo(() => (searchResult ? (records.data ?? []).filter((r) => searchResult.set.has(r.id)) : records.data), [records.data, searchResult]);
 
   // A node-backed page opens the sky sheet; everything else (source summaries, orphans) opens the record sheet.
   const selectedNode = useMemo(() => (selectedPageId && graph.data ? (graph.data.nodes.find((n) => n.pageId === selectedPageId) ?? null) : null), [selectedPageId, graph.data]);
@@ -75,7 +102,37 @@ export function BrainView() {
 
   return (
     <div className="h-full overflow-y-auto">
+      {/* The brain is the page: a full-screen map first, the pages themselves on scroll. */}
+      <div className="relative">
+        <BrainMapHero
+          records={records.data}
+          graph={graph.data}
+          wiki={wikiGraph.data}
+          loading={graph.isLoading || wikiGraph.isLoading}
+          onOpen={openPage}
+          onScrollToList={() => listRef.current?.scrollIntoView({ behavior: 'smooth', block: 'start' })}
+          search={{
+            query,
+            onQuery: setQuery,
+            result: askOn ? askResult : searchResult,
+            ask: {
+              on: askOn,
+              onToggle: (on) => {
+                setAskOn(on);
+                if (!on) closeAsk();
+              },
+              onSubmit: (question) => setAskRequest({ question, nonce: Date.now() }),
+              panel: <AskBrainPanel request={askRequest} onOpenPage={openPage} onHighlight={setAskLit} onClose={closeAsk} />,
+            },
+          }}
+        />
+      </div>
       <div className="mx-auto max-w-6xl px-8 py-8">
+        <div className="mt-6 mb-10 grid items-start gap-4 lg:grid-cols-[minmax(0,1.3fr)_minmax(0,1fr)]">
+          <LearnedTimeline onOpenPage={openPage} />
+          <Contradictions onOpenPage={openPage} onOpenSource={setSourceId} />
+        </div>
+        <div ref={listRef} className="scroll-mt-6" />
         <PageHeader
           eyebrow="Plain markdown, on this device"
           title="Your brain"
@@ -116,13 +173,16 @@ export function BrainView() {
                 }
               />
             )}
+            {searchResult && searchResult.ids.length === 0 && (
+              <EmptyState icon={<Search />} title="Nothing matches" body={`No page's title, summary or claims mention “${debounced.trim()}”. Press Esc in the search to clear it.`} />
+            )}
             <div className="grid gap-3 md:grid-cols-2 lg:grid-cols-3">
-              {records.data?.map((record, i) => <PageCard key={record.id} record={record} index={i} onOpen={() => openPage(record.id)} />)}
+              {shownRecords?.map((record, i) => <PageCard key={record.id} record={record} index={i} onOpen={() => openPage(record.id)} />)}
             </div>
           </>
         )}
 
-        {tab === 'wiki' && <WikiIndexPanel index={wiki.data} loading={wiki.isLoading} onOpen={setWikiPageId} />}
+        {tab === 'wiki' && <WikiIndexPanel index={wiki.data} loading={wiki.isLoading} onOpen={setWikiPageId} matchIds={searchResult?.set ?? null} />}
 
         {tab === 'sources' && (
           <div className="max-w-2xl">

@@ -2,7 +2,7 @@ import assert from 'node:assert/strict';
 import { test } from 'node:test';
 import type { ChatRequest, ChatStreamEvent, WikiClaim } from '@sef/shared';
 import type { StoredSettings } from '../settings/store';
-import { MODEL_UNAVAILABLE, runChatTurn, type HarnessDeps } from './harness';
+import { groundingQuery, MODEL_UNAVAILABLE, runChatTurn, worldQuery, type HarnessDeps } from './harness';
 import { ACADEMIC_REDIRECT, PRIVACY_REFUSAL } from './lanes';
 import { UNTRUSTED_CONTENT_NOTE } from './prompts';
 import type { ClaimReader } from '../brain/claim-evidence';
@@ -280,7 +280,8 @@ test('an anchored Philosopher turn searches the concept, never the student’s w
     h.deps,
     (e) => h.events.push(e),
   );
-  assert.deepEqual(queries, ['damping'], 'the topic-only query — chat text never leaves the device');
+  assert.deepEqual(queries, [worldQuery('damping')], 'the topic, aimed at the real world — chat text never leaves the device');
+  assert.ok(!queries[0]!.includes('?'), 'nothing the student typed is in it');
   assert.match(h.instructions(), /WEB RESULTS/);
   assert.ok(h.instructions().includes(UNTRUSTED_CONTENT_NOTE), 'the web results are marked as untrusted data');
   const finished = done(h.events);
@@ -569,4 +570,15 @@ test('a model service that refused or failed is named as such, not blamed on the
   assert.equal(finished.text, MODEL_UNAVAILABLE);
   assert.doesNotMatch(finished.text, /released lessons/);
   assert.ok(finished.verification.checks.some((c) => c.id === 'model' && !c.passed));
+});
+
+test('a short or pointing follow-up is grounded with the previous question', () => {
+  const m = (role: 'user' | 'assistant', content: string) => ({ role, content });
+  assert.equal(groundingQuery([m('user', "Explain Newton's second law with an example.")]), "Explain Newton's second law with an example.");
+  assert.equal(
+    groundingQuery([m('user', "Explain Newton's second law with an example."), m('assistant', 'F = ma …'), m('user', 'Quiz me on this.')]),
+    "Explain Newton's second law with an example.\nQuiz me on this.",
+  );
+  const long = 'Can you now compare the second law with the momentum form and tell me where each is more useful in practice for engineers?';
+  assert.equal(groundingQuery([m('user', 'first'), m('user', long)]), long, 'a full question stands on its own');
 });

@@ -25,7 +25,9 @@ export const keys = {
     pageRevisions: (p: string, key: string) => ['profile', p, 'page-revisions', key] as const,
     pageRevision: (p: string, key: string, revision: string) => ['profile', p, 'page-revisions', key, revision] as const,
     wikiIndex: (p: string) => ['profile', p, 'wiki-index'] as const,
+    wikiGraph: (p: string) => ['profile', p, 'wiki-graph'] as const,
     wikiPage: (p: string, id: string) => ['profile', p, 'wiki-page', id] as const,
+    wikiDisputes: (p: string) => ['profile', p, 'wiki-disputes'] as const,
     brainLog: (p: string) => ['profile', p, 'brain-log'] as const,
     lint: (p: string) => ['profile', p, 'lint'] as const,
     records: (p: string) => ['profile', p, 'records'] as const,
@@ -79,6 +81,8 @@ const brainKeys = () => {
     keys.scoped.jobBoard(p),
     keys.scoped.proposals(p),
     keys.scoped.wikiIndex(p),
+    keys.scoped.wikiGraph(p),
+    keys.scoped.wikiDisputes(p),
     // A committed page edit changes both its catalogue row and the revision an anchor pins.
     keys.scoped.anchors(p),
   ];
@@ -181,8 +185,11 @@ export const usePageRevision = (key: string | null, revision: string | null) =>
     retry: false,
   });
 export const useWikiIndex = () => useQuery({ queryKey: keys.scoped.wikiIndex(profile()), queryFn: api.wikiIndex });
+export const useWikiGraph = () => useQuery({ queryKey: keys.scoped.wikiGraph(profile()), queryFn: api.wikiGraph });
 export const useWikiPage = (id: string | null) =>
   useQuery({ queryKey: keys.scoped.wikiPage(profile(), id ?? ''), queryFn: () => api.wikiPage(id!), enabled: Boolean(id), retry: false });
+/** Every disagreement the vault keeps: disputed claim pairs and carried-over misconceptions. */
+export const useWikiDisputes = () => useQuery({ queryKey: keys.scoped.wikiDisputes(profile()), queryFn: api.wikiDisputes });
 
 /** The pages the Philosopher may explore from — re-judged by the engine on every fetch. */
 export const useAnchors = (enabled = true) => useQuery({ queryKey: keys.scoped.anchors(profile()), queryFn: api.anchors, enabled });
@@ -421,4 +428,25 @@ export function useAttentionActions() {
     seen: useMutation({ mutationFn: api.markAttentionSeen, onSuccess: refresh }),
     evaluate: useMutation({ mutationFn: api.evaluateAttention, onSuccess: (data) => client.setQueryData(keys.scoped.attention(p), data), onError }),
   };
+}
+
+/**
+ * Save an "Ask your brain" answer: the kept ask is frozen as a model-provenance source and
+ * its job compiles straight away. The proposal still waits for the student's accept.
+ */
+export function useSaveAskToWiki() {
+  const invalidateBrain = useInvalidateBrain();
+  return useMutation({
+    mutationFn: async (askId: string) => {
+      const receipt = await api.saveAnswer({ askId });
+      // The answer is kept once the save lands; a failed draft leaves the job for a retry.
+      try {
+        return { receipt, compiled: await api.compileJob(receipt.jobId), draftError: null };
+      } catch (error) {
+        return { receipt, compiled: null, draftError: (error as Error).message };
+      }
+    },
+    onSuccess: () => invalidateBrain(),
+    onError: (error) => toast.error((error as Error).message),
+  });
 }
