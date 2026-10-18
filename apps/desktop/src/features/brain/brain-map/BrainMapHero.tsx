@@ -62,7 +62,7 @@ function HeroFrame({ children, className }: { children: ReactNode; className?: s
   return (
     <section
       className={cn(
-        'relative mb-8 h-[clamp(520px,74vh,700px)] overflow-hidden rounded-3xl border border-white/[0.07] bg-night-950 shadow-[0_40px_120px_-40px_oklch(0_0_0/0.9)]',
+        'relative h-[100dvh] min-h-[560px] overflow-hidden bg-night-950',
         className,
       )}
       style={{
@@ -507,7 +507,7 @@ function BrainMapCanvas({ map, onOpen, onScrollToList, search }: { map: BrainMap
       <button
         type="button"
         onClick={onScrollToList}
-        className="mx-auto -mt-7 mb-6 flex cursor-pointer items-center gap-1.5 rounded-full px-3 py-1.5 text-[11.5px] text-night-400 transition hover:text-night-100"
+        className="glass absolute bottom-6 left-1/2 z-10 flex -translate-x-1/2 cursor-pointer items-center gap-1.5 rounded-full px-3.5 py-1.5 text-[11.5px] text-night-300 transition hover:text-night-100"
       >
         Every page, listed <ChevronDown className="size-3.5 animate-bounce motion-reduce:animate-none" />
       </button>
