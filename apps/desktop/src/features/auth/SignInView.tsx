@@ -1,12 +1,13 @@
 import { TEACHER_IDS, TEACHERS } from '@sef/shared';
 import { ChevronDown, Cloud, Database, GraduationCap, HardDrive, ServerCrash, ShieldCheck, Sparkles, WifiOff, type LucideIcon } from 'lucide-react';
 import { AnimatePresence, motion } from 'motion/react';
-import { useRef, useState } from 'react';
+import { useQuery } from '@tanstack/react-query';
+import { useEffect, useRef, useState } from 'react';
 import { Button } from '@/components/ui/button';
 import { ConnectingScene } from '@/components/ui/connecting-scene';
 import { EmptyState } from '@/components/ui/primitives';
 import { TEACHER_LOOK } from '@/features/teachers/teacher-meta';
-import { EngineError } from '@/lib/api';
+import { api, EngineError } from '@/lib/api';
 import { cn } from '@/lib/cn';
 import { DEMO_MODE } from '@/lib/demo';
 import { DEMO_ACCOUNTS } from '@/lib/demo-accounts';
@@ -16,7 +17,7 @@ import { useSession } from '@/lib/session';
 import { portalUrl } from '@/lib/uni-url';
 import { UNI_URL } from '@/lib/uni-url';
 import { WorkspaceWakeNotice, useWorkspaceWake } from '@/features/workspace/WorkspaceWakeNotice';
-import { personaClick, promptSubmit } from './demo-sign-in';
+import { matchDemoProfile, personaClick, promptSubmit } from './demo-sign-in';
 import { DeviceSignInCard } from './DeviceSignInCard';
 import { HOSTED_SIGN_IN_NOTE, SIGN_IN_PROMISES, signInCopyMode, type PromiseIcon } from './sign-in-copy';
 import { uniOfflineFrom } from './uni-offline';
@@ -149,6 +150,16 @@ function DemoAccounts({ mode }: { mode: 'hosted' | 'local' }) {
   /** Hosted only: the persona whose password is being asked for. */
   const [asking, setAsking] = useState<string | null>(null);
   const [password, setPassword] = useState('');
+  // A hosted workspace may list its owner's profile; when that is one demo persona, only the password is left to type.
+  const profiles = useQuery({ queryKey: ['auth', 'profiles'], queryFn: api.profiles, enabled: mode === 'hosted', retry: false, staleTime: Infinity });
+  const preselected = mode === 'hosted' ? matchDemoProfile(profiles.data, DEMO_ACCOUNTS) : null;
+  const applied = useRef(false);
+  useEffect(() => {
+    if (!preselected || applied.current) return;
+    applied.current = true;
+    setOpen(true);
+    setAsking(preselected);
+  }, [preselected]);
 
   /** Demo personas are legacy accounts, so they sign in with a password, not the device flow. */
   const enter = async (email: string, secret: string) => {
