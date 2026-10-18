@@ -262,13 +262,27 @@ uploads), **Reflect** (freezing a chat's fresh turns) and the
    through the ordinary `text` locator. Duration (≤4 h) and fetched-byte caps apply before and
    during the download, and egress is logged as `video_url_preview` / `video_url_fetch`;
    age-gated, geo-blocked, no-audio-stream and missing-`yt-dlp` each fail with a named code.
+   An **uploaded lecture video** (MP4, MOV, WebM or MKV, ≤256 MB, ≤4 h) is also `kind: 'video'`
+   but keeps the video bytes themselves, carries no `link`, and may be the student's own. It
+   reads in two passes over one staged copy (`engine/src/media/video.ts`): the audio track
+   through the transcription lane above, and at most twelve key frames (one every N s,
+   ≤1024 px, JPEG) each read by the vision role with a frame prompt; "nothing legible" frames
+   and repeats of the same slide are dropped, and the two are merged by timestamp —
+   `[m:ss] …` spoken lines and `[m:ss] (on screen) …` notes — into one `method: 'video'`
+   extraction whose note counts any lost chunk or frame.
+   **Model reads run in the background.** A recording, video or photo read can outlast a
+   hosted edge's ~21 s request cut, so `POST /api/sources` stores the bytes and answers 201
+   with `extraction: null` while the job sits in `reading`; the read then advances it to
+   `awaiting_source_review` (reading recorded) or `failed` (the named reason, no invented
+   text). Clients poll the job; a retry of a failed read is a fresh background read, and a
+   read interrupted by a restart resumes when the job is next listed.
    Each source declares its **origin** (`student` or `external`) and optional attribution
    (creator, URL), and waits at `awaiting_source_review` until the student compiles it —
    before that they can fix a bad read with a *correction*, which appends a new
    `student_correction` extraction revision instead of overwriting the original. Reflect
    freezes exactly the turns that had not been reflected on before; the transcript range
    travels with the source. The `/raw` route serves an original back with
-   `X-Content-Type-Options: nosniff`: PNG/JPEG and audio inline for preview and replay,
+   `X-Content-Type-Options: nosniff`: PNG/JPEG, audio and the accepted video containers inline for preview and replay,
    everything else as an `application/octet-stream` download, so a stored type can never
    render active content in the engine origin.
 2. **Context** (`context.ts`). The keeper sees the conventions revision, `index.md`, the
