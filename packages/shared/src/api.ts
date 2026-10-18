@@ -299,7 +299,7 @@ export type { IngestResult };
 
 /** POST /api/sources body: raw bytes base64-encoded, with the student's own provenance claim. */
 export interface ContributeBody {
-  kind: 'note' | 'document' | 'image' | 'audio';
+  kind: 'note' | 'document' | 'image' | 'audio' | 'video';
   title: string;
   mediaType: string;
   /** Base64 without the data: prefix. */

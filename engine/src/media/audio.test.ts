@@ -66,6 +66,21 @@ const fakeFetch = (answer: (chunk: number) => string | null) => {
 
 const bytes = new Uint8Array([0x52, 0x49, 0x46, 0x46]);
 
+test('a file another lane staged transcribes in place, its picture stream never decoded', async () => {
+  const dir = await tempDir();
+  const staged = path.join(dir, 'lecture.mp4');
+  writeFileSync(staged, Buffer.from(bytes));
+  const { run, calls } = fakeRun(30);
+  const { fetchFn } = fakeFetch(() => JSON.stringify({ text: 'from the video track' }));
+  const transcriber = new AudioTranscriber(settings(), { run, fetchFn, tmpRoot: dir });
+  const result = await transcriber.transcribePath(staged, 'video/mp4', { seconds: 30 });
+  assert.match(result.text, /^\[0:00\] from the video track$/);
+  const normalize = calls.find((args) => args.includes('-f'))!;
+  assert.equal(normalize[normalize.indexOf('-i') + 1], staged, 'the staged container is read where it lies');
+  assert.ok(normalize.includes('-vn'));
+  assert.deepEqual((await readdir(dir)).sort(), ['lecture.mp4'], 'only the caller-owned file remains');
+});
+
 test('ffmpeg duration parses from the -i stderr, and only there', () => {
   assert.equal(parseFfmpegDuration(probeStderr('00:02:05.50')), 125.5);
   assert.equal(parseFfmpegDuration('garbage'), null);

@@ -35,12 +35,20 @@ export class ImageReadError extends Error {
   }
 }
 
+/** What to ask of an image — the notes reader by default; a lecture frame asks differently. */
+export interface ImageAsk {
+  instructions: string;
+  prompt: string;
+}
+
+const NOTES_ASK: ImageAsk = { instructions: PLAIN_INSTRUCTIONS, prompt: 'Transcribe these notes.' };
+
 /**
  * A plain-text transcription. No grammar constraint: small vision models sometimes answer an
  * image with the transcription itself even when a JSON schema is requested, and a single
- * unconstrained call is also the quickest read — it sits inside the upload request.
+ * unconstrained call is also the quickest read.
  */
-export async function transcribeImage(resolved: ResolvedModel, mediaType: string, bytes: Uint8Array, fetchFn: typeof fetch = fetch): Promise<string> {
+export async function transcribeImage(resolved: ResolvedModel, mediaType: string, bytes: Uint8Array, fetchFn: typeof fetch = fetch, ask: ImageAsk = NOTES_ASK): Promise<string> {
   const data = Buffer.from(bytes).toString('base64');
   if (resolved.provider.kind === 'ollama') {
     const base = (resolved.provider.baseUrl ?? 'http://localhost:11434').replace(/\/+$/, '');
@@ -53,8 +61,8 @@ export async function transcribeImage(resolved: ResolvedModel, mediaType: string
         stream: false,
         options: { ...OLLAMA_OPTIONS, temperature: 0.1 },
         messages: [
-          { role: 'system', content: PLAIN_INSTRUCTIONS },
-          { role: 'user', content: 'Transcribe these notes.', images: [data] },
+          { role: 'system', content: ask.instructions },
+          { role: 'user', content: ask.prompt, images: [data] },
         ],
       }),
     });
@@ -62,9 +70,9 @@ export async function transcribeImage(resolved: ResolvedModel, mediaType: string
     const body = (await res.json()) as { message?: { content?: string } };
     return (body.message?.content ?? '').trim();
   }
-  const agent = makeAgent('notes-reader', PLAIN_INSTRUCTIONS, resolved);
+  const agent = makeAgent('notes-reader', ask.instructions, resolved);
   const result = await agent.generate(
-    [{ role: 'user', content: [{ type: 'text', text: 'Transcribe these notes.' }, { type: 'image', image: data, mediaType }] }] as never,
+    [{ role: 'user', content: [{ type: 'text', text: ask.prompt }, { type: 'image', image: data, mediaType }] }] as never,
     { providerOptions: resolved.providerOptions as never, modelSettings: { temperature: 0.1 } },
   );
   return result.text.trim();
@@ -95,7 +103,8 @@ export async function readNotesImage(resolved: ResolvedModel, mediaType: string,
 
 /** What the ingest lane needs from a vision reader: the text on the image. */
 export interface ImageReader {
-  read(bytes: Uint8Array, mediaType: string): Promise<{ text: string }>;
+  /** `ask` overrides the notes prompt — e.g. a lecture video's sampled frame. */
+  read(bytes: Uint8Array, mediaType: string, ask?: ImageAsk): Promise<{ text: string }>;
 }
 
 /** The vision role's model, resolved per read so a settings change takes effect at once. */
@@ -105,7 +114,7 @@ export class VisionImageReader implements ImageReader {
     private readonly transcribe: typeof transcribeImage = transcribeImage,
   ) {}
 
-  async read(bytes: Uint8Array, mediaType: string): Promise<{ text: string }> {
+  async read(bytes: Uint8Array, mediaType: string, ask?: ImageAsk): Promise<{ text: string }> {
     let resolved: ResolvedModel;
     try {
       resolved = resolveModel(await this.settings.get(), 'vision');
@@ -115,7 +124,7 @@ export class VisionImageReader implements ImageReader {
     }
     const started = Date.now();
     try {
-      const text = await this.transcribe(resolved, mediaType, bytes);
+      const text = await this.transcribe(resolved, mediaType, bytes, fetch, ask);
       log.info('image_read', { model: resolved.modelId, ms: Date.now() - started, chars: text.length });
       return { text };
     } catch (error) {

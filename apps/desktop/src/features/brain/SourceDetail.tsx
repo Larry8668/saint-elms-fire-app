@@ -12,7 +12,7 @@ import { api } from '@/lib/api';
 import { useInvalidateSource, useSourceBytes, useSourceDetail } from '@/lib/queries';
 import { useStudent } from '@/lib/session';
 import { timeAgo } from '@/lib/time';
-import { STAGE_INFO, canCorrect, formatBytes, originLabel, sourceKindLabel } from '@/features/contribute/review';
+import { STAGE_INFO, canCorrect, canWithdraw, formatBytes, isWorking, originLabel, readingLabel, sourceKindLabel } from '@/features/contribute/review';
 
 export const SOURCE_KIND_ICON: Record<SourceRecord['kind'], LucideIcon> = {
   note: NotebookPen,
@@ -36,14 +36,15 @@ function SourceImage({ sourceId, title }: { sourceId: string; title: string }) {
   return <img src={url} alt={title} className="max-h-56 w-full rounded-xl border border-white/[0.06] object-contain bg-black/30" />;
 }
 
-/** The kept recording, playable while the student checks its transcript. */
-function SourceAudio({ sourceId, title }: { sourceId: string; title: string }) {
+/** The kept recording or video, playable while the student checks its transcript. */
+function SourceMedia({ sourceId, title, video }: { sourceId: string; title: string; video: boolean }) {
   const blob = useSourceBytes(sourceId);
   const url = useMemo(() => (blob.data ? URL.createObjectURL(blob.data) : null), [blob.data]);
   useEffect(() => () => {
     if (url) URL.revokeObjectURL(url);
   }, [url]);
   if (!url) return null;
+  if (video) return <video src={url} aria-label={title} controls preload="metadata" className="max-h-64 w-full rounded-xl border border-white/[0.06] bg-black/40" />;
   return <audio src={url} aria-label={title} controls className="w-full" />;
 }
 
@@ -87,8 +88,10 @@ export function SourceDetailView({ sourceId, onReviewProposal, onErased }: { sou
     },
     onError: (e) => toast.error((e as Error).message),
   });
-  const compiled = (result: { job: { stage: string }; proposalId: string | null }) => {
+  const compiled = (result: { job: { stage: string }; proposalId: string | null } | null) => {
     invalidate();
+    // null: the retry restarted a background read — the detail polls it from here.
+    if (!result) return;
     if (result.job.stage === 'awaiting_review' && result.proposalId) onReviewProposal?.(result.proposalId);
     else if (result.job.stage === 'no_changes') toast.info('The keeper proposed no changes for this source.');
   };
@@ -99,7 +102,8 @@ export function SourceDetailView({ sourceId, onReviewProposal, onErased }: { sou
   });
   const retry = useMutation({
     mutationFn: async (jobId: string) => {
-      await api.retryJob(jobId);
+      const retried = await api.retryJob(jobId);
+      if (retried?.stage === 'reading') return null;
       return api.compileJob(jobId);
     },
     onSuccess: compiled,
@@ -175,8 +179,8 @@ export function SourceDetailView({ sourceId, onReviewProposal, onErased }: { sou
       </div>
 
       {record.kind === 'image' && <SourceImage sourceId={record.id} title={record.title} />}
-      {/* A video's kept original is its audio track — the same inline replay applies. */}
-      {(record.kind === 'audio' || record.kind === 'video') && <SourceAudio sourceId={record.id} title={record.title} />}
+      {/* A fetched video's kept original is its audio track; an uploaded one keeps the video itself. */}
+      {(record.kind === 'audio' || record.kind === 'video') && <SourceMedia sourceId={record.id} title={record.title} video={record.mediaType.startsWith('video/')} />}
 
       <section>
         <div className="mb-2 flex items-center justify-between">
@@ -200,6 +204,11 @@ export function SourceDetailView({ sourceId, onReviewProposal, onErased }: { sou
               </Button>
               <span className="text-[11.5px] text-night-500">The original file is never touched — this becomes a new pass.</span>
             </div>
+          </div>
+        ) : job?.stage === 'reading' ? (
+          <div className="rounded-xl border border-dashed border-beacon-400/30 bg-beacon-500/[0.05] p-3.5">
+            <WorkingLabel label={readingLabel(record)} className="text-[13px] text-beacon-300" />
+            <p className="mt-1 text-[12px] text-night-500">The original is already kept. The reading appears here when Gemma finishes — you can close this and come back.</p>
           </div>
         ) : extraction?.text ? (
           <Markdown variant="chat" className="max-h-64 overflow-y-auto rounded-xl bg-black/25 p-3.5 text-[13px] whitespace-pre-wrap">
@@ -243,7 +252,7 @@ export function SourceDetailView({ sourceId, onReviewProposal, onErased }: { sou
               <p className="mt-1.5 text-[12.5px] text-night-400">{job.error ?? stage!.hint}</p>
             </div>
             <div className="flex items-center gap-2">
-              {(job.stage === 'queued' || job.stage === 'extracting' || job.stage === 'compiling') && <WorkingLabel label={stage!.label} className="text-beacon-300" />}
+              {isWorking(job.stage) && <WorkingLabel label={job.stage === 'reading' ? readingLabel(record) : stage!.label} className="text-beacon-300" />}
               {job.stage === 'awaiting_source_review' && (
                 <Button size="sm" variant="primary" loading={jobBusy} onClick={() => compile.mutate(job.id)}>
                   <ScanText /> Propose changes
@@ -259,7 +268,7 @@ export function SourceDetailView({ sourceId, onReviewProposal, onErased }: { sou
                   Retry
                 </Button>
               )}
-              {(job.stage === 'queued' || job.stage === 'extracting' || job.stage === 'awaiting_source_review') && (
+              {canWithdraw(job.stage) && (
                 <Button size="sm" variant="ghost" loading={cancel.isPending} onClick={() => cancel.mutate(job.id)}>
                   Withdraw
                 </Button>

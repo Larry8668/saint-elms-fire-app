@@ -197,3 +197,14 @@ test('a persisted job round-trips through the store and still validates', async 
   assert.deepEqual(loaded as WikiJob, job);
   assert.equal(loaded!.schemaVersion, CONTRACT_VERSION);
 });
+
+test('a background read walks queued → reading → review, and can only leave reading by finishing, failing or a withdrawal', () => {
+  assert.equal(canTransition('queued', 'reading'), true);
+  assert.equal(canTransition('reading', 'awaiting_source_review'), true);
+  assert.equal(canTransition('reading', 'failed'), true);
+  assert.equal(canTransition('reading', 'cancelled'), true);
+  // A compile never starts over a read that has not landed.
+  assert.equal(canTransition('reading', 'compiling'), false);
+  assert.equal(canTransition('reading', 'extracting'), false);
+  assert.equal(isTerminal('reading'), false, 'a reading job counts against the active cap');
+});

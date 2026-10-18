@@ -126,7 +126,7 @@ test('audio recordings are accepted as a family — ffmpeg decides readability, 
   assert.equal(checkMediaType('Audio/MP4; codecs=mp4a'), null, 'case and parameters tolerated');
   assert.equal(checkMediaType('audio/x-uncommon-container'), null, 'an uncommon audio type still reaches the probe');
   // Neighbouring families stay refused: the family check is not a wildcard.
-  assert.equal(checkMediaType('video/mp4')?.code, 'unsupported_media');
+  assert.equal(checkMediaType('video/x-flv')?.code, 'unsupported_media');
   assert.equal(checkMediaType('application/ogg')?.code, 'unsupported_media');
 });
 
@@ -149,4 +149,24 @@ test('audio downloads keep a playable extension; unknown audio keeps an honest o
   assert.equal(safeSourceFilename('src_abc', 'audio/wav'), 'src_abc.wav');
   assert.equal(safeSourceFilename('src_abc', 'audio/x-m4a'), 'src_abc.m4a');
   assert.equal(safeSourceFilename('src_abc', 'audio/x-strange'), 'src_abc.audio');
+});
+
+test('uploaded videos are a closed list of containers, not the whole video family', () => {
+  for (const type of ['video/mp4', 'video/quicktime', 'video/webm', 'video/x-matroska', 'Video/MP4; codecs=avc1']) {
+    assert.equal(checkMediaType(type), null, `${type} is accepted`);
+  }
+  assert.equal(checkMediaType('video/x-msvideo')?.code, 'unsupported_media');
+  assert.match(checkMediaType('video/x-msvideo')!.message, /MP4, MOV, WebM or MKV/);
+});
+
+test('video bytes run against their own cap, and download with their container extension', () => {
+  assert.equal(INGEST_LIMITS.maxVideoBytes, 256 * 1024 * 1024);
+  assert.equal(checkSourceBytes(new Uint8Array(INGEST_LIMITS.maxSourceBytes + 1), 'video/mp4'), null, 'a lecture video is not held to the document cap');
+  const over = checkSourceBytes(new Uint8Array(8), 'video/webm', { maxVideoBytes: 4 });
+  assert.equal(over?.code, 'too_large');
+  assert.match(over!.message, /video limit/);
+  assert.equal(checkSourceBytes(new Uint8Array(0), 'video/mp4')?.code, 'empty');
+  assert.equal(safeSourceFilename('src_abc', 'video/mp4'), 'src_abc.mp4');
+  assert.equal(safeSourceFilename('src_abc', 'video/quicktime'), 'src_abc.mov');
+  assert.equal(safeSourceFilename('src_abc', 'video/x-matroska'), 'src_abc.mkv');
 });
