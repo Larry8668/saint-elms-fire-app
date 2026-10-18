@@ -9,7 +9,10 @@ import os from 'node:os';
 import path from 'node:path';
 import { Hono } from 'hono';
 import test from 'node:test';
-import { CONTRACT_VERSION, type AdminSharePage, type Enrolment, type PublishedShare, type ShareFeedPage } from '@sef/shared';
+import { CONTRACT_VERSION, DEMO_ADMIN, type AdminSharePage, type Enrolment, type PublishedShare, type ShareFeedPage } from '@sef/shared';
+import { issueToken } from './auth';
+import { demoProfileId, seedDemoAdmission } from './demo-admission';
+import { AccountStore } from './store/accounts';
 import type { UniDeps } from './deps';
 import { publishShare, ShareError } from './shares';
 import { meRoutes } from './routes/me';
@@ -464,5 +467,116 @@ test('legacy relay shares stay quarantined and are never attributed to accounts'
     const afterPublish = await feed(context, cookie);
     assert.equal(afterPublish.items.length, 1);
     assert.notEqual(afterPublish.items[0]!.senderName, 'Ghost Author');
+  });
+});
+
+// SEED_DEMO personas sign in through the legacy password path; their own student tokens
+// resolve to seeded, unlinked admission rows so Peers works for them on a demo stack.
+const bearerRequest = (context: AuthContext, path: string, token: string, init: RequestInit = {}) =>
+  context.app.request(`${context.origin}${path}`, { ...init, headers: { authorization: `Bearer ${token}`, ...(init.headers ?? {}) } });
+
+const demoPublish = (context: AuthContext, token: string, programmeId: string, key: string) =>
+  bearerRequest(context, '/v1/shares', token, {
+    method: 'POST',
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify({ ...shareBody(key), programmeId }),
+  });
+
+async function demoAccounts(tmp: string) {
+  const accounts = new AccountStore(await mkdtemp(path.join(tmp, 'demo-accounts-')), { seedDemo: true });
+  await accounts.load();
+  return accounts;
+}
+
+test('demo personas publish and read their cohort feed with legacy tokens when SEED_DEMO is on', testOptions, async () => {
+  await withAuthSchema(async (context) => {
+    const extra = await staticDeps();
+    const accounts = await demoAccounts(extra.tmp);
+    mount(context.app, { ...deps(context, extra, new ShareStore(extra.tmp)), accounts, seedDemo: true });
+    await seedDemoAdmission(context.pool);
+    await seedDemoAdmission(context.pool); // idempotent across reboots
+    const counts = await context.pool.query<{ n: string }>(
+      `SELECT count(*)::text AS n FROM enrolments WHERE decision_actor_subject = 'demo-seed' AND status = 'approved'`,
+    );
+    assert.equal(counts.rows[0]!.n, '3');
+
+    const ananya = issueToken(accounts.get('ananya')!, extra.keys).token;
+    const brinda = issueToken(accounts.get('brinda')!, extra.keys).token;
+
+    // The engine stamps legacy profiles with programmeId = cohortId.
+    const posted = await demoPublish(context, ananya, 'bsc-pma-2026', 'ananya-1');
+    assert.equal(posted.status, 201);
+    const share = (await posted.json()) as PublishedShare;
+    assert.equal(share.senderId, demoProfileId('ananya'));
+    assert.equal(share.senderName, 'Ananya');
+    assert.equal(share.cohortId, 'bsc-pma-2026');
+
+    const spoofed = await demoPublish(context, ananya, 'bsc-pma-2025', 'ananya-spoof');
+    assert.equal(spoofed.status, 403, 'a demo token cannot publish into another persona\'s programme');
+
+    const brindaPosted = await demoPublish(context, brinda, 'bsc-pma-2025', 'brinda-1');
+    assert.equal(brindaPosted.status, 201);
+    const brindaShare = (await brindaPosted.json()) as PublishedShare;
+    assert.equal(brindaShare.senderId, demoProfileId('brinda'));
+
+    // The seeded personas sit in three different cohorts, so cohort scoping keeps them apart.
+    const ananyaFeed = (await (await bearerRequest(context, '/v1/shares', ananya)).json()) as ShareFeedPage;
+    assert.deepEqual(ananyaFeed.items.map((item) => item.id), [share.id]);
+    const brindaFeed = (await (await bearerRequest(context, '/v1/shares', brinda)).json()) as ShareFeedPage;
+    assert.deepEqual(brindaFeed.items.map((item) => item.id), [brindaShare.id]);
+    assert.equal((await bearerRequest(context, `/v1/shares/${brindaShare.id}`, ananya)).status, 404);
+    assert.equal((await bearerRequest(context, `/v1/shares/${brindaShare.id}/withdraw`, ananya, { method: 'POST' })).status, 404);
+
+    // A real admitted classmate in Ananya's cohort sees her share through the unchanged cohort rule.
+    const { cookie: ownerCookie } = await staffToken(context, 'owner@example.test');
+    const classmate = await admit(context, 'classmate@example.test', 'Classmate', 'bsc-pma-2026', ownerCookie);
+    assert.deepEqual((await feed(context, classmate.cookie)).items.map((item) => item.id), [share.id]);
+
+    assert.equal((await bearerRequest(context, `/v1/shares/${share.id}/withdraw`, ananya, { method: 'POST' })).status, 200);
+  });
+});
+
+test('legacy tokens outside the demo personas, or with SEED_DEMO off, stay refused', testOptions, async () => {
+  await withAuthSchema(async (context) => {
+    const extra = await staticDeps();
+    const accounts = await demoAccounts(extra.tmp);
+    await seedDemoAdmission(context.pool);
+    const base = { ...deps(context, extra, new ShareStore(extra.tmp)), accounts };
+    mount(context.app, { ...base, seedDemo: true });
+
+    const now = new Date().toISOString();
+    const unknown = issueToken(
+      { id: 'zed', email: 'zed@saintelms.local', name: 'Zed', role: 'student', cohortId: 'bsc-pma-2026', createdAt: now },
+      extra.keys,
+    ).token;
+    const admin = issueToken({ ...DEMO_ADMIN, role: 'admin', createdAt: now }, extra.keys).token;
+    const wrongEmail = issueToken({ ...accounts.get('ananya')!, email: 'someone@else.test' }, extra.keys).token;
+    const adminAsPersona = issueToken({ ...accounts.get('ananya')!, role: 'admin' }, extra.keys).token;
+    for (const [label, token] of [['unknown subject', unknown], ['legacy admin', admin], ['mismatched email', wrongEmail], ['admin-role persona', adminAsPersona]] as const) {
+      assert.equal((await bearerRequest(context, '/v1/shares', token)).status, 401, `${label}: feed refused`);
+      assert.equal((await demoPublish(context, token, 'bsc-pma-2026', 'nope')).status, 401, `${label}: publish refused`);
+    }
+
+    const ananya = issueToken(accounts.get('ananya')!, extra.keys).token;
+    // Only the share routes opt in: entitlement and staff surfaces still refuse the demo token.
+    assert.equal((await bearerRequest(context, '/v1/entitlement', ananya, { method: 'POST' })).status, 401);
+    assert.notEqual((await bearerRequest(context, '/v1/admin/published-shares', ananya)).status, 200);
+
+    // A disabled demo account loses Peers immediately, token or not.
+    await accounts.update('ananya', { disabled: true });
+    assert.equal((await bearerRequest(context, '/v1/shares', ananya)).status, 401);
+    await accounts.update('ananya', { disabled: false });
+    assert.equal((await bearerRequest(context, '/v1/shares', ananya)).status, 200);
+
+    // A staff suspension of the seeded enrolment is honoured like any other.
+    await context.pool.query(`UPDATE enrolments SET status = 'suspended' WHERE student_profile_id = $1`, [demoProfileId('ananya')]);
+    assert.equal((await bearerRequest(context, '/v1/shares', ananya)).status, 403);
+    await context.pool.query(`UPDATE enrolments SET status = 'approved' WHERE student_profile_id = $1`, [demoProfileId('ananya')]);
+
+    // With SEED_DEMO off the same token is refused exactly as before.
+    const off = new Hono();
+    mount(off, { ...base, seedDemo: false });
+    const offRes = await off.request(`${context.origin}/v1/shares`, { headers: { authorization: `Bearer ${ananya}` } });
+    assert.equal(offRes.status, 401);
   });
 });

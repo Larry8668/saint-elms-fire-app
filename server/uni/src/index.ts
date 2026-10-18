@@ -4,6 +4,7 @@ import { createAccountAuth, resolveAccountAuthSecret, type AccountAuth } from '.
 import { config } from './config';
 import { loadCourseware, loadProgramme, programmeAvailability } from './courseware';
 import { createDatabasePool, closeDatabasePool } from './db';
+import { seedDemoAdmission } from './demo-admission';
 import { seedUniDemo } from './demo-seed';
 import type { UniDeps } from './deps';
 import { errorFields, log } from './logger';
@@ -84,6 +85,11 @@ async function main() {
   const deps: UniDeps = { courseware, programme, availability, keys, releases, shares, accounts, audit, dispersal, accountAuth, pool, sessions };
   const firstBoot = await accounts.load();
   if (firstBoot && config.seedDemo) await seedUniDemo(deps);
+  // Every boot, idempotently: the account store may survive while the database is new
+  // (or vice versa), and Peers for the demo personas needs their admission rows.
+  if (config.seedDemo && pool) {
+    await seedDemoAdmission(pool).catch((error) => log.warn('demo_admission_seed_failed', errorFields(error)));
+  }
 
   const app = createApp(deps);
   serve({ fetch: app.fetch, port: config.port, hostname: config.host }, (info) => {

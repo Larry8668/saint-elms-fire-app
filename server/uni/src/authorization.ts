@@ -5,6 +5,8 @@ import type { UniDeps } from './deps';
 import { enrolmentForProfile, profileForUser, type StudentProfileRow } from './enrolments';
 import type { EnrolmentRow } from './enrolments';
 import { activeStaffRoles } from './staff';
+import { config } from './config';
+import { demoPersonaForClaims, demoProfileId } from './demo-admission';
 import { log } from './logger';
 import type { SigningKeys } from './signing';
 
@@ -88,18 +90,20 @@ export function requireSession(deps: UniDeps): MiddlewareHandler<AppEnv> {
  */
 export function requireAdmission(
   deps: UniDeps,
-  options: { approved?: boolean; staff?: 'any' | 'owner'; maxSessionAgeMinutes?: number } = {},
+  options: { approved?: boolean; staff?: 'any' | 'owner'; maxSessionAgeMinutes?: number; demoLegacy?: boolean } = {},
 ): MiddlewareHandler<AppEnv> {
   return async (c, next) => {
     if (!deps.accountAuth || !deps.pool) return unavailable(c);
-    const principal = await resolvePrincipal(deps, c.req.raw);
+    const { approved = false, staff, maxSessionAgeMinutes, demoLegacy = false } = options;
+    const pool = deps.pool;
+
+    const demo = demoLegacy && approved && !staff ? await resolveDemoPrincipal(deps, c.req.raw) : null;
+    const principal = demo?.principal ?? (await resolvePrincipal(deps, c.req.raw));
     if (!principal) return c.json({ error: 'unauthenticated' }, 401);
 
-    const { approved = false, staff, maxSessionAgeMinutes } = options;
-    const pool = deps.pool;
-    const profile = await profileForUser(pool, principal.userId);
+    const profile = demo ? demo.profile : await profileForUser(pool, principal.userId);
     const enrolment = profile ? await enrolmentForProfile(pool, profile.id) : null;
-    const staffRoles = await activeStaffRoles(pool, principal.userId);
+    const staffRoles = demo ? [] : await activeStaffRoles(pool, principal.userId);
     const admission: Admission = { profile, enrolment, staffRoles };
     c.set('admission', admission);
 
@@ -125,6 +129,45 @@ export function requireAdmission(
     }
     c.set('principal', principal);
     await next();
+  };
+}
+
+/**
+ * A legacy sef1 token held by a SEED_DEMO persona, resolved to that persona's seeded,
+ * unlinked admission profile (see demo-admission.ts). Null — and the caller falls back to
+ * the session path, which refuses legacy tokens — unless demo seeding is on, the token is
+ * a student token whose subject and email match a live persona account, and the
+ * persona's profile row exists. The token can only ever act as its own persona.
+ */
+async function resolveDemoPrincipal(
+  deps: UniDeps,
+  request: Request,
+): Promise<{ principal: SessionPrincipal; profile: StudentProfileRow } | null> {
+  if (!(deps.seedDemo ?? config.seedDemo) || !deps.pool) return null;
+  const claims = tryLegacyClaims(deps.keys, request);
+  if (!claims) return null;
+  const persona = demoPersonaForClaims(claims, (id, email) => {
+    const account = deps.accounts?.get(id);
+    return Boolean(account && !account.disabled && account.role === 'student' && account.email.toLowerCase() === email.toLowerCase());
+  });
+  if (!persona) return null;
+  const rows = await deps.pool.query<StudentProfileRow>(
+    `SELECT id, account_user_id, legal_name, preferred_name, status, version, created_at
+     FROM student_profiles WHERE id = $1 AND account_user_id IS NULL`,
+    [demoProfileId(persona.id)],
+  );
+  const profile = rows.rows[0];
+  if (!profile) return null;
+  return {
+    principal: {
+      userId: `demo:${persona.id}`,
+      email: persona.email,
+      name: persona.name,
+      emailVerified: true,
+      sessionId: '',
+      sessionCreatedAt: null,
+    },
+    profile,
   };
 }
 
