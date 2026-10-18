@@ -58,22 +58,60 @@ export interface Mailer {
   sendMagicLink(to: string, url: string): Promise<void>;
 }
 
+export function escapeHtml(value: string): string {
+  return value.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;').replace(/'/g, '&#39;');
+}
+
+const IGNORE_NOTE = 'If you did not request this, you can ignore this message.';
+
+/** One self-contained, inline-CSS document: email clients strip <style>, remote fonts and scripts. */
+function renderHtml(headline: string, intro: string, buttonLabel: string, url: string): string {
+  const safeUrl = escapeHtml(url);
+  return `<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><title>${escapeHtml(headline)}</title></head>
+<body style="margin:0;padding:0;background-color:#f4f4f5;">
+<table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="background-color:#f4f4f5;"><tr><td align="center" style="padding:32px 16px;">
+<table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="max-width:560px;background-color:#ffffff;border:1px solid #e4e4e7;border-radius:8px;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Helvetica,Arial,sans-serif;color:#18181b;">
+<tr><td style="padding:28px 32px 0 32px;font-size:15px;font-weight:700;letter-spacing:0.08em;text-transform:uppercase;color:#18181b;">Saint Elms University</td></tr>
+<tr><td style="padding:20px 32px 0 32px;font-size:22px;line-height:1.3;font-weight:700;color:#18181b;">${escapeHtml(headline)}</td></tr>
+<tr><td style="padding:12px 32px 0 32px;font-size:15px;line-height:1.6;color:#3f3f46;">${escapeHtml(intro)}</td></tr>
+<tr><td style="padding:24px 32px 0 32px;"><a href="${safeUrl}" style="display:inline-block;padding:12px 24px;background-color:#18181b;color:#ffffff;font-size:15px;font-weight:600;text-decoration:none;border-radius:6px;">${escapeHtml(buttonLabel)}</a></td></tr>
+<tr><td style="padding:20px 32px 0 32px;font-size:13px;line-height:1.5;color:#52525b;">Or paste this link into your browser:<br><span style="word-break:break-all;color:#18181b;">${safeUrl}</span></td></tr>
+<tr><td style="padding:28px 32px 28px 32px;"><div style="border-top:1px solid #e4e4e7;padding-top:16px;font-size:12px;line-height:1.5;color:#71717a;">${IGNORE_NOTE}</div></td></tr>
+</table></td></tr></table>
+</body></html>`;
+}
+
+function template(subject: string, headline: string, intro: string, buttonLabel: string) {
+  return {
+    subject,
+    text: (url: string) => `${intro}\n\n${url}\n\n${IGNORE_NOTE}`,
+    html: (url: string) => renderHtml(headline, intro, buttonLabel, url),
+  };
+}
+
 const templates = {
-  verification: () => ({
-    subject: 'Verify your Saint Elms University email',
-    body: (url: string) =>
-      `Confirm this address to finish creating your Saint Elms University account:\n\n${url}\n\nIf you did not request this, you can ignore this message.`,
-  }),
-  'password-reset': () => ({
-    subject: 'Reset your Saint Elms University password',
-    body: (url: string) =>
-      `Use this link to choose a new password:\n\n${url}\n\nIf you did not request this, you can ignore this message.`,
-  }),
-  'magic-link': () => ({
-    subject: 'Your Saint Elms University sign-in link',
-    body: (url: string) =>
-      `This link signs you in to your Saint Elms University account. It expires in 15 minutes and can be used once:\n\n${url}\n\nIf you did not request this, you can ignore this message.`,
-  }),
+  verification: () =>
+    template(
+      'Verify your Saint Elms University email',
+      'Verify your email',
+      'Confirm this address to finish creating your Saint Elms University account:',
+      'Verify email',
+    ),
+  'password-reset': () =>
+    template(
+      'Reset your Saint Elms University password',
+      'Reset your password',
+      'Use this link to choose a new password:',
+      'Choose a new password',
+    ),
+  'magic-link': () =>
+    template(
+      'Your Saint Elms University sign-in link',
+      'Sign in to Saint Elms University',
+      'This link signs you in to your Saint Elms University account. It expires in 15 minutes and can be used once:',
+      'Sign in',
+    ),
 } as const;
 
 type TemplateName = keyof typeof templates;
@@ -84,11 +122,11 @@ type TemplateName = keyof typeof templates;
  */
 export function resendTransport(apiKey: string, fetchFn: typeof fetch = fetch): Pick<Transporter, 'sendMail'> {
   return {
-    sendMail: async (options: { from?: string; to?: string; subject?: string; text?: string }) => {
+    sendMail: async (options: { from?: string; to?: string; subject?: string; text?: string; html?: string }) => {
       const response = await fetchFn('https://api.resend.com/emails', {
         method: 'POST',
         headers: { authorization: `Bearer ${apiKey}`, 'content-type': 'application/json' },
-        body: JSON.stringify({ from: options.from, to: options.to, subject: options.subject, text: options.text }),
+        body: JSON.stringify({ from: options.from, to: options.to, subject: options.subject, text: options.text, html: options.html }),
         signal: AbortSignal.timeout(15_000),
       });
       if (!response.ok) throw new Error(`resend answered ${response.status}`);
@@ -113,9 +151,9 @@ export function createMailer(config: MailConfig, transport?: Transporter, fetchF
     });
 
   const send = async (template: TemplateName, to: string, url: string) => {
-    const { subject, body } = templates[template]();
+    const { subject, text, html } = templates[template]();
     try {
-      const result = await transporter.sendMail({ from: config.from, to, subject, text: body(url) });
+      const result = await transporter.sendMail({ from: config.from, to, subject, text: text(url), html: html(url) });
       if (!Array.isArray(result.accepted) || result.accepted.length === 0) throw new Error('mail_rejected');
       log.info('mail_sent', { template });
     } catch {
