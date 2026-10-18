@@ -1,7 +1,7 @@
 # Render Blueprint for the hosted backends (docs/deploy-render.md).
 # Five services + one database: uni (accounts, portal, session orchestrator), gateway (central
-# model proxy), search (SearXNG for the Philosopher's web search), MinIO (vault object store) and Postgres. Values marked `sync: false` are set by
-# the operator in the dashboard (or the API); nothing secret is committed here.
+# model proxy), search (SearXNG for the Philosopher's web search), MinIO (vault object store) and
+# Postgres. Values marked `sync: false` are set by the operator in the dashboard (or the API); nothing secret is committed here.
 databases:
   - name: sef-uni-db
     plan: basic-256mb
