@@ -1,4 +1,5 @@
 import { DEMO_PERSONAS } from '@sef/shared';
+import { selfServePassword } from './demo-self-serve';
 
 /**
  * Where engine calls go. lib/api.ts reads `engineTarget()` on every call, so the address is
@@ -33,7 +34,8 @@ export interface WorkspaceRecord {
   demo?: string;
 }
 
-const configuredDemoMode = env?.VITE_DEMO_MODE === 'true';
+// A self-serve demo build is a demo build: it needs the handed-over persona to sign in by itself.
+const configuredDemoMode = env?.VITE_DEMO_MODE === 'true' || selfServePassword(env) !== null;
 const isPersonaId = (value: unknown): value is string => typeof value === 'string' && DEMO_PERSONAS.some((p) => p.id === value);
 
 const WORKSPACE_KEY = 'sef.workspace';

@@ -47,7 +47,15 @@ const LIVE = [...LIVE_SESSION_STATES];
 export const newIdempotencyKey = (sessionId: string, purpose: string) => `sef-${purpose}-${sessionId}-${randomBytes(6).toString('hex')}`;
 
 /** Instabox names are unique per account and at most 63 chars: the whole session id (12 + 32) fits. */
-const machineName = (id: string) => `sef-session-${id.replaceAll('-', '')}`;
+/**
+ * The Instabox machine name: `sef-<account>-<session>` so a machine list reads by student. The
+ * account part is the legacy id (ananya) or the first chars of a user id, lower-cased to the
+ * client's `[a-z0-9-]` rule; the session part keeps names unique across a student's sessions.
+ */
+const machineName = (id: string, account: Account) => {
+  const who = account.id.toLowerCase().replace(/[^a-z0-9-]+/g, '-').replace(/^-+|-+$/g, '').slice(0, 24) || 'student';
+  return `sef-${who}-${id.replaceAll('-', '').slice(0, 12)}`;
+};
 
 const minutesFromNow = (minutes: number) => new Date(Date.now() + minutes * 60_000);
 
@@ -80,7 +88,7 @@ export async function acquireLease(pool: Pool, account: Account, options: { maxC
       const inserted = await client.query<SessionRow>(
         `INSERT INTO student_sessions (id, account_id, account_kind, state, step, machine_name, create_idempotency_key, flush_token, lease_expires_at)
          VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9) RETURNING *`,
-        [id, account.id, account.kind, state, state === 'spawning' ? 'create' : null, machineName(id),
+        [id, account.id, account.kind, state, state === 'spawning' ? 'create' : null, machineName(id, account),
           newIdempotencyKey(id, 'create'), randomBytes(32).toString('base64url'), minutesFromNow(options.idleMinutes)],
       );
       return { row: inserted.rows[0]!, created: true };

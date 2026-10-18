@@ -43,12 +43,13 @@ export const shareErrorStatus = (code: ShareError['code']): 400 | 403 | 404 | 40
 /**
  * Cohort sharing for admitted students. Sender, programme and cohort are stamped
  * from the caller's live approved enrolment — the body can only describe content.
- * Legacy sef1 tokens never reach these handlers: publication requires a session,
- * so a share can never outlive its author's admission record.
+ * Legacy sef1 tokens never reach these handlers — except, under SEED_DEMO, a demo
+ * persona's own student token, which resolves to that persona's seeded admission rows
+ * (demo-admission.ts). Either way a share can never outlive its author's admission record.
  */
 export function shareRoutes(deps: UniDeps) {
   const app = new Hono<AppEnv>();
-  const approved = requireAdmission(deps, { approved: true });
+  const approved = requireAdmission(deps, { approved: true, demoLegacy: true });
 
   app.post('/shares', approved, async (c) => {
     const parsed = PublishShareRequestSchema.safeParse(await c.req.json().catch(() => null));

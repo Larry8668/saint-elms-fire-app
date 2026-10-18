@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
 import { DEMO_ACCOUNTS } from '@/lib/demo-accounts';
-import { DEMO_START, pickPersona, submitDemoSignIn, type DemoSignIn } from './demo-sign-in';
+import { DEMO_START, offersSelfServe, pickPersona, selfServeSignIn, submitDemoSignIn, type DemoSignIn } from './demo-sign-in';
 import { PortalError } from './portal-api';
 
 const recorder = () => {
@@ -60,4 +60,34 @@ test('a submit while one is in flight is ignored', async () => {
   const busy: DemoSignIn = { phase: 'submitting', persona: DEMO_ACCOUNTS[0]! };
   assert.equal(await submitDemoSignIn(busy, 'pw', async () => assert.fail('must not send'), () => assert.fail('must not emit')), busy);
   assert.equal(pickPersona(busy, 'chetna'), busy);
+});
+
+test('self-serve: one click signs the persona in with the embedded password', async () => {
+  const sent: Array<[string, string]> = [];
+  const r = recorder();
+  const final = await selfServeSignIn('chetna', 'embedded', async (email, password) => void sent.push([email, password]), r.emit);
+  assert.deepEqual(sent, [['chetna@saintelms.local', 'embedded']]);
+  assert.deepEqual(r.seen.map((s) => s.phase), ['submitting', 'signed-in']);
+  assert.equal(final.phase === 'signed-in' && final.persona.id, 'chetna');
+});
+
+test('self-serve: no embedded password sends nothing; a refusal comes back with the persona picked', async () => {
+  const r = recorder();
+  const none = await selfServeSignIn('ananya', null, async () => assert.fail('must not send'), r.emit);
+  assert.equal(none.phase === 'choosing' && none.error?.code, 'no_password');
+  const refused = await selfServeSignIn(
+    'ananya',
+    'stale',
+    async () => {
+      throw new PortalError('That password does not match this demo student.', 401, 'invalid_credentials');
+    },
+    r.emit,
+  );
+  assert.deepEqual(refused, { phase: 'choosing', personaId: 'ananya', error: { message: 'That password does not match this demo student.', code: 'invalid_credentials' } });
+});
+
+test('self-serve is offered only with an embedded password on a university that seeds demo students', () => {
+  assert.equal(offersSelfServe('pw', true), true);
+  assert.equal(offersSelfServe(null, true), false);
+  assert.equal(offersSelfServe('pw', false), false);
 });

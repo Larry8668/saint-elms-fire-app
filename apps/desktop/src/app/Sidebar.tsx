@@ -1,4 +1,4 @@
-import { Bell, Brain, CalendarClock, FilePlus2, Library, MessagesSquare, Settings, Sparkles, Users, type LucideIcon } from 'lucide-react';
+import { Bell, Brain, CalendarClock, Compass, FilePlus2, Library, MessagesSquare, Settings, Sparkles, Users, type LucideIcon } from 'lucide-react';
 import { motion } from 'motion/react';
 import type { HealthResponse } from '@sef/shared';
 import { Tooltip } from '@/components/ui/overlays';
@@ -8,6 +8,7 @@ import { useNav, type View } from '@/lib/nav';
 import { useAttention, useHealth, useLint } from '@/lib/queries';
 import { timeAgo } from '@/lib/time';
 import { ProfileMenu } from './ProfileMenu';
+import { startGuidedTour } from '@/features/tour/run-tour';
 
 const ITEMS: Array<{ view: View; label: string; Icon: LucideIcon }> = [
   { view: 'sky', label: 'Sky', Icon: Sparkles },
@@ -35,7 +36,7 @@ export function Sidebar({ onOpenAttention }: { onOpenAttention: () => void }) {
       <img src="/logo.svg" alt="Saint Elms Fire" className="mb-6 size-9" />
       <nav className="flex flex-1 flex-col gap-1.5">
         {ITEMS.map(({ view: v, label, Icon }) => (
-          <NavButton key={v} label={label} active={view === v} onClick={() => go(v)} badge={v === 'brain' ? openQuestions : 0}>
+          <NavButton key={v} label={label} active={view === v} onClick={() => go(v)} badge={v === 'brain' ? openQuestions : 0} tour={`nav-${v}`}>
             <Icon className="size-[19px]" />
           </NavButton>
         ))}
@@ -65,6 +66,9 @@ export function Sidebar({ onOpenAttention }: { onOpenAttention: () => void }) {
             <StatusDot ok={health.isError ? false : modelsOk} pulse />
           </span>
         </Tooltip>
+        <NavButton label="Tour" active={false} onClick={() => startGuidedTour(go)} tour="tour-button">
+          <Compass className="size-[19px]" />
+        </NavButton>
         <NavButton label="Settings" active={view === 'settings'} onClick={() => go('settings')}>
           <Settings className="size-[19px]" />
         </NavButton>
@@ -74,12 +78,13 @@ export function Sidebar({ onOpenAttention }: { onOpenAttention: () => void }) {
   );
 }
 
-function NavButton({ label, active, onClick, badge = 0, children }: { label: string; active: boolean; onClick: () => void; badge?: number; children: React.ReactNode }) {
+function NavButton({ label, active, onClick, badge = 0, tour, children }: { label: string; active: boolean; onClick: () => void; badge?: number; tour?: string; children: React.ReactNode }) {
   return (
     <Tooltip content={label} side="right">
       <button
         onClick={onClick}
         aria-label={label}
+        data-tour={tour}
         aria-current={active ? 'page' : undefined}
         className={cn('relative grid size-11 place-items-center rounded-xl transition', active ? 'text-night-50' : 'text-night-500 hover:bg-white/[0.04] hover:text-night-200')}
       >

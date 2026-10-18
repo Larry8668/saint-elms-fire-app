@@ -45,6 +45,27 @@ printf 'true' | vercel env add VITE_DEMO_MODE production --yes && vercel --prod 
 
 The VM accepts `ENGINE_ALLOWED_ORIGINS` through `infra/seat/session-start.sh` (comma-separated https origins). **The golden snapshot must be rebuilt** after this change for the VMs to pick it up (`infra/seat/golden/README.md`); an older image ignores the value, so the VM allows only its own origin and the app's calls fail CORS.
 
+## Self-serve demo (demo day)
+
+A judge gets one URL (the portal) and picks a student; everything else happens by itself. Set on **both** the app build (Vercel) and the portal build:
+
+| Variable | Value | Why |
+|---|---|---|
+| `VITE_DEMO_SELF_SERVE` | `true` | The portal's sign-in leads with **Try the demo** (three persona cards). A click signs the persona in and opens the workspace with no further click; the app then signs in on the workspace by itself. It implies `VITE_DEMO_MODE`. |
+| `VITE_DEMO_PASSWORD` | the uni's `DEMO_PASSWORD` | Embedded in the public JavaScript. **Acceptable only for a demo deployment** whose personas hold seeded data; rotate `DEMO_PASSWORD` after the event. Without it self-serve is off. |
+
+Self-serve stays off unless both are set; a failed automatic sign-in falls back to the existing password panel. The portal shows the section only when the uni seeds demo students (`SEED_DEMO`).
+
+### Session replay (PostHog)
+
+| Where | Variable | Value |
+|---|---|---|
+| app build and portal build | `VITE_POSTHOG_KEY` | the PostHog project key (`phc_…`). Unset: no PostHog at all; the SDK is not even downloaded. |
+| app build and portal build | `VITE_POSTHOG_HOST` | optional, default `https://us.i.posthog.com` |
+| uni server | `PORTAL_ANALYTICS_ORIGINS` | `https://us.i.posthog.com,https://us-assets.i.posthog.com`, added to the `/app` shell's `connect-src`. Without it the portal's CSP blocks PostHog and only the app is recorded. |
+
+Pageviews, autocapture and session replay (text inputs masked); the recorder is bundled, so no third-party script loads. URLs are sent without their query or fragment, and a portal visit carrying a reset `?token=` is never recorded. Sessions are identified as `demo:<persona>`, never by email. Named events: `demo_self_serve_started`, `workspace_signed_in`, `tour_started`, `tour_completed`, `source_uploaded` (`kind`), `teacher_turn_sent` (`teacher`). The portal and the app are different origins, so a judge's visit is two recordings; once the persona is identified on both sides they sit under the same person.
+
 ## The app on a workspace
 
 - The sign-in screen names the host the student signs in to, and offers **Forget workspace**, which goes back to the local engine.

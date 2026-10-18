@@ -8,11 +8,14 @@ import { createRoot } from 'react-dom/client';
 import { Toaster } from 'sonner';
 import { Root } from './app/Root';
 import { TooltipProvider } from './components/ui/overlays';
+import { initAnalytics } from './lib/analytics';
 import { takeWorkspaceFromUrl } from './lib/seat';
 import { SessionProvider } from './lib/session';
 
 // The portal hands a student's workspace over as ?workspace=<VM url>; read it before anything calls the engine.
 takeWorkspaceFromUrl({ href: location.href, replaceUrl: (url) => history.replaceState(history.state, '', url) });
+// After the hand-off: the first pageview is recorded without the workspace URL in it.
+initAnalytics();
 
 const queryClient = new QueryClient({
   defaultOptions: { queries: { staleTime: 10_000, refetchOnWindowFocus: false } },

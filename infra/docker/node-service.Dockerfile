@@ -28,6 +28,11 @@ FROM base AS web-assets
 # The portal's hand-off target when the web app is hosted apart from the VM (docs/deploy-vercel.md).
 # Render passes service env vars as build args; unset, the hand-off goes to the VM.
 ARG VITE_APP_URL
+# Self-serve demo and analytics for the portal build (docs/deploy-vercel.md): all optional.
+ARG VITE_DEMO_SELF_SERVE
+ARG VITE_DEMO_PASSWORD
+ARG VITE_POSTHOG_KEY
+ARG VITE_POSTHOG_HOST
 COPY pnpm-lock.yaml pnpm-workspace.yaml package.json tsconfig.base.json ./
 COPY packages/shared/package.json packages/shared/
 COPY apps/desktop/package.json apps/desktop/

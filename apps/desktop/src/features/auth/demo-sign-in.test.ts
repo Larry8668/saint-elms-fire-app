@@ -2,7 +2,7 @@ import assert from 'node:assert/strict';
 import { test } from 'node:test';
 import { DEMO_PASSWORD_DEFAULT } from '@sef/shared';
 import { engineTarget } from '@/lib/seat';
-import { matchDemoProfile, preselectedPersona, personaClick, promptSubmit } from './demo-sign-in';
+import { autoDemoSignIn, autoSignInLine, matchDemoProfile, preselectedPersona, personaClick, promptSubmit } from './demo-sign-in';
 import { signInCopyMode } from './sign-in-copy';
 
 const email = 'ananya@saintelms.local';
@@ -56,4 +56,21 @@ test('the portal hand-off wins over the profile list, which stays a fallback', (
   assert.equal(preselectedPersona('ananya', profiles, accounts), 'ananya@saintelms.local');
   assert.equal(preselectedPersona(null, profiles, accounts), 'rohan@saintelms.local');
   assert.equal(preselectedPersona('nobody', undefined, accounts), null);
+});
+
+const labelled = [
+  { id: 'ananya', email: 'ananya@saintelms.local', label: 'First-year student' },
+  { id: 'rohan', email: 'rohan@saintelms.local', label: 'Second-year student' },
+];
+
+test('self-serve: a hosted workspace with a handed-over persona signs in by itself', () => {
+  assert.deepEqual(autoDemoSignIn('hosted', 'ananya', 'embedded', labelled), { email: 'ananya@saintelms.local', password: 'embedded', label: 'First-year student' });
+  assert.equal(autoSignInLine('First-year student'), 'Signing in as the first-year student…');
+});
+
+test('self-serve: no auto sign-in locally, without a hand-off, for an unknown persona or without a password', () => {
+  assert.equal(autoDemoSignIn('local', 'ananya', 'embedded', labelled), null);
+  assert.equal(autoDemoSignIn('hosted', null, 'embedded', labelled), null);
+  assert.equal(autoDemoSignIn('hosted', 'nobody', 'embedded', labelled), null);
+  assert.equal(autoDemoSignIn('hosted', 'ananya', null, labelled), null);
 });
