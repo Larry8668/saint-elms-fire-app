@@ -5,7 +5,6 @@ import type { ProviderConfig } from '@sef/shared';
 import { errorFields, log } from '../config';
 import { checkAudioDuration, formatDuration } from '../brain/sources/limits';
 import { ModelConfigError, resolveModel } from '../models/registry';
-import { isGatewayProvider } from '../settings/store';
 import type { StoredSettings } from '../settings/store';
 import { ProcessError, spawnProcess, type RunCommand } from './process';
 
@@ -13,9 +12,10 @@ import { ProcessError, spawnProcess, type RunCommand } from './process';
  * Audio ingestion: a recording is frozen like any other source, then transcribed locally —
  * ffmpeg normalizes and segments it, and each chunk goes to the vision-role provider's
  * OpenAI-compatible `/v1/audio/transcriptions` endpoint (the native Ollama `/api/chat`
- * audio field is silently dropped, so the OpenAI surface is the honest one). Everything
- * runs on-device; a missing binary or an unreachable model is a named failure, never an
- * invented transcript.
+ * audio field is silently dropped, so the OpenAI surface is the honest one). On a device
+ * everything runs locally; on a hosted session the chunks go to the model gateway, which
+ * routes that one multipart endpoint to its Ollama workers. A missing binary or an
+ * unreachable model is a named failure, never an invented transcript.
  */
 
 export type AudioErrorCode = 'ffmpeg_missing' | 'audio_unreadable' | 'audio_too_long' | 'transcode_failed' | 'transcription_unavailable';
@@ -63,9 +63,10 @@ const trimSlash = (url: string) => url.replace(/\/+$/, '');
 
 /** Where a provider kind keeps its OpenAI-compatible transcriptions route, if it has one. */
 function transcriptionEndpoint(provider: ProviderConfig): string | null {
-  // The model gateway serves no transcriptions route (its allowlist is chat, generate, embed,
-  // show, tags and version), so a hosted session never sends it audio.
-  if (provider.kind === 'anthropic' || isGatewayProvider(provider)) return null;
+  if (provider.kind === 'anthropic') return null;
+  // Ollama serves OpenAI's transcriptions route under /v1, and so does the model gateway: on a
+  // hosted session the `uni` provider is ollama-kind with the gateway root as its baseUrl and
+  // the session token as its apiKey (the bearer transcribeChunk sends).
   if (provider.kind === 'ollama') return `${trimSlash(provider.baseUrl ?? 'http://localhost:11434')}/v1/audio/transcriptions`;
   const base = provider.baseUrl ?? (provider.kind === 'openai' ? 'https://api.openai.com/v1' : '');
   return base ? `${trimSlash(base)}/audio/transcriptions` : null;
@@ -318,9 +319,7 @@ export class AudioTranscriber {
       const url = transcriptionEndpoint(resolved.provider);
       if (!url) {
         throw new AudioTranscribeError(
-          isGatewayProvider(resolved.provider)
-            ? 'Audio transcription is not available on a hosted session yet: the model gateway serves no transcription endpoint.'
-            : `The ${resolved.provider.label} provider has no transcription endpoint — pick an Ollama or OpenAI-compatible provider for the vision role.`,
+          `The ${resolved.provider.label} provider has no transcription endpoint — pick an Ollama or OpenAI-compatible provider for the vision role.`,
           'transcription_unavailable',
         );
       }

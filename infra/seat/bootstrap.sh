@@ -55,6 +55,14 @@ STATE="$SEAT_HOME/state"
 INPUTS="$SEAT_HOME/bootstrap.inputs"
 SRC="$SEAT_HOME/src"
 
+# Static ffmpeg for audio sources: the node image has none, and the box's own ffmpeg would
+# need the box's libraries inside the container. Pinned to one BtbN release and checksum per
+# architecture; the engine finds it through FFMPEG_PATH (seat.env.template).
+FFMPEG_RELEASE=autobuild-2026-10-17-20-51
+FFMPEG_BUILD=ffmpeg-n8.1.3-18-g46d899d7a0
+FFMPEG_SHA256_X86_64=44a434bd1b3f98ab92f8e6545b17fc64c2e8af508688c912eb4e8447c115680c
+FFMPEG_SHA256_AARCH64=a3de0970c7785bd53950053307883cb289e285d6e44cc1e2b7c3d22f960241a6
+
 now() { date -u +%s; }
 log() { printf '%s %s\n' "$(date -u +%Y-%m-%dT%H:%M:%SZ)" "$*"; }
 mark() { printf '%s %s\n' "$(now)" "$*" >>"$STATUS"; }
@@ -160,7 +168,7 @@ preflight() {
     return
   fi
   local tool
-  for tool in git docker curl flock; do
+  for tool in git docker curl flock tar xz sha256sum; do
     command -v "$tool" >/dev/null || die "$tool is not installed"
   done
   docker info >/dev/null 2>&1 || die "the Docker daemon is not reachable as $(id -un)"
@@ -210,6 +218,41 @@ configure() {
   if grep -q '@@' "$SEAT_HOME/seat.env.tmp"; then die "seat.env.template has a placeholder this script does not fill"; fi
   mv -f "$SEAT_HOME/seat.env.tmp" "$SEAT_HOME/seat.env"
   log "wrote docker-compose.yml and seat.env (${SEAT_MODE} mode, ${SEAT_MODEL_MODE} model) ${SEAT_PUBLIC_HOST}"
+}
+
+# One static ffmpeg under cache/bin, verified against the pinned checksum. Converges: the
+# version file says which build is present, so a re-run downloads nothing. cache/ survives
+# the golden scrub, so session VMs carry it.
+install_ffmpeg() {
+  local bin="$SEAT_HOME/cache/bin" arch flavour sha name tmp
+  mkdir -p "$bin"
+  if [[ -x $bin/ffmpeg && -f $bin/ffmpeg.version && $(cat "$bin/ffmpeg.version") == "$FFMPEG_BUILD" ]]; then
+    log "ffmpeg $FFMPEG_BUILD is present"
+    return
+  fi
+  if [[ $DRY_RUN == 1 ]]; then
+    log "dry-run: download $FFMPEG_BUILD into $bin"
+    return
+  fi
+  arch=$(uname -m)
+  case $arch in
+    x86_64) flavour=linux64 sha=$FFMPEG_SHA256_X86_64 ;;
+    aarch64 | arm64) flavour=linuxarm64 sha=$FFMPEG_SHA256_AARCH64 ;;
+    *) die "no static ffmpeg build for $arch" ;;
+  esac
+  name="$FFMPEG_BUILD-$flavour-gpl-8.1.tar.xz"
+  tmp=$(mktemp -d "$SEAT_HOME/cache/ffmpeg.XXXXXX")
+  log "downloading $name"
+  curl -fsSL --retry 3 --max-time 600 -o "$tmp/$name" "https://github.com/BtbN/FFmpeg-Builds/releases/download/$FFMPEG_RELEASE/$name" \
+    || die "ffmpeg download failed"
+  printf '%s  %s\n' "$sha" "$tmp/$name" | sha256sum -c --quiet - || die "the ffmpeg download does not match its pinned checksum"
+  # Only the one binary; ffprobe and ffplay stay in the archive.
+  tar -xJf "$tmp/$name" -C "$tmp" --strip-components=2 --wildcards '*/bin/ffmpeg'
+  chmod 755 "$tmp/ffmpeg"
+  mv -f "$tmp/ffmpeg" "$bin/ffmpeg"
+  printf '%s\n' "$FFMPEG_BUILD" >"$bin/ffmpeg.version"
+  rm -rf "$tmp"
+  log "installed ffmpeg $FFMPEG_BUILD ($flavour)"
 }
 
 wait_http() {
@@ -331,6 +374,7 @@ main() {
   step preflight preflight
   step checkout checkout
   step configure configure
+  step tools install_ffmpeg
   if [[ $SEAT_MODEL_MODE == local ]]; then
     step ollama start_ollama
     models_and_build

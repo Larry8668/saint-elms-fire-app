@@ -57,6 +57,7 @@ test('a dry run renders the engine env for the published host and the given uni'
     ENGINE_TRUSTED_PROXIES: '127.0.0.0/8,::1',
     ENGINE_STATIC_DIR: '/seat/src/apps/desktop/dist',
     ENGINE_DATA_DIR: '/seat/engine-data',
+    FFMPEG_PATH: '/seat/cache/bin/ffmpeg',
     UNI_SERVER_URL: 'https://uni.example.test',
     OLLAMA_URL: 'http://127.0.0.1:11434',
     TUTOR_MODEL: 'gemma4:e2b',
@@ -92,10 +93,11 @@ test('steps run in order and each one is marked started and done', () => {
   const marks = steps(run.read('status'));
   assert.equal(marks[0], 'bootstrap start');
   assert.equal(marks.at(-1), 'bootstrap done');
-  for (const step of ['inputs', 'preflight', 'checkout', 'configure', 'ollama', 'models', 'build', 'engine']) {
+  for (const step of ['inputs', 'preflight', 'checkout', 'configure', 'tools', 'ollama', 'models', 'build', 'engine']) {
     assert.ok(marks.includes(`${step} start`) && marks.includes(`${step} done`), `${step} is marked`);
   }
-  assert.ok(marks.indexOf('configure done') < marks.indexOf('ollama start'));
+  assert.ok(marks.indexOf('configure done') < marks.indexOf('tools start'));
+  assert.ok(marks.indexOf('tools done') < marks.indexOf('ollama start'));
   assert.ok(marks.indexOf('build done') < marks.indexOf('engine start'));
   assert.ok(marks.indexOf('models done') < marks.indexOf('engine start'));
   assert.match(run.output, /dry-run: docker compose .* --profile local-model up -d --quiet-pull --force-recreate engine/);
