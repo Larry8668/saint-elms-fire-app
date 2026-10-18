@@ -12,7 +12,9 @@ import { useInstallCourses, useLesson, useLibrary, useProgramme, useSyncStatus }
 import { useStudent } from '@/lib/session';
 import { CurriculumUnavailable } from '@/features/programme/CurriculumUnavailable';
 import { ProgrammeStructure } from '@/features/programme/ProgrammeStructure';
+import { progressLabel, resultSummary } from './install-all';
 import { LibraryTabs, type LibraryTab } from './LibraryTabs';
+import { useInstallAll } from './use-install-all';
 import { useScrollToSection } from './use-scroll-to-section';
 
 type CourseRow = SyncStatus['courses'][number];
@@ -22,6 +24,7 @@ export function LibraryView() {
   const sync = useSyncStatus();
   const library = useLibrary();
   const install = useInstallCourses();
+  const installAll = useInstallAll();
   const { profile } = useStudent();
   const [tab, setTab] = useState<LibraryTab>('released');
   // The published curriculum is fetched only when its tab is shown; a refusal stays put.
@@ -43,7 +46,8 @@ export function LibraryView() {
     return [...groups.entries()].sort(([a], [b]) => a - b);
   }, [sync.data]);
 
-  const pending = (sync.data?.courses ?? []).filter((c) => c.state === 'available' || c.state === 'update').length;
+  const pendingCourses = (sync.data?.courses ?? []).filter((c) => c.state === 'available' || c.state === 'update');
+  const pending = pendingCourses.length;
 
   if (openCourse && library.data) {
     const course = library.data.courses.find((c) => c.id === openCourse);
@@ -73,14 +77,44 @@ export function LibraryView() {
               <Button variant="ghost" onClick={() => void sync.refetch()} loading={sync.isFetching}>
                 {!sync.isFetching && <RefreshCw />} Check for releases
               </Button>
-              <Button variant="primary" disabled={!pending} loading={install.isPending && install.variables === 'all'} onClick={() => install.mutate('all')}>
-                {!(install.isPending && install.variables === 'all') && <CloudDownload />} Download {pending ? `all ${pending}` : 'all'}
+              <Button
+                variant="primary"
+                disabled={!pending || installAll.isPending || install.isPending}
+                loading={installAll.isPending}
+                onClick={() => installAll.run(pendingCourses.map((c) => ({ id: c.id, title: c.title })))}
+              >
+                {installAll.progress ? (
+                  <span aria-live="polite">{progressLabel(installAll.progress)}</span>
+                ) : (
+                  <>
+                    {!installAll.isPending && <CloudDownload />} Download {pending ? `all ${pending}` : 'all'}
+                  </>
+                )}
               </Button>
             </>
           }
         />
 
         <LibraryTabs active={tab} onChange={setTab} />
+
+        {installAll.result && installAll.result.failed.length > 0 && (
+          <Panel className="mb-6 border-ember-400/25 p-4 text-sm text-night-300" role="status">
+            <div className="flex flex-wrap items-center justify-between gap-3">
+              <p className="font-medium text-night-100">{resultSummary(installAll.result)}</p>
+              <Button variant="ghost" size="sm" onClick={installAll.dismiss}>
+                Dismiss
+              </Button>
+            </div>
+            <ul className="mt-2 space-y-1 text-[13px]">
+              {installAll.result.failed.map((f) => (
+                <li key={f.courseId}>
+                  <span className="text-night-100">{f.title}</span> — {f.message}
+                </li>
+              ))}
+            </ul>
+            <p className="mt-2 text-[12.5px] text-night-400">The other courses installed. Download the ones above again from their cards.</p>
+          </Panel>
+        )}
 
         {sync.data?.authRequired && (
           <Panel className="mb-6 flex items-center gap-3 border-ember-400/25 p-4 text-sm text-night-300">
@@ -123,7 +157,7 @@ export function LibraryView() {
                       key={course.id}
                       course={course}
                       index={i}
-                      installing={install.isPending && (install.variables === course.id || install.variables === 'all')}
+                      installing={(install.isPending && install.variables === course.id) || installAll.progress?.courseId === course.id}
                       onInstall={() => install.mutate(course.id)}
                       onOpen={() => openCourseAt(course.id)}
                     />

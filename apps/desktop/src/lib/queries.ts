@@ -337,9 +337,8 @@ export function useInstallCourses() {
   const client = useQueryClient();
   const invalidateBrain = useInvalidateBrain();
   return useMutation({
-    mutationFn: async (courseId: string | 'all'): Promise<void> => {
-      if (courseId === 'all') await api.installAll();
-      else await api.install(courseId);
+    mutationFn: async (courseId: string): Promise<void> => {
+      await api.install(courseId);
     },
     onSuccess: () => {
       void client.invalidateQueries({ queryKey: keys.scoped.sync(profile()) });
