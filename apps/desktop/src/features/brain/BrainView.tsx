@@ -12,6 +12,7 @@ import { markdownToPlainText } from '@/lib/markdown-text';
 import { useNav } from '@/lib/nav';
 import { useBrainLog, useEvents, useGraph, useJobBoard, useLint, useMaintenance, useRecords, useWikiGraph, useWikiIndex } from '@/lib/queries';
 import { shortDate } from '@/lib/time';
+import { AskBrainPanel, type AskRequest } from './ask/AskBrainPanel';
 import { BrainMapHero } from './brain-map/BrainMapHero';
 import { buildSearchIndex, searchPages } from './brain-map/search';
 import { ConceptSheet } from './ConceptSheet';
@@ -62,7 +63,16 @@ export function BrainView() {
     return () => clearTimeout(t);
   }, [query]);
   const searchIndex = useMemo(() => buildSearchIndex(records.data ?? [], wikiGraph.data), [records.data, wikiGraph.data]);
-  const searchResult = useMemo(() => searchPages(searchIndex, debounced), [searchIndex, debounced]);
+  // Ask your brain: the same box, switched to "Ask"; the visualization lights the cited pages.
+  const [askOn, setAskOn] = useState(false);
+  const [askRequest, setAskRequest] = useState<AskRequest | null>(null);
+  const [askLit, setAskLit] = useState<string[]>([]);
+  const closeAsk = () => {
+    setAskRequest(null);
+    setAskLit([]);
+  };
+  const askResult = useMemo(() => (askLit.length ? { ids: askLit, set: new Set(askLit) } : null), [askLit]);
+  const searchResult = useMemo(() => (askOn ? null : searchPages(searchIndex, debounced)), [askOn, searchIndex, debounced]);
   const shownRecords = useMemo(() => (searchResult ? (records.data ?? []).filter((r) => searchResult.set.has(r.id)) : records.data), [records.data, searchResult]);
 
   // A node-backed page opens the sky sheet; everything else (source summaries, orphans) opens the record sheet.
@@ -98,7 +108,20 @@ export function BrainView() {
           loading={graph.isLoading || wikiGraph.isLoading}
           onOpen={openPage}
           onScrollToList={() => listRef.current?.scrollIntoView({ behavior: 'smooth', block: 'start' })}
-          search={{ query, onQuery: setQuery, result: searchResult }}
+          search={{
+            query,
+            onQuery: setQuery,
+            result: askOn ? askResult : searchResult,
+            ask: {
+              on: askOn,
+              onToggle: (on) => {
+                setAskOn(on);
+                if (!on) closeAsk();
+              },
+              onSubmit: (question) => setAskRequest({ question, nonce: Date.now() }),
+              panel: <AskBrainPanel request={askRequest} onOpenPage={openPage} onHighlight={setAskLit} onClose={closeAsk} />,
+            },
+          }}
         />
         <div ref={listRef} className="scroll-mt-6" />
         <PageHeader

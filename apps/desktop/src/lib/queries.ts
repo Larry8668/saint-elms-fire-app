@@ -435,7 +435,12 @@ export function useSaveAskToWiki() {
   return useMutation({
     mutationFn: async (askId: string) => {
       const receipt = await api.saveAnswer({ askId });
-      return api.compileJob(receipt.jobId);
+      // The answer is kept once the save lands; a failed draft leaves the job for a retry.
+      try {
+        return { receipt, compiled: await api.compileJob(receipt.jobId), draftError: null };
+      } catch (error) {
+        return { receipt, compiled: null, draftError: (error as Error).message };
+      }
     },
     onSuccess: () => invalidateBrain(),
     onError: (error) => toast.error((error as Error).message),

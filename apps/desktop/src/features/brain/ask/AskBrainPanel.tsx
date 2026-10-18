@@ -73,7 +73,10 @@ export function AskBrainPanel({
   highlight.current = onHighlight;
 
   useEffect(() => {
-    if (!request) return;
+    if (!request) {
+      dispatch({ type: 'reset' });
+      return;
+    }
     const abort = new AbortController();
     dispatch({ type: 'start', question: request.question });
     setSavedAskId(null);
@@ -108,9 +111,10 @@ export function AskBrainPanel({
   const onSave = () => {
     if (!result?.askId) return;
     save.mutate(result.askId, {
-      onSuccess: (compiled) => {
+      onSuccess: ({ compiled, draftError }) => {
         setSavedAskId(result.askId);
-        if (compiled.job.stage === 'awaiting_review' && compiled.proposalId) setProposalId(compiled.proposalId);
+        if (!compiled) toast.error(`The answer is kept as a source, but drafting a page from it failed (${draftError}). Retry it under Add to my wiki.`);
+        else if (compiled.job.stage === 'awaiting_review' && compiled.proposalId) setProposalId(compiled.proposalId);
         else if (compiled.job.stage === 'no_changes') toast.info('The answer is kept as a source, but the keeper found nothing new to write from it.');
         else if (compiled.job.stage === 'failed') toast.error(compiled.job.error ?? 'The saved answer could not be drafted. It is kept under Add to my wiki for a retry.');
       },
@@ -202,7 +206,7 @@ export function AskBrainPanel({
             )}
             {answered && result.askId && (
               <Button size="sm" variant={savedAskId === result.askId ? 'ghost' : 'primary'} className="ml-auto" loading={save.isPending} disabled={savedAskId === result.askId} onClick={onSave}>
-                <BookmarkPlus /> {savedAskId === result.askId ? 'Saved — review the proposal' : 'Save to wiki'}
+                <BookmarkPlus /> {savedAskId === result.askId ? 'Saved to your sources' : 'Save to wiki'}
               </Button>
             )}
           </div>

@@ -366,12 +366,26 @@ The compiled wiki is the first place a question is looked up, not the last
   is generated prose, `read_wiki_page` marks it **withheld in the turn's evidence set** —
   citable as context, never assertable. That is what stops a saved model answer from
   laundering itself into course evidence by being compiled.
-- **Save to wiki** (`POST /api/wiki/save`) freezes one assistant answer as a
+- **Save to wiki** (`POST /api/wiki/save`, `{ sessionId, turnIndex }` or `{ askId }`) freezes one assistant answer as a
   `kind: 'answer'`, `origin: 'model'` source — pinned to the session and turn, carrying
   the sources and tool trace that produced it — and queues its job. The compile files a
   proposal like any other contribution; only the student's accept writes a page. An
   `answer` source can never carry `student` provenance and never counts as mastery
   evidence.
+- **Ask your brain** (`POST /api/wiki/ask`, `engine/src/brain/ask.ts`; the "Ask" switch on
+  the Brain search box) is the query half of the loop on screen. `WikiQuery.search(question, 6)`
+  picks the pages, their permitted views (claims with live verdicts, generated pages marked
+  model-written, withheld claims marked withheld) are the model's only context, and one
+  tutor-role call with thinking off composes the answer, citing `[[page-id]]`. Code then
+  keeps only citations to pages that were in that context — an invented or unread page id
+  is removed and listed in `droppedCitations`; teacher-style `[lesson: …]` / `[claim: …]`
+  citations are removed too, because an ask never had that evidence. The response is SSE
+  (`status`, `pages`, citation-checked `delta`s, one `done` with
+  `{ answer, citations, droppedCitations, pagesSearched, pagesRead, askId, evidence: 'student_wiki' }`),
+  so the first words land well inside a hosted edge's ~21 s budget. An empty brain or a
+  question no page matches is answered honestly with no model call. The answer is kept
+  under the profile root (`asks/`, outside the vault), and **Save to wiki** with
+  `{ askId }` freezes it as an `answer` source exactly like a teacher answer.
 - **The catalogue** (`GET /api/wiki/pages`, `GET /api/wiki/pages/:id`) backs the Wiki tab:
   index summaries, per-kind counts, claims with live verdicts, links and the sources each
   page rests on — including source ids that no longer resolve, shown rather than hidden.
