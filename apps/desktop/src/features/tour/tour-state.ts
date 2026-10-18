@@ -61,13 +61,18 @@ export function cancelTourRequest(store: Store = session()): void {
   }
 }
 
-/** True once per request, and only when this account has not finished or dismissed the tour before. */
-export function consumeTourRequest(account: string | null | undefined, store: Store = session(), done: Store = local()): boolean {
+/**
+ * True once per request. For the demo the tour runs on every self-serve sign-in (judges share
+ * laptops and expect it each time); the per-account done flag is kept for analytics and for a
+ * later "only once" mode, but it does not suppress the run.
+ */
+export function consumeTourRequest(account: string | null | undefined, store: Store = session(), _done: Store = local()): boolean {
   try {
     if (store?.getItem(TOUR_PENDING_KEY) !== '1') return false;
     store.removeItem(TOUR_PENDING_KEY);
   } catch {
     return false;
   }
-  return !tourDone(account, done);
+  void account;
+  return true;
 }
