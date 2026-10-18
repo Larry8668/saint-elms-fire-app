@@ -342,18 +342,26 @@ export class AuthService {
   }
 
   /**
-   * Signs the profile out everywhere: engine session(s), the uni session (best effort),
-   * and every stored credential. Nothing in-flight is left pointing at the profile.
+   * Signs this device out. Only when it was the profile's last signed-in device is the profile
+   * signed out everywhere (uni session best effort, stored credentials). A workspace shared by
+   * several people (a demo persona on judges' laptops) keeps serving the others: one person's
+   * sign-out must not end everyone's session. "Sign out everywhere" stays available through the
+   * devices list (revoke each), and the uni credential then goes with the last one.
    */
   async logout(token: string): Promise<void> {
     const session = await this.sessions.resolve(token);
     await this.sessions.revoke(token);
     if (!session) return;
+    const remaining = await this.sessions.list(session.profileId);
+    if (remaining.length > 0) {
+      log.info('logout_device', { profileId: session.profileId, remainingDevices: remaining.length });
+      return;
+    }
     const { uniServerUrl } = await this.settings.get();
     const uniToken = await this.registry.uniToken(session.profileId);
     if (uniToken) {
       try {
-        await uniFetch(uniServerUrl, '/v1/auth/sign-out', { method: 'POST', token: uniToken, timeoutMs: 4000 });
+        await uniFetch(uniServerUrl, '/v1/auth/sign-out', { method: 'POST', token: uniToken, timeoutMs: 4000, body: {} });
       } catch (error) {
         if (!(error instanceof UniUnreachableError)) log.warn('uni_signout_failed', { error: (error as Error).message });
       }
