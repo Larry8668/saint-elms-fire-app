@@ -9,11 +9,15 @@ import { Toaster } from 'sonner';
 import { Root } from './app/Root';
 import { TooltipProvider } from './components/ui/overlays';
 import { initAnalytics } from './lib/analytics';
-import { takeWorkspaceFromUrl } from './lib/seat';
+import { takeWorkspaceFromUrl, workspaceDemoPersona } from './lib/seat';
+import { requestTour } from './features/tour/tour-state';
 import { SessionProvider } from './lib/session';
 
 // The portal hands a student's workspace over as ?workspace=<VM url>; read it before anything calls the engine.
-takeWorkspaceFromUrl({ href: location.href, replaceUrl: (url) => history.replaceState(history.state, '', url) });
+const intake = takeWorkspaceFromUrl({ href: location.href, replaceUrl: (url) => history.replaceState(history.state, '', url) });
+// A demo hand-off asks for the tour on every arrival, even when this browser is already signed in
+// as that student (judges share laptops): the dashboard consumes the request once it is up.
+if (intake === 'stored' && workspaceDemoPersona()) requestTour();
 // After the hand-off: the first pageview is recorded without the workspace URL in it.
 initAnalytics();
 
