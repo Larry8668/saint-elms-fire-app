@@ -1,14 +1,15 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
 import { AudioTranscribeError } from '../../media/audio';
+import { ImageReadError, type ImageReader } from '../../media/vision';
 import { SourceIngestor, SourceRejection, type AudioReader } from './ingest';
 import { JobConflictError, JobStateError } from './jobs';
 import { PROFILE, tempRoot, vault } from '../testing/fixtures';
 
-const harness = async (prefix: string, audio?: AudioReader) => {
+const harness = async (prefix: string, audio?: AudioReader, vision?: ImageReader) => {
   const store = await vault(prefix);
   const jobsRoot = await tempRoot(`${prefix}-jobs`);
-  const ingestor = new SourceIngestor(store, async () => PROFILE, audio);
+  const ingestor = new SourceIngestor(store, async () => PROFILE, audio, vision);
   return { store, jobsRoot, ingestor };
 };
 
@@ -62,17 +63,63 @@ test('an empty source is refused with a 400 and an oversized one with a 413', as
   assert.equal(huge.status, 413);
 });
 
-test('an image is kept and reported as not yet read, rather than given an invented reading', async () => {
+/** A real PNG header: signature + IHDR declaring the given size. */
+const pngOf = (width: number, height: number): Buffer => {
+  const header = Buffer.alloc(33);
+  Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]).copy(header, 0);
+  header.writeUInt32BE(13, 8);
+  header.write('IHDR', 12, 'ascii');
+  header.writeUInt32BE(width, 16);
+  header.writeUInt32BE(height, 20);
+  return header;
+};
+
+const image = (bytes: Buffer) => ({ kind: 'image' as const, title: 'Whiteboard', mediaType: 'image/png', bytes });
+
+test('with no vision reader an image is kept and reported as not yet read, rather than given an invented reading', async () => {
   const { store, ingestor } = await harness('ingest-image');
-  const result = await ingestor.ingest({
-    kind: 'image',
-    title: 'Whiteboard',
-    mediaType: 'image/png',
-    bytes: Buffer.from([0x89, 0x50, 0x4e, 0x47]),
-  });
+  const result = await ingestor.ingest(image(pngOf(64, 64)));
   assert.equal(result.source.extracted, false);
   assert.match(result.source.note ?? '', /No text has been read from this image yet/);
   assert.ok(await store.readSourceBytes(result.source.id), 'the image itself is still kept');
+});
+
+test('an uploaded image is read by the vision model on arrival and recorded as a vision extraction', async () => {
+  const seen: string[] = [];
+  const vision: ImageReader = {
+    read: async (_bytes, mediaType) => {
+      seen.push(mediaType);
+      return { text: 'p = mv\nImpulse = change in momentum' };
+    },
+  };
+  const { store, ingestor } = await harness('ingest-image-read', undefined, vision);
+  const result = await ingestor.ingest(image(pngOf(640, 480)));
+  assert.deepEqual(seen, ['image/png']);
+  assert.equal(result.extraction?.method, 'vision');
+  assert.match(result.extraction?.text ?? '', /p = mv/);
+  assert.equal(result.source.extracted, true);
+  const record = await store.readSource(result.source.id);
+  assert.equal(record?.extractions.at(-1)?.method, 'vision');
+  assert.match((await store.readExtractionText(result.source.id)) ?? '', /Impulse/);
+  assert.equal((await store.readJob(result.jobId))?.stage, 'awaiting_source_review', 'the job waits for review like any other reading');
+});
+
+test('an unreachable vision model is an honest failure, and an oversized image is never handed over', async () => {
+  const down: ImageReader = { read: async () => { throw new ImageReadError('The vision model (gemma) could not read this image right now.', 'vision_failed'); } };
+  const { store, ingestor } = await harness('ingest-image-down', undefined, down);
+  const failed = await ingestor.ingest(image(pngOf(64, 64)));
+  assert.equal(failed.source.extracted, false);
+  assert.equal(failed.extraction?.method, 'vision');
+  assert.match(failed.source.note ?? '', /could not read this image/);
+  assert.ok(await store.readSourceBytes(failed.source.id));
+
+  let called = false;
+  const watching: ImageReader = { read: async () => { called = true; return { text: 'x' }; } };
+  const second = await harness('ingest-image-big', undefined, watching);
+  const big = await second.ingestor.ingest(image(pngOf(9000, 9000)), { maxImageDimension: 4096 });
+  assert.equal(called, false, 'the model is not asked to read an image over the dimension limit');
+  assert.equal(big.source.extracted, false);
+  assert.match(big.source.note ?? '', /limit is 4096/);
 });
 
 test('a damaged PDF keeps its bytes and says it could not be read', async () => {
