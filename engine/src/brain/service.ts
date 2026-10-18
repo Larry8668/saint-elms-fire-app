@@ -133,8 +133,16 @@ interface QuizResult {
 function finalizeQuestions(draft: z.infer<typeof QuizDraftSchema>): QuizQuestion[] {
   const norm = (s: string) => s.trim().toLowerCase().replace(/\s+/g, ' ');
   return draft.questions.flatMap((q) => {
-    const options = [...new Set(q.options.map((o) => o.trim()).filter(Boolean))].slice(0, 4);
-    const answerIndex = options.findIndex((o) => norm(o) === norm(q.correct_option));
+    // Models label options ("B) …", "(b) …") and answer with the letter, or with a LaTeX-spaced copy.
+    const strip = (s: string) => s.trim().replace(/^\(?[A-Da-d][).:]\s+/, '');
+    const loose = (s: string) => norm(strip(s)).replace(/[\s$\\{}]/g, '');
+    const options = [...new Set(q.options.map(strip).filter(Boolean))].slice(0, 4);
+    const stated = q.correct_option.trim();
+    const letter = /^\(?([A-Da-d])[).:]?$/.exec(stated)?.[1];
+    let answerIndex = letter ? letter.toLowerCase().charCodeAt(0) - 97 : options.findIndex((o) => norm(o) === norm(strip(stated)));
+    if (answerIndex < 0) answerIndex = options.findIndex((o) => loose(o) === loose(stated));
+    if (answerIndex < 0) answerIndex = options.findIndex((o) => loose(o).length > 3 && (loose(stated).includes(loose(o)) || loose(o).includes(loose(stated))));
+    if (answerIndex >= options.length) answerIndex = -1;
     if (options.length < 3 || answerIndex < 0) return [];
     return [{ question: q.question.trim(), options, answerIndex, explanation: q.explanation?.trim() || `The answer is "${options[answerIndex]}".` }];
   });

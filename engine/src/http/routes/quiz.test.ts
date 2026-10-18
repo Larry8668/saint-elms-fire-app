@@ -176,3 +176,18 @@ test('an unknown concept is refused up front; an unknown job answers 404', async
   assert.equal(missing.status, 404);
   assert.equal(((await missing.json()) as { code: string }).code, 'quiz_job_not_found');
 });
+
+test('labelled options and letter or LaTeX-spaced answers are accepted', async () => {
+  const LABELLED = {
+    questions: [
+      { question: 'Which is the celestial equator?', options: ['A) The horizon', 'B) Earth equator projected on the sky', 'C) The ecliptic', 'D) The meridian'], correct_option: 'B' },
+      { question: 'Centripetal acceleration?', options: ['$a = v^2 / r$', '$a = v r$', '$a = r / v$', '$a = v$'], correct_option: '$a=v^2/r$' },
+      { question: 'Period?', options: ['(a) 2πr/v', '(b) v/r', '(c) r/v', '(d) 2πv'], correct_option: '(a) 2πr/v' },
+    ],
+  };
+  const app = await harness('quiz-labelled', (async () => ({ object: LABELLED, ms: 1 })) as Generate);
+  const job = await poll(app, (await start(app)).body.jobId);
+  assert.equal(job.stage, 'ready');
+  assert.equal(job.quiz!.questions.length, 3);
+  assert.equal(job.quiz!.questions[0]!.options[1], 'Earth equator projected on the sky', 'labels are stripped');
+});
