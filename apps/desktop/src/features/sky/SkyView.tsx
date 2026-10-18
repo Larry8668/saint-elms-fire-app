@@ -25,6 +25,8 @@ const SHEET_INSET = 464;
 const HUD_INSETS: Insets = { top: 96, right: 24, bottom: 96, left: 330 };
 /** Below md the side panels collapse, so the camera stops reserving their width. */
 const HUD_INSETS_NARROW: Insets = { top: 72, right: 16, bottom: 96, left: 24 };
+/** Left reserve while the left column is folded to its compact count. */
+const FOLDED_LEFT_INSET = 24;
 const NEIGHBOURHOOD_PAD = 70;
 
 export function SkyView() {
@@ -69,7 +71,8 @@ function SkyChart({ graph }: { graph: GraphResponse }) {
   const selectedNode = selectedId ? (graph.nodes.find((n) => n.id === selectedId) ?? null) : null;
   const insets = useMemo<Insets>(() => {
     const base = wide ? HUD_INSETS : HUD_INSETS_NARROW;
-    return { ...base, right: selectedNode && wide ? SHEET_INSET : base.right };
+    // While the sheet is open the left column folds away, so its width is no longer reserved.
+    return selectedNode && wide ? { ...base, left: FOLDED_LEFT_INSET, right: SHEET_INSET } : base;
   }, [wide, selectedNode]);
 
   const focus = useMemo(() => {
@@ -155,12 +158,18 @@ function SkyChart({ graph }: { graph: GraphResponse }) {
         />
       </div>
       <SkyLabels items={labels} registry={labelRegistry} />
-      <div className="pointer-events-none absolute inset-y-0 left-0 hidden w-[380px] bg-gradient-to-r from-[#04060d] via-[#04060d]/75 to-transparent md:block" />
+      <div className={cn('pointer-events-none absolute inset-y-0 left-0 hidden w-[380px] bg-gradient-to-r from-[#04060d] via-[#04060d]/75 to-transparent transition-opacity duration-300 md:block', sheetOpen && 'opacity-0')} />
 
-      <div className="pointer-events-none absolute top-5 left-6 hidden w-[290px] flex-col gap-4 md:flex">
+      <div className={cn('pointer-events-none absolute top-5 left-6 hidden w-[290px] flex-col gap-4 transition-[opacity,transform] duration-300 md:flex', sheetOpen && '-translate-x-8 opacity-0')} aria-hidden={sheetOpen}>
         <Stats graph={graph} />
-        <NextUp items={suggestions} selectedId={selectedId} onPick={select} />
-        <PlansCard />
+        <div className={cn('flex flex-col gap-4', sheetOpen && 'invisible')}>
+          <NextUp items={suggestions} selectedId={selectedId} onPick={select} />
+          <PlansCard />
+        </div>
+      </div>
+      <div className={cn('pointer-events-none absolute top-5 left-6 hidden text-[12.5px] text-night-300 transition-opacity duration-300', sheetOpen && 'opacity-100 md:block')}>
+        <span className="text-[10px] font-semibold tracking-[0.2em] text-night-500 uppercase">Your second brain</span>{' '}
+        <b className="text-gradient font-semibold">{graph.stats.lit}</b> of {graph.stats.courseConcepts} lit
       </div>
 
       <SearchBox graph={graph} className={cn('absolute top-5 w-56 transition-[right] duration-300 sm:w-72', sheetOpen ? 'right-[476px] max-md:hidden' : 'right-6')} onPick={select} />
