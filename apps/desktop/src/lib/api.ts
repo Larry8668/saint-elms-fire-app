@@ -77,11 +77,13 @@ import type {
   VideoPreview,
   WebPreview,
   WikiGraph,
+  WikiAskStreamEvent,
   WikiIndex,
   WikiPageView,
   WikiJob,
   WikiProposalRecord,
 } from '@sef/shared';
+import { splitFrames } from '@/features/brain/ask/ask-brain';
 import type { QuizJobStart, QuizJobState } from '@/features/brain/quiz-job';
 import { log } from './log';
 import { currentEngineTarget, isRemoteTarget } from './seat';
@@ -502,6 +504,57 @@ export async function streamTurn(
     for (const event of events) onEvent(event);
   }
   return delivery ?? 'streamed';
+}
+
+/**
+ * Ask your brain over SSE: status and the pages read arrive first, then citation-checked
+ * text, then one done frame with the whole answer. A refusal before streaming (sign-in,
+ * a malformed question) arrives as JSON and is reported as an error frame.
+ */
+export async function streamWikiAsk(question: string, onEvent: (event: WikiAskStreamEvent) => void, signal?: AbortSignal): Promise<'done' | 'failed' | 'aborted'> {
+  let res: Response;
+  try {
+    res = await engineFetch('/api/wiki/ask', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json', ...authHeaders() },
+      body: JSON.stringify({ question }),
+      signal,
+    });
+  } catch (error) {
+    if (isAbort(error)) return 'aborted';
+    onEvent({ type: 'error', message: error instanceof EngineError ? error.message : LOCAL_ENGINE_DOWN });
+    return 'failed';
+  }
+  if (!res.ok || !res.body) {
+    const body = (await res.json().catch(() => ({}))) as { error?: string; code?: string };
+    if (res.status === 401 && body.code === 'unauthenticated' && sessionToken) onUnauthenticated?.();
+    onEvent({ type: 'error', message: body.error ?? `Ask failed (${res.status})`, code: body.code });
+    return 'failed';
+  }
+  const reader = res.body.getReader();
+  const decoder = new TextDecoder();
+  let buffer = '';
+  let settled = false;
+  try {
+    for (;;) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      const { frames, rest } = splitFrames(buffer + decoder.decode(value, { stream: true }));
+      buffer = rest;
+      for (const frame of frames) {
+        if (frame.type === 'done' || frame.type === 'error') settled = true;
+        onEvent(frame);
+      }
+    }
+  } catch (error) {
+    if (isAbort(error)) return 'aborted';
+    throw error;
+  }
+  if (!settled) {
+    onEvent({ type: 'error', message: 'The answer stopped before it finished. Try asking again.' });
+    return 'failed';
+  }
+  return 'done';
 }
 
 export function fileToBase64(file: File, mimeType?: string): Promise<{ mimeType: string; data: string; preview: string }> {

@@ -425,3 +425,19 @@ export function useAttentionActions() {
     evaluate: useMutation({ mutationFn: api.evaluateAttention, onSuccess: (data) => client.setQueryData(keys.scoped.attention(p), data), onError }),
   };
 }
+
+/**
+ * Save an "Ask your brain" answer: the kept ask is frozen as a model-provenance source and
+ * its job compiles straight away. The proposal still waits for the student's accept.
+ */
+export function useSaveAskToWiki() {
+  const invalidateBrain = useInvalidateBrain();
+  return useMutation({
+    mutationFn: async (askId: string) => {
+      const receipt = await api.saveAnswer({ askId });
+      return api.compileJob(receipt.jobId);
+    },
+    onSuccess: () => invalidateBrain(),
+    onError: (error) => toast.error((error as Error).message),
+  });
+}
