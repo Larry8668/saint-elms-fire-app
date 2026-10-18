@@ -7,7 +7,7 @@ import { Notice } from './components/Notice';
 import { goToMode, readPortalRoute, type PortalMode, type PortalRoute } from './portal-modes';
 import type { Banner, MailReason } from './portal-copy';
 import type { DemoAccount } from '@/lib/demo-accounts';
-import { demoAvailable, demoSignOut, getMe, PortalError, signOut } from './portal-api';
+import { demoAvailable, demoSignOut, getMe, PortalError, signOut, type MailOutcome } from './portal-api';
 import { AdmissionView } from './views/AdmissionView';
 import { CheckEmailView } from './views/CheckEmailView';
 import { DemoSignInView } from './views/DemoSignInView';
@@ -31,7 +31,7 @@ export function PortalApp() {
   const [checking, setChecking] = useState(true);
   const [checkError, setCheckError] = useState<PortalError | null>(null);
   const [banner, setBanner] = useState<Banner | null>(null);
-  const [mailbox, setMailbox] = useState<{ email: string; reason: MailReason } | null>(null);
+  const [mailbox, setMailbox] = useState<{ email: string; reason: MailReason; outcome: MailOutcome } | null>(null);
   const [workspace, setWorkspace] = useState(false);
   /** Whether this university seeds demo students; the demo path is offered only then. */
   const [demo, setDemo] = useState(false);
@@ -79,8 +79,8 @@ export function PortalApp() {
     return null;
   }, [route]);
 
-  const onMailSent = useCallback((email: string, reason: MailReason) => {
-    setMailbox({ email, reason });
+  const onMailSent = useCallback((email: string, reason: MailReason, outcome: MailOutcome) => {
+    setMailbox({ email, reason, outcome });
     setBanner(null);
     setRoute(goToMode('check-email'));
   }, []);
@@ -155,14 +155,15 @@ export function PortalApp() {
     case 'demo-sign-in':
       return demo ? <DemoSignInView go={go} onSignedIn={setDemoStudent} /> : <SignInView onAuthenticated={() => void probe()} go={go} banner={null} />;
     case 'register':
-      return <RegisterView go={go} onSent={(email) => onMailSent(email, 'verify')} />;
+      return <RegisterView go={go} onSent={(email, outcome) => onMailSent(email, 'verify', outcome)} />;
     case 'magic-link':
-      return <MagicLinkView go={go} onSent={(email) => onMailSent(email, 'magic-link')} />;
+      return <MagicLinkView go={go} onSent={(email, outcome) => onMailSent(email, 'magic-link', outcome)} />;
     case 'check-email':
       return mailbox ? (
         <CheckEmailView
           email={mailbox.email}
           reason={mailbox.reason}
+          initialOutcome={mailbox.outcome}
           onBack={() => go('sign-in')}
           onChangeEmail={() => go(mailbox.reason === 'reset' ? 'recover' : 'sign-in')}
         />
@@ -170,7 +171,7 @@ export function PortalApp() {
         <SignInView onAuthenticated={() => void probe()} go={go} banner={null} demo={demo} />
       );
     case 'recover':
-      return <RecoverView go={go} onSent={(email) => onMailSent(email, 'reset')} />;
+      return <RecoverView go={go} onSent={(email, outcome) => onMailSent(email, 'reset', outcome)} />;
     case 'reset-password':
       return (
         <ResetPasswordView

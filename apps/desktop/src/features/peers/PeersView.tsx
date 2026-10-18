@@ -8,6 +8,8 @@ import { Tabs } from '@/components/ui/overlays';
 import { Badge, EmptyState, PageHeader, Panel } from '@/components/ui/primitives';
 import { useNav } from '@/lib/nav';
 import { timeAgo } from '@/lib/time';
+import { useStudent } from '@/lib/session';
+import { feedEmptyState } from './demo-account';
 import { ImportReview } from './ImportReview';
 import { ShareDialog } from './ShareDialog';
 import { ShareCard } from './ShareCard';
@@ -29,6 +31,7 @@ export function PeersView() {
   const [showIgnored, setShowIgnored] = useState(false);
   const [importResult, setImportResult] = useState<ShareImportResult | null>(null);
 
+  const { profile } = useStudent();
   const feed = usePeerFeed();
   const own = useOwnShares();
   const importShare = useImportShare();
@@ -89,8 +92,7 @@ export function PeersView() {
           {feedState && feedState !== 'ok' && (
             <EmptyState
               icon={<WifiOff className="size-6" />}
-              title={feedState === 'offline' ? 'The university is unreachable' : feedState === 'auth_required' ? 'Sign in needed' : 'Feed unavailable'}
-              body={feed.data?.pages[0]?.detail ?? 'The cohort feed is not available right now.'}
+              {...feedEmptyState(feedState, feed.data?.pages[0]?.detail, profile)}
               action={
                 <Button variant="secondary" size="sm" onClick={() => void feed.refetch()}>
                   <RefreshCw /> Try again

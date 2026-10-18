@@ -33,7 +33,8 @@ export type WorkspaceFlow =
   /** The university says ready; this browser is checking the VM's own health before leaving. */
   | { phase: 'connecting'; url: string; steps: SessionStepStatus[]; restoring: boolean }
   | { phase: 'ready'; url: string }
-  | { phase: 'failed'; reason: FlowFailure; retryable: boolean };
+  /** `detail` is the university's short, student-safe reason for a failed spawn, when it gave one. */
+  | { phase: 'failed'; reason: FlowFailure; retryable: boolean; detail?: string };
 
 export type FlowError = { status: number; code: string };
 
@@ -57,6 +58,16 @@ export const HANDOFF_TIMEOUT_MS = 90_000;
 export const SPAWN_TIMEOUT_MS = 10 * 60_000;
 /** Consecutive status polls that may fail (network) before the page gives up. */
 export const MAX_POLL_FAILURES = 5;
+/** After a previous session finishes stopping, one new request is made for the student; never more. */
+export const MAX_AUTO_RESTARTS = 1;
+
+/** A failed spawn, with the reason the university gave (if any) so the student is told why. */
+const spawnFailed = (status: StudentSessionStatus): WorkspaceFlow => ({
+  phase: 'failed',
+  reason: 'spawn_failed',
+  retryable: true,
+  ...(status.error?.reason ? { detail: status.error.reason } : {}),
+});
 
 const isFlowError = (error: unknown): error is FlowError =>
   typeof (error as FlowError | null)?.status === 'number' && typeof (error as FlowError | null)?.code === 'string';
@@ -156,6 +167,7 @@ export async function runWorkspaceFlow(deps: FlowDeps, emit: (state: WorkspaceFl
 
   const started = deps.now();
   let failures = 0;
+  let restarts = 0;
   for (;;) {
     if (signal?.aborted) return last;
     if (deps.now() - started >= SPAWN_TIMEOUT_MS && status.state !== 'queued') return say({ phase: 'failed', reason: 'timeout', retryable: true });
@@ -170,6 +182,8 @@ export async function runWorkspaceFlow(deps: FlowDeps, emit: (state: WorkspaceFl
         say({ phase: 'spawning', steps: status.steps, waitingForCapacity: status.error?.code === 'no_capacity' });
         break;
       case 'stopping':
+        // A spawn that failed is being torn down: it will not recover, so do not wait on it.
+        if (status.error?.code === 'spawn_failed') return say(spawnFailed(status));
         say({ phase: 'previous-stopping' });
         break;
       case 'ready': {
@@ -183,7 +197,7 @@ export async function runWorkspaceFlow(deps: FlowDeps, emit: (state: WorkspaceFl
         return say({ phase: 'failed', reason: outcome, retryable: true });
       }
       case 'failed':
-        return say({ phase: 'failed', reason: 'spawn_failed', retryable: true });
+        return say(spawnFailed(status));
       case 'ended':
         return say({ phase: 'failed', reason: 'ended', retryable: true });
     }
@@ -196,7 +210,16 @@ export async function runWorkspaceFlow(deps: FlowDeps, emit: (state: WorkspaceFl
       failures = 0;
       if (!next) return say({ phase: 'failed', reason: 'ended', retryable: true });
       // The old session finished its final save: now a new one can start.
-      status = wasStopping && (next.state === 'ended' || next.state === 'failed') ? await deps.start() : next;
+      // Only a session that ended cleanly is replaced, and only once: a failed one means the
+      // spawn itself is broken, and asking again for ever is what this must never do.
+      if (wasStopping && next.state === 'failed') return say(spawnFailed(next));
+      if (wasStopping && next.state === 'ended') {
+        if (restarts >= MAX_AUTO_RESTARTS) return say({ phase: 'failed', reason: 'ended', retryable: true });
+        restarts += 1;
+        status = await deps.start();
+      } else {
+        status = next;
+      }
     } catch (error) {
       if (isFlowError(error) && error.status !== 0) return say(failureOf(error));
       failures += 1;

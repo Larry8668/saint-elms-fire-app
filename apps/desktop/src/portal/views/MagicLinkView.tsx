@@ -5,11 +5,11 @@ import { Notice } from '../components/Notice';
 import { PortalShell } from '../components/PortalShell';
 import { SubmitButton } from '../components/SubmitButton';
 import type { PortalMode } from '../portal-modes';
-import { requestMagicLink } from '../portal-api';
+import { requestMagicLink, mailOutcome, type MailOutcome } from '../portal-api';
 import { useSubmit } from '../use-submit';
 import { SIGN_IN_LINKS } from './SignInView';
 
-export function MagicLinkView({ go, onSent }: { go: (mode: PortalMode) => void; onSent: (email: string) => void }) {
+export function MagicLinkView({ go, onSent }: { go: (mode: PortalMode) => void; onSent: (email: string, outcome: MailOutcome) => void }) {
   const [email, setEmail] = useState('');
   const [name, setName] = useState('');
   const { busy, error, run } = useSubmit();
@@ -23,8 +23,8 @@ export function MagicLinkView({ go, onSent }: { go: (mode: PortalMode) => void; 
           event.preventDefault();
           void run(async () => {
             const address = email.trim();
-            await requestMagicLink(address, name.trim() || undefined);
-            onSent(address);
+            const outcome = await mailOutcome(() => requestMagicLink(address, name.trim() || undefined));
+            onSent(address, outcome);
           });
         }}
       >
