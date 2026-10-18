@@ -64,7 +64,11 @@ export function RecordSheet({ pageId, onClose }: { pageId: string | null; onClos
         {record.isLoading && <SectionsSkeleton />}
         {data && (
           <>
-            {data.summary && <p className="text-[13.5px] leading-6 text-night-400">{data.summary}</p>}
+            {data.summary && (
+              <Markdown variant="compact" className="text-[13.5px] leading-6 text-night-400">
+                {data.summary}
+              </Markdown>
+            )}
             {data.markdown ? <Markdown variant="chat">{data.markdown}</Markdown> : null}
             {data.learner && (
               <div className="space-y-5">

@@ -92,7 +92,11 @@ function PageBody({ page, onOpenSource, onOpenPage }: { page: WikiPageView; onOp
           </Badge>
         )}
       </div>
-      <p className="text-[12.5px] leading-5 text-night-400">{page.summary}</p>
+      {page.summary && (
+        <Markdown variant="compact" className="text-[12.5px] leading-5 text-night-400">
+          {page.summary}
+        </Markdown>
+      )}
 
       <Markdown variant="chat" className="max-h-72 overflow-y-auto rounded-xl bg-black/25 p-3.5 text-[13px] whitespace-pre-wrap">
         {page.body}

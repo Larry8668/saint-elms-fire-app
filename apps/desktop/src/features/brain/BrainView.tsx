@@ -8,6 +8,7 @@ import { Badge, EmptyState, PageHeader, Panel } from '@/components/ui/primitives
 import { CardGridSkeleton, RowListSkeleton, TimelineSkeleton } from '@/components/ui/skeletons';
 import { ProposalReviewDialog } from '@/features/contribute/ProposalReviewDialog';
 import { KIND_STYLE, STATUS_STYLE } from '@/lib/brain-style';
+import { markdownToPlainText } from '@/lib/markdown-text';
 import { useNav } from '@/lib/nav';
 import { useBrainLog, useEvents, useGraph, useJobBoard, useLint, useMaintenance, useRecords, useWikiIndex } from '@/lib/queries';
 import { shortDate } from '@/lib/time';
@@ -243,7 +244,7 @@ function PageCard({ record, index, onOpen }: { record: PageRecordSummary; index:
           </div>
         </div>
         <h3 className="font-display text-[22px] leading-tight text-night-100">{record.title}</h3>
-        <p className="mt-2 line-clamp-3 text-[13px] leading-6 text-night-400">{record.summary || 'No summary yet.'}</p>
+        <p className="mt-2 line-clamp-3 text-[13px] leading-6 text-night-400">{record.summary ? markdownToPlainText(record.summary) : 'No summary yet.'}</p>
         <div className="mt-auto pt-4 text-[11.5px] text-night-500">{shortDate(record.updatedAt)}</div>
       </Panel>
     </motion.button>
