@@ -30,6 +30,25 @@ export function matchDemoProfile(profiles: ReadonlyArray<{ id: string; email: st
   return hits.length === 1 ? hits[0].email : null;
 }
 
+/**
+ * Self-serve demo builds: on a hosted workspace the portal handed a persona to, sign it in by
+ * itself with the embedded password. Only the portal's hand-off counts (never a guess from the
+ * profile list), and nothing happens without an embedded password.
+ */
+export function autoDemoSignIn(
+  mode: SignInCopyMode,
+  handedOver: string | null,
+  password: string | null,
+  accounts: ReadonlyArray<{ id: string; email: string; label: string }>,
+): { email: string; password: string; label: string } | null {
+  if (mode !== 'hosted' || !handedOver || !password) return null;
+  const account = accounts.find((a) => a.id === handedOver);
+  return account ? { email: account.email, password, label: account.label } : null;
+}
+
+/** "Signing in as the first-year student…" */
+export const autoSignInLine = (label: string) => `Signing in as the ${label.charAt(0).toLowerCase()}${label.slice(1)}…`;
+
 /** The persona to preselect: the portal's hand-off wins, the workspace's own profile list is the fallback. */
 export function preselectedPersona(handedOver: string | null, profiles: ReadonlyArray<{ id: string; email: string }> | undefined, accounts: ReadonlyArray<{ id: string; email: string }>): string | null {
   const handed = handedOver ? accounts.find((a) => a.id === handedOver) : undefined;

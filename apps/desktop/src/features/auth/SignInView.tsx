@@ -11,13 +11,15 @@ import { api, EngineError } from '@/lib/api';
 import { cn } from '@/lib/cn';
 import { DEMO_MODE } from '@/lib/demo';
 import { DEMO_ACCOUNTS } from '@/lib/demo-accounts';
+import { DEMO_SELF_SERVE_PASSWORD } from '@/lib/demo-self-serve';
+import { WorkingLabel } from '@/components/ui/loading';
 import { useHealth } from '@/lib/queries';
 import { currentEngineTarget, forgetWorkspace, isHostedWithoutWorkspace, workspaceDemoPersona } from '@/lib/seat';
 import { useSession } from '@/lib/session';
 import { portalUrl } from '@/lib/uni-url';
 import { UNI_URL } from '@/lib/uni-url';
 import { WorkspaceWakeNotice, useWorkspaceWake } from '@/features/workspace/WorkspaceWakeNotice';
-import { preselectedPersona, personaClick, promptSubmit } from './demo-sign-in';
+import { autoDemoSignIn, autoSignInLine, preselectedPersona, personaClick, promptSubmit } from './demo-sign-in';
 import { DeviceSignInCard } from './DeviceSignInCard';
 import { HOSTED_SIGN_IN_NOTE, SIGN_IN_PROMISES, signInCopyMode, type PromiseIcon } from './sign-in-copy';
 import { uniOfflineFrom } from './uni-offline';
@@ -33,6 +35,7 @@ export function SignInView() {
   // Signed out, public health still carries the bare uni boolean; that drives the banner and Continue.
   const uniOffline = uniOfflineFrom(health.data);
   const [openedAt] = useState(() => Date.now());
+  const auto = useAutoDemoSignIn(mode, mode === 'hosted' && health.isSuccess && wake.phase === 'idle');
 
   return (
     <div className="sky-backdrop relative flex min-h-screen items-center justify-center overflow-y-auto px-6 py-12">
@@ -64,11 +67,13 @@ export function SignInView() {
               body='Start everything with "pnpm dev" (or "pnpm dev:engine"); this screen picks it up automatically.'
               action={<Button onClick={() => void health.refetch()}>Try again</Button>}
             />
+          ) : auto.phase === 'signing' ? (
+            <WorkingLabel label={autoSignInLine(auto.label)} className="animate-rise py-6 text-[14px] text-beacon-200" />
           ) : (
             <>
               {mode === 'hosted' && <p className="mb-4 text-[12.5px] leading-5 text-night-400">{HOSTED_SIGN_IN_NOTE}</p>}
               <DeviceSignInCard uniOffline={uniOffline} />
-              {DEMO_MODE && <DemoAccounts mode={mode} />}
+              {DEMO_MODE && <DemoAccounts mode={mode} initialError={auto.phase === 'failed' ? auto.error : null} />}
             </>
           )}
         </section>
@@ -142,11 +147,36 @@ function Pitch({ mode }: { mode: 'hosted' | 'local' }) {
   );
 }
 
-function DemoAccounts({ mode }: { mode: 'hosted' | 'local' }) {
+/** Self-serve auto sign-in attempts, once per page load: a failure falls back to the panel, never a loop. */
+const autoAttempted = new Set<string>();
+
+type AutoSignIn = { phase: 'off' } | { phase: 'signing'; label: string } | { phase: 'failed'; error: string };
+
+/**
+ * Self-serve demo builds: on a hosted workspace the portal handed a persona to, signs it in
+ * with the embedded password as soon as the workspace answers. No panel, no click.
+ */
+function useAutoDemoSignIn(mode: 'hosted' | 'local', ready: boolean): AutoSignIn {
+  const { signIn } = useSession();
+  const [plan] = useState(() => autoDemoSignIn(mode, workspaceDemoPersona(), DEMO_SELF_SERVE_PASSWORD, DEMO_ACCOUNTS));
+  const [state, setState] = useState<AutoSignIn>(() => (plan && !autoAttempted.has(plan.email) ? { phase: 'signing', label: plan.label } : { phase: 'off' }));
+
+  useEffect(() => {
+    if (!plan || !ready || autoAttempted.has(plan.email)) return;
+    autoAttempted.add(plan.email);
+    signIn(plan.email, plan.password).catch((err: unknown) => {
+      setState({ phase: 'failed', error: err instanceof EngineError ? err.message : 'Sign-in failed. Try again.' });
+    });
+  }, [plan, ready, signIn]);
+
+  return state;
+}
+
+function DemoAccounts({ mode, initialError = null }: { mode: 'hosted' | 'local'; initialError?: string | null }) {
   const { signIn } = useSession();
   const [open, setOpen] = useState(false);
   const [busy, setBusy] = useState<string | null>(null);
-  const [error, setError] = useState<string | null>(null);
+  const [error, setError] = useState<string | null>(initialError);
   /** Hosted only: the persona whose password is being asked for. */
   const [asking, setAsking] = useState<string | null>(null);
   const [password, setPassword] = useState('');

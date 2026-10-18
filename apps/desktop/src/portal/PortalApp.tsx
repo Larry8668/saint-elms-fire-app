@@ -7,6 +7,8 @@ import { Notice } from './components/Notice';
 import { goToMode, readPortalRoute, type PortalMode, type PortalRoute } from './portal-modes';
 import type { Banner, MailReason } from './portal-copy';
 import type { DemoAccount } from '@/lib/demo-accounts';
+import { DEMO_SELF_SERVE_PASSWORD } from '@/lib/demo-self-serve';
+import { offersSelfServe } from './demo-sign-in';
 import { demoAvailable, demoSignOut, getMe, PortalError, signOut, type MailOutcome } from './portal-api';
 import { AdmissionView } from './views/AdmissionView';
 import { CheckEmailView } from './views/CheckEmailView';
@@ -99,6 +101,14 @@ export function PortalApp() {
       });
   }, []);
 
+  /** Self-serve demo: a picked persona goes straight to its workspace, no extra click. */
+  const onSelfServe = offersSelfServe(DEMO_SELF_SERVE_PASSWORD, demo)
+    ? (persona: DemoAccount) => {
+        setDemoStudent(persona);
+        setWorkspace(true);
+      }
+    : undefined;
+
   if (demoStudent && workspace) return <WorkspaceView onBack={() => setWorkspace(false)} demoPersonaId={demoStudent.id} />;
 
   if (demoStudent) {
@@ -168,7 +178,7 @@ export function PortalApp() {
           onChangeEmail={() => go(mailbox.reason === 'reset' ? 'recover' : 'sign-in')}
         />
       ) : (
-        <SignInView onAuthenticated={() => void probe()} go={go} banner={null} demo={demo} />
+        <SignInView onAuthenticated={() => void probe()} go={go} banner={null} demo={demo} onSelfServe={onSelfServe} />
       );
     case 'recover':
       return <RecoverView go={go} onSent={(email, outcome) => onMailSent(email, 'reset', outcome)} />;
@@ -185,6 +195,6 @@ export function PortalApp() {
         />
       );
     default:
-      return <SignInView onAuthenticated={() => void probe()} go={go} banner={banner ?? landingBanner} demo={demo} />;
+      return <SignInView onAuthenticated={() => void probe()} go={go} banner={banner ?? landingBanner} demo={demo} onSelfServe={onSelfServe} />;
   }
 }

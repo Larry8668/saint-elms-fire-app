@@ -45,6 +45,17 @@ printf 'true' | vercel env add VITE_DEMO_MODE production --yes && vercel --prod 
 
 The VM accepts `ENGINE_ALLOWED_ORIGINS` through `infra/seat/session-start.sh` (comma-separated https origins). **The golden snapshot must be rebuilt** after this change for the VMs to pick it up (`infra/seat/golden/README.md`); an older image ignores the value, so the VM allows only its own origin and the app's calls fail CORS.
 
+## Self-serve demo (demo day)
+
+A judge gets one URL (the portal) and picks a student; everything else happens by itself. Set on **both** the app build (Vercel) and the portal build:
+
+| Variable | Value | Why |
+|---|---|---|
+| `VITE_DEMO_SELF_SERVE` | `true` | The portal's sign-in leads with **Try the demo** (three persona cards). A click signs the persona in and opens the workspace with no further click; the app then signs in on the workspace by itself. It implies `VITE_DEMO_MODE`. |
+| `VITE_DEMO_PASSWORD` | the uni's `DEMO_PASSWORD` | Embedded in the public JavaScript. **Acceptable only for a demo deployment** whose personas hold seeded data; rotate `DEMO_PASSWORD` after the event. Without it self-serve is off. |
+
+Self-serve stays off unless both are set; a failed automatic sign-in falls back to the existing password panel. The portal shows the section only when the uni seeds demo students (`SEED_DEMO`).
+
 ## The app on a workspace
 
 - The sign-in screen names the host the student signs in to, and offers **Forget workspace**, which goes back to the local engine.
