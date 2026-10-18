@@ -13,6 +13,7 @@ test('one live lease per account, however many callers race for it', testOptions
     const results = await Promise.all(Array.from({ length: 12 }, () => acquireLease(pool, { id: 'ananya', kind: 'legacy' }, opts)));
     assert.equal(new Set(results.map((r) => r.row.id)).size, 1);
     assert.equal(results.filter((r) => r.created).length, 1);
+    assert.match(results[0]!.row.machine_name, /^sef-ananya-[0-9a-f]{12}$/, 'the machine is named after the student');
     const rows = await pool.query('SELECT state FROM student_sessions');
     assert.deepEqual(rows.rows, [{ state: 'spawning' }]);
   });

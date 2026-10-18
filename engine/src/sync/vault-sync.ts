@@ -41,6 +41,8 @@ export interface RestoreReport {
   version: number;
   fetched: number;
   bytes: number;
+  /** Course-content files the manifest names but the store no longer holds; the Library reinstalls them. */
+  missing: number;
   /** Media restored as a stub, fetched on first read. */
   lazy: number;
   removed: number;
@@ -80,6 +82,8 @@ interface Snapshot {
 
 export const SYNC_STATE_FILE = '.vault-sync.json';
 const EMBEDDINGS_FILE = /^[a-z0-9_-]{1,64}\.json$/;
+/** Course lessons the Library installs; a missing copy in the store is recoverable, unlike a student's page. */
+const COURSE_CONTENT_PREFIX = 'content/courses/';
 const CONCURRENCY = 6;
 
 /**
@@ -168,7 +172,7 @@ export class VaultSync {
       }
       this.stats = saved?.stats ?? {};
       const local = await this.hashLocal();
-      const report: RestoreReport = { version: manifest.version, fetched: 0, bytes: 0, lazy: 0, removed: 0, rolledForward: 0, embeddings: 'absent', ms: 0 };
+      const report: RestoreReport = { version: manifest.version, fetched: 0, bytes: 0, missing: 0, lazy: 0, removed: 0, rolledForward: 0, embeddings: 'absent', ms: 0 };
       // The remote is still what this machine last pushed (an engine restart): what is on disk
       // is newer, so nothing is pulled, and the next push carries any edits made since.
       const unchanged = saved !== null && remote !== null && saved.etag === remote.etag;
@@ -205,6 +209,10 @@ export class VaultSync {
         }
         fetches.push(async () => {
           const bytes = await this.download(relPath, file);
+          if (bytes === null) {
+            report.missing += 1;
+            return;
+          }
           if (sha256Hex(bytes) !== file.sha256) report.rolledForward += 1;
           report.fetched += 1;
           report.bytes += bytes.byteLength;
@@ -365,10 +373,18 @@ export class VaultSync {
     }
   }
 
-  private async download(relPath: string, file: SyncFile): Promise<Buffer> {
+  private async download(relPath: string, file: SyncFile): Promise<Buffer | null> {
     const key = file.kind === 'text' ? vaultKey(this.options.account, relPath) : blobKey(this.options.account, file.sha256);
     const object = await this.options.store.get(key);
-    if (!object) throw new Error(`The manifest names ${relPath}, but its object is missing.`);
+    if (!object) {
+      // Released course content is re-installable from the university, so a store that lost (or
+      // refused) one of those files does not block the student's own pages from coming back.
+      if (file.kind === 'text' && relPath.startsWith(COURSE_CONTENT_PREFIX)) {
+        log.warn('vault_sync_restore_missing_course_file', { account: this.options.account, relPath });
+        return null;
+      }
+      throw new Error(`The manifest names ${relPath}, but its object is missing.`);
+    }
     const bytes = Buffer.from(object.body);
     // A blob's key is its hash, so a mismatch is corruption. A text object newer than the
     // manifest is what a push cut off between its uploads and its swap leaves: keep it.
@@ -393,8 +409,9 @@ export class VaultSync {
       const started = Date.now();
       pending = this.download(relPath, file)
         .then((bytes) => {
-          log.info('vault_sync_media_fetched', { path: relPath, bytes: bytes.byteLength, ms: Date.now() - started });
-          return true;
+          // Media is keyed by hash, never under content/courses/, so download never answers null here.
+          log.info('vault_sync_media_fetched', { path: relPath, bytes: bytes?.byteLength ?? 0, ms: Date.now() - started });
+          return bytes !== null;
         })
         .finally(() => this.fetching.delete(relPath));
       this.fetching.set(relPath, pending);
