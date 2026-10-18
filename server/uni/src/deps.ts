@@ -28,4 +28,6 @@ export interface UniDeps {
   pool?: Pool;
   /** Per-login Instabox VMs (PR-42); absent unless INSTABOX_API_KEY and SEF_GOLDEN_SNAPSHOT_ID are set. */
   sessions?: SessionOrchestrator | null;
+  /** Overrides `config.seedDemo` (tests); demo personas' legacy tokens may use Peers only when true. */
+  seedDemo?: boolean;
 }
