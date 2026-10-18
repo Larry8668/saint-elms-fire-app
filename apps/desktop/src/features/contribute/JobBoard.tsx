@@ -1,6 +1,7 @@
 import { useMutation } from '@tanstack/react-query';
 import { ArrowRight, Inbox } from 'lucide-react';
 import { motion } from 'motion/react';
+import { useEffect, useRef, useState } from 'react';
 import { toast } from 'sonner';
 import type { JobList, SourceSummary, WikiJob } from '@sef/shared';
 import { Button } from '@/components/ui/button';
@@ -114,7 +115,47 @@ export function JobBoard({ board, onInspect, onReviewProposal }: { board: JobLis
     if (result.job.stage === 'awaiting_review' && result.proposalId) onReviewProposal(result.proposalId);
     else if (result.job.stage === 'no_changes') toast.info('The keeper proposed no changes for this source.');
   };
-  const compile = useMutation({ mutationFn: (job: WikiJob) => api.compileJob(job.id), onSuccess: compiled, onError: (e) => toast.error((e as Error).message) });
+  // Drafting outlives a hosted workspace's request window (~21 s): when the request drops, the engine
+  // keeps going. Watch the job on the polled board instead of reporting a failure, and open the review
+  // the moment the proposal is filed.
+  const [watching, setWatching] = useState<{ jobId: string; message: string } | null>(null);
+  const compile = useMutation({
+    mutationFn: (job: WikiJob) => api.compileJob(job.id),
+    onSuccess: compiled,
+    onError: (e, job) => {
+      setWatching({ jobId: job.id, message: (e as Error).message });
+      toast.info('Gemma is drafting your pages. This takes about a minute; the review opens here when it is ready.');
+      invalidate();
+    },
+  });
+  const watchedStage = watching ? board?.jobs.find((j) => j.id === watching.jobId) : undefined;
+  useEffect(() => {
+    if (!watching || !watchedStage) return;
+    if (watchedStage.stage === 'awaiting_review' && watchedStage.proposalId) {
+      setWatching(null);
+      onReviewProposal(watchedStage.proposalId);
+    } else if (watchedStage.stage === 'no_changes') {
+      setWatching(null);
+      toast.info('The keeper proposed no changes for this source.');
+    } else if (watchedStage.stage === 'failed') {
+      setWatching(null);
+      toast.error(watchedStage.error ?? watching.message);
+    }
+  }, [watching, watchedStage, onReviewProposal]);
+  // A request that failed before drafting began leaves the job where it was: report the real error then.
+  const boardRef = useRef(board);
+  boardRef.current = board;
+  useEffect(() => {
+    if (!watching) return;
+    const timer = setTimeout(() => {
+      const job = boardRef.current?.jobs.find((j) => j.id === watching.jobId);
+      if (job && job.stage === 'awaiting_source_review') {
+        setWatching(null);
+        toast.error(watching.message);
+      }
+    }, 15_000);
+    return () => clearTimeout(timer);
+  }, [watching]);
   const retry = useMutation({
     mutationFn: async (job: WikiJob) => {
       const retried = await api.retryJob(job.id);
@@ -127,7 +168,8 @@ export function JobBoard({ board, onInspect, onReviewProposal }: { board: JobLis
   const cancel = useMutation({ mutationFn: (job: WikiJob) => api.cancelJob(job.id), onSuccess: invalidate, onError: (e) => toast.error((e as Error).message) });
 
   const jobs = board?.jobs ?? [];
-  const live = jobs.filter((job) => isLiveJob(job.stage) && job.stage !== 'awaiting_review');
+  // A proposal waiting for the student stays on the board with its Review button, so nothing seems to vanish.
+  const live = jobs.filter((job) => isLiveJob(job.stage));
   const recent = jobs.filter((job) => !isLiveJob(job.stage)).slice(0, 6);
   const busy = compile.isPending || retry.isPending || cancel.isPending;
 

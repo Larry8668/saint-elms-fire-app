@@ -27,6 +27,8 @@ export interface NavState {
   anchorPage?: string;
   /** Page preselected in the publish dialog on the peers view. History state only. */
   sharePage?: string;
+  /** Pages an accepted proposal just wrote, lit up on the brain map. History state only. */
+  grown?: { ids: string[]; created: number; updated: number };
 }
 
 interface NavContextValue extends NavState {

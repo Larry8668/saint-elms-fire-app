@@ -40,7 +40,7 @@ const EVENT_ICON: Record<LearningEvent['kind'], typeof Brain> = {
 type TimelineRow = { at: string; event: LearningEvent } | { at: string; entry: BrainLogEntry };
 
 export function BrainView() {
-  const { go, page: navPage } = useNav();
+  const { go, page: navPage, grown: navGrown } = useNav();
   const [tab, setTab] = useState('pages');
   const [selectedPageId, setSelectedPageId] = useState<string | null>(null);
   const [sourceId, setSourceId] = useState<string | null>(null);
@@ -75,6 +75,12 @@ export function BrainView() {
   };
   const askResult = useMemo(() => (askLit.length ? { ids: askLit, set: new Set(askLit) } : null), [askLit]);
   const searchResult = useMemo(() => (askOn ? null : searchPages(searchIndex, debounced)), [askOn, searchIndex, debounced]);
+  // Arriving from an accepted proposal: the pages it wrote stay lit until the student searches.
+  const [grown, setGrown] = useState<NonNullable<typeof navGrown> | null>(null);
+  useEffect(() => {
+    if (navGrown?.ids.length) setGrown(navGrown);
+  }, [navGrown]);
+  const grownResult = useMemo(() => (grown ? { ids: grown.ids, set: new Set(grown.ids) } : null), [grown]);
   const shownRecords = useMemo(() => (searchResult ? (records.data ?? []).filter((r) => searchResult.set.has(r.id)) : records.data), [records.data, searchResult]);
 
   // A node-backed page opens the sky sheet; everything else (source summaries, orphans) opens the record sheet.
@@ -111,10 +117,14 @@ export function BrainView() {
           loading={graph.isLoading || wikiGraph.isLoading}
           onOpen={openPage}
           onScrollToList={() => listRef.current?.scrollIntoView({ behavior: 'smooth', block: 'start' })}
+          spotlight={!askOn && !searchResult && grown ? { ...grown, onClear: () => setGrown(null) } : undefined}
           search={{
             query,
-            onQuery: setQuery,
-            result: askOn ? askResult : searchResult,
+            onQuery: (q) => {
+              if (q) setGrown(null);
+              setQuery(q);
+            },
+            result: askOn ? askResult : (searchResult ?? grownResult),
             ask: {
               on: askOn,
               onToggle: (on) => {

@@ -1,5 +1,5 @@
 import { useMutation } from '@tanstack/react-query';
-import { Check, Link2, Quote, ShieldCheck, X } from 'lucide-react';
+import { Brain, Check, Link2, Quote, ShieldCheck, X } from 'lucide-react';
 import { useMemo, useState } from 'react';
 import { toast } from 'sonner';
 import type { ProposalAcceptance, ProposalPreview, SourceCitation, WikiClaim, WikiLink } from '@sef/shared';
@@ -10,6 +10,7 @@ import { Badge, SkeletonText, Textarea } from '@/components/ui/primitives';
 import { BrainDiff } from '@/features/brain/BrainDiff';
 import { api } from '@/lib/api';
 import { cn } from '@/lib/cn';
+import { useNav } from '@/lib/nav';
 import { useInvalidateBrain, useProposalPreview, useSourceDetail } from '@/lib/queries';
 import { citationExcerpt, locatorLabel, pageKindLabel, previewSummary } from './review';
 
@@ -63,6 +64,7 @@ function LinkRow({ page, link }: { page: ProposalPreview['pages'][number]; link:
 export function ProposalReviewDialog({ proposalId, onClose }: { proposalId: string | null; onClose: () => void }) {
   const preview = useProposalPreview(proposalId);
   const invalidateBrain = useInvalidateBrain();
+  const { go } = useNav();
   const [note, setNote] = useState('');
   const [accepted, setAccepted] = useState<ProposalAcceptance | null>(null);
 
@@ -117,10 +119,38 @@ export function ProposalReviewDialog({ proposalId, onClose }: { proposalId: stri
       {accepted && (
         <div className="space-y-4">
           <BrainDiff diff={accepted.diff} applied={[]} rejected={[]} />
-          <div className="flex justify-end">
-            <Button variant="primary" onClick={close}>
-              <Check /> Done
-            </Button>
+          <div className="flex justify-end gap-2">
+            {(() => {
+              const changed = accepted.report.pages.filter((p) => p.change !== 'unchanged');
+              if (!changed.length) {
+                return (
+                  <Button variant="primary" onClick={close}>
+                    <Check /> Done
+                  </Button>
+                );
+              }
+              return (
+                <>
+                  <Button variant="ghost" onClick={close}>
+                    Done
+                  </Button>
+                  <Button
+                    variant="primary"
+                    onClick={() => {
+                      const grown = {
+                        ids: changed.map((p) => p.id),
+                        created: changed.filter((p) => p.change === 'created').length,
+                        updated: changed.filter((p) => p.change === 'updated').length,
+                      };
+                      close();
+                      go('brain', { grown });
+                    }}
+                  >
+                    <Brain /> See it in your brain
+                  </Button>
+                </>
+              );
+            })()}
           </div>
         </div>
       )}
