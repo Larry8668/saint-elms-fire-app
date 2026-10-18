@@ -1,9 +1,12 @@
 /**
- * Whether the tour was finished (localStorage, per browser) and whether a self-serve sign-in
- * asked for it (sessionStorage, consumed once). Storage that is missing or throws reads as
- * "not done, not requested" and every write is best-effort.
+ * Whether the tour was finished or dismissed for an account (localStorage, per browser and per
+ * account: a shared laptop that switches demo students gets it once per student) and whether a
+ * self-serve sign-in asked for it (sessionStorage, consumed once). Storage that is missing or
+ * throws reads as "not done, not requested" and every write is best-effort.
  */
 export const TOUR_DONE_KEY = 'sef.tour.done';
+/** The flag for one account; an unknown account shares one flag so the tour never repeats within a browser. */
+export const tourDoneKey = (account: string | null | undefined): string => (account ? `${TOUR_DONE_KEY}:${account}` : TOUR_DONE_KEY);
 export const TOUR_PENDING_KEY = 'sef.tour.pending';
 
 type Store = Pick<Storage, 'getItem' | 'setItem' | 'removeItem'> | null;
@@ -24,17 +27,17 @@ const session = (): Store => {
   }
 };
 
-export function tourDone(store: Store = local()): boolean {
+export function tourDone(account: string | null | undefined, store: Store = local()): boolean {
   try {
-    return store?.getItem(TOUR_DONE_KEY) === '1';
+    return store?.getItem(tourDoneKey(account)) === '1';
   } catch {
     return false;
   }
 }
 
-export function markTourDone(store: Store = local()): void {
+export function markTourDone(account: string | null | undefined, store: Store = local()): void {
   try {
-    store?.setItem(TOUR_DONE_KEY, '1');
+    store?.setItem(tourDoneKey(account), '1');
   } catch {
     // Not remembered: the tour may be offered again, which is harmless.
   }
@@ -58,13 +61,13 @@ export function cancelTourRequest(store: Store = session()): void {
   }
 }
 
-/** True once per request, and only when the tour was not finished before. */
-export function consumeTourRequest(store: Store = session(), done: Store = local()): boolean {
+/** True once per request, and only when this account has not finished or dismissed the tour before. */
+export function consumeTourRequest(account: string | null | undefined, store: Store = session(), done: Store = local()): boolean {
   try {
     if (store?.getItem(TOUR_PENDING_KEY) !== '1') return false;
     store.removeItem(TOUR_PENDING_KEY);
   } catch {
     return false;
   }
-  return !tourDone(done);
+  return !tourDone(account, done);
 }

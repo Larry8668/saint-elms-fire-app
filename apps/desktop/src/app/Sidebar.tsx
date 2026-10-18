@@ -20,7 +20,7 @@ const ITEMS: Array<{ view: View; label: string; Icon: LucideIcon }> = [
   { view: 'library', label: 'Library', Icon: Library },
 ];
 
-export function Sidebar({ onOpenAttention }: { onOpenAttention: () => void }) {
+export function Sidebar({ onOpenAttention, tourAccount }: { onOpenAttention: () => void; tourAccount?: string }) {
   const { view, go } = useNav();
   const health = useHealth();
   const lint = useLint();
@@ -66,7 +66,7 @@ export function Sidebar({ onOpenAttention }: { onOpenAttention: () => void }) {
             <StatusDot ok={health.isError ? false : modelsOk} pulse />
           </span>
         </Tooltip>
-        <NavButton label="Tour" active={false} onClick={() => startGuidedTour(go)} tour="tour-button">
+        <NavButton label="Tour" active={false} onClick={() => startGuidedTour(go, tourAccount)} tour="tour-button">
           <Compass className="size-[19px]" />
         </NavButton>
         <NavButton label="Settings" active={view === 'settings'} onClick={() => go('settings')}>
