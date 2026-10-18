@@ -36,7 +36,9 @@ export function SkyLabels({ items, registry }: { items: LabelItem[]; registry: L
           <div className={cn('whitespace-nowrap [text-shadow:0_1px_8px_#000]', TONE_CLASS[item.tone], item.tone === 'selected' || item.tone === 'hover' ? '[text-shadow:none]' : '')}>
             {item.tone === 'course' ? (
               <>
-                <div className="font-display text-[22px] leading-none text-night-100/90 italic">{item.text}</div>
+                <div className="overflow-hidden font-display text-[22px] leading-none text-ellipsis text-night-100/90 italic" title={item.text}>
+                  {item.text}
+                </div>
                 {item.sub && <div className="mt-1 text-[11px] text-night-400">{item.sub}</div>}
               </>
             ) : (
@@ -104,13 +106,22 @@ export function LabelProjector({ items, registry }: { items: LabelItem[]; regist
       const sy = size.height / 2 - (item.y - cam.position.y) * cam.zoom;
       let visible = sx > -OFFSCREEN_MARGIN && sx < size.width + OFFSCREEN_MARGIN && sy > -OFFSCREEN_MARGIN && sy < size.height + OFFSCREEN_MARGIN;
       if (visible) {
+        const inner = el.firstElementChild as HTMLElement | null;
         let box = sizes.current.get(item.id);
         if (!box) {
-          const inner = el.firstElementChild as HTMLElement | null;
+          // Measure the natural size once, unclipped; the clip below depends on zoom.
+          if (inner && item.maxWidth !== undefined) inner.style.maxWidth = 'none';
           box = { w: inner?.offsetWidth ?? 0, h: inner?.offsetHeight ?? 0 };
           sizes.current.set(item.id, box);
         }
-        const rect = labelRect(item.tone, sx, sy, box.w, box.h);
+        let w = box.w;
+        if (inner && item.maxWidth !== undefined) {
+          // Column titles never run into the next column: clip them to the column's screen width.
+          const limit = Math.max(40, item.maxWidth * cam.zoom);
+          inner.style.maxWidth = `${limit.toFixed(0)}px`;
+          w = Math.min(w, limit);
+        }
+        const rect = labelRect(item.tone, sx, sy, w, box.h);
         if (!ALWAYS_SHOWN.has(item.tone) && placed.some((p) => overlaps(p, rect))) visible = false;
         else placed.push(rect);
       }

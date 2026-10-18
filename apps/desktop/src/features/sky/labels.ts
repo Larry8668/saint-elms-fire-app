@@ -18,6 +18,8 @@ export interface LabelItem {
   text: string;
   sub?: string;
   tone: LabelTone;
+  /** World-unit width the label may occupy; longer text is clipped with an ellipsis. */
+  maxWidth?: number;
 }
 
 export interface CourseProgress {
@@ -70,6 +72,7 @@ export function buildLabels(args: {
       text: c.title,
       sub: c.courseId === PERSONAL_SKY_ID ? `${c.nodeIds.length} page${c.nodeIds.length === 1 ? '' : 's'}` : p ? `${p.lit} of ${p.total} lit${p.shaky ? ` · ${p.shaky} shaky` : ''}` : undefined,
       tone: 'course',
+      maxWidth: c.titleMaxWidth,
     });
   }
 

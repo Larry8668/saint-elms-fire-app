@@ -18,12 +18,15 @@ export interface Constellation {
   /** Lesson positions in teaching order: the figure drawn between them. */
   path: Vec2[];
   nodeIds: string[];
+  /** World-unit width the course title may take before it would run into the next column. */
+  titleMaxWidth: number;
 }
 
 export interface SemesterColumn {
   semesterNumber: number;
   x: number;
   top: number;
+  width: number;
 }
 
 export interface SkyLayout {
@@ -38,7 +41,9 @@ export interface SkyLayout {
 const LESSON_GAP = 120;
 const COURSE_PAD = 70;
 const COURSE_GAP_Y = 150;
-const SEMESTER_GAP_X = 260;
+const SEMESTER_GAP_X = 340;
+/** Breathing room between a course title and the next column's titles, in world units. */
+const TITLE_MARGIN_X = 48;
 const GOLDEN_ANGLE = Math.PI * (3 - Math.sqrt(5));
 
 export function hash01(text: string): number {
@@ -146,7 +151,7 @@ export function layoutSky(graph: GraphResponse): SkyLayout {
     const courses = bySemester.get(sem)!.sort((a, b) => a[0]!.courseName.localeCompare(b[0]!.courseName)).map(layoutCourse);
     const columnWidth = Math.max(...courses.map((c) => c.bounds.maxX - c.bounds.minX));
     let cursorY = 0;
-    semesters.push({ semesterNumber: sem, x: columnX, top: 0 });
+    semesters.push({ semesterNumber: sem, x: columnX, top: 0, width: columnWidth });
 
     courses.forEach((course, i) => {
       const nodes = bySemester.get(sem)![i]!;
@@ -162,6 +167,7 @@ export function layoutSky(graph: GraphResponse): SkyLayout {
         bounds: { minX: course.bounds.minX + dx, maxX: course.bounds.maxX + dx, minY: course.bounds.minY + dy, maxY: course.bounds.maxY + dy },
         path: course.path.map(shift),
         nodeIds: nodes.map((n) => n.id),
+        titleMaxWidth: columnWidth + SEMESTER_GAP_X - TITLE_MARGIN_X,
       });
       cursorY -= course.bounds.maxY - course.bounds.minY + COURSE_GAP_Y;
     });
@@ -181,6 +187,7 @@ export function layoutSky(graph: GraphResponse): SkyLayout {
       bounds: { minX: personal.bounds.minX + dx, maxX: personal.bounds.maxX + dx, minY: personal.bounds.minY + dy, maxY: personal.bounds.maxY + dy },
       path: [],
       nodeIds: personalNodes.map((n) => n.id),
+      titleMaxWidth: personal.bounds.maxX - personal.bounds.minX + SEMESTER_GAP_X - TITLE_MARGIN_X,
     });
   }
 
