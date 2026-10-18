@@ -21,6 +21,8 @@ import { MaintenancePanel } from './MaintenancePanel';
 import { RecordSheet } from './RecordSheet';
 import { SourceDetailDialog } from './SourceDetail';
 import { SourcesPanel } from './SourcesPanel';
+import { Contradictions } from './story/Contradictions';
+import { LearnedTimeline } from './story/LearnedTimeline';
 import { WikiIndexPanel } from './WikiIndex';
 import { WikiPageDialog } from './WikiPageDialog';
 
@@ -123,6 +125,10 @@ export function BrainView() {
             },
           }}
         />
+        <div className="mt-6 mb-10 grid items-start gap-4 lg:grid-cols-[minmax(0,1.3fr)_minmax(0,1fr)]">
+          <LearnedTimeline onOpenPage={openPage} />
+          <Contradictions onOpenPage={openPage} onOpenSource={setSourceId} />
+        </div>
         <div ref={listRef} className="scroll-mt-6" />
         <PageHeader
           eyebrow="Plain markdown, on this device"

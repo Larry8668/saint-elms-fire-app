@@ -27,6 +27,7 @@ export const keys = {
     wikiIndex: (p: string) => ['profile', p, 'wiki-index'] as const,
     wikiGraph: (p: string) => ['profile', p, 'wiki-graph'] as const,
     wikiPage: (p: string, id: string) => ['profile', p, 'wiki-page', id] as const,
+    wikiDisputes: (p: string) => ['profile', p, 'wiki-disputes'] as const,
     brainLog: (p: string) => ['profile', p, 'brain-log'] as const,
     lint: (p: string) => ['profile', p, 'lint'] as const,
     records: (p: string) => ['profile', p, 'records'] as const,
@@ -81,6 +82,7 @@ const brainKeys = () => {
     keys.scoped.proposals(p),
     keys.scoped.wikiIndex(p),
     keys.scoped.wikiGraph(p),
+    keys.scoped.wikiDisputes(p),
     // A committed page edit changes both its catalogue row and the revision an anchor pins.
     keys.scoped.anchors(p),
   ];
@@ -186,6 +188,8 @@ export const useWikiIndex = () => useQuery({ queryKey: keys.scoped.wikiIndex(pro
 export const useWikiGraph = () => useQuery({ queryKey: keys.scoped.wikiGraph(profile()), queryFn: api.wikiGraph });
 export const useWikiPage = (id: string | null) =>
   useQuery({ queryKey: keys.scoped.wikiPage(profile(), id ?? ''), queryFn: () => api.wikiPage(id!), enabled: Boolean(id), retry: false });
+/** Every disagreement the vault keeps: disputed claim pairs and carried-over misconceptions. */
+export const useWikiDisputes = () => useQuery({ queryKey: keys.scoped.wikiDisputes(profile()), queryFn: api.wikiDisputes });
 
 /** The pages the Philosopher may explore from — re-judged by the engine on every fetch. */
 export const useAnchors = (enabled = true) => useQuery({ queryKey: keys.scoped.anchors(profile()), queryFn: api.anchors, enabled });

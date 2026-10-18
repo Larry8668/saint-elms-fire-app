@@ -1,13 +1,15 @@
 import type { WikiClaimView, WikiPageView } from '@sef/shared';
-import { AlertTriangle, ArrowRight, BookOpen, Link2, ShieldAlert, ShieldCheck } from 'lucide-react';
+import { BookOpen, Link2, ShieldAlert, ShieldCheck } from 'lucide-react';
+import { useMemo, useState } from 'react';
 import { Markdown } from '@/components/Markdown';
 import { Dialog } from '@/components/ui/overlays';
 import { Badge, Eyebrow, SkeletonText } from '@/components/ui/primitives';
-import { SOURCE_KIND_ICON } from '@/features/brain/SourceDetail';
-import { locatorLabel, originLabel, pageKindLabel, sourceKindLabel } from '@/features/contribute/review';
+import { locatorLabel, originLabel, pageKindLabel } from '@/features/contribute/review';
 import { useWikiPage } from '@/lib/queries';
 import { timeAgo } from '@/lib/time';
 import { PageHistory } from './PageHistory';
+import { CitationMarks, Provenance } from './story/Provenance';
+import { sourceNumbers } from './story/story';
 
 const ORIGIN_TONE: Record<WikiClaimView['origin'], 'neutral' | 'beacon' | 'ember' | 'aurora' | 'gold' | 'rose'> = {
   course: 'beacon',
@@ -17,10 +19,23 @@ const ORIGIN_TONE: Record<WikiClaimView['origin'], 'neutral' | 'beacon' | 'ember
   model: 'gold',
 };
 
-function ClaimRow({ claim, view }: { claim: WikiClaimView; view: WikiPageView }) {
+function ClaimRow({
+  claim,
+  view,
+  numbers,
+  activeSource,
+  onSelectSource,
+}: {
+  claim: WikiClaimView;
+  view: WikiPageView;
+  numbers: Map<string, number>;
+  activeSource: string | null;
+  onSelectSource: (id: string) => void;
+}) {
   const sourceTitle = (id: string) => view.sources.find((s) => s.id === id)?.title ?? id;
+  const fromActive = Boolean(activeSource && claim.citations.some((c) => c.sourceId === activeSource));
   return (
-    <li className="rounded-xl border border-white/[0.06] bg-white/[0.02] p-3.5">
+    <li className={`rounded-xl border p-3.5 transition ${fromActive ? 'border-aurora-400/40 bg-aurora-500/[0.06]' : 'border-white/[0.06] bg-white/[0.02]'}`}>
       <p className="text-[13px] leading-6 text-night-200">{claim.text}</p>
       <div className="mt-2 flex flex-wrap items-center gap-1.5">
         <Badge tone={claim.assertable ? 'aurora' : 'ember'}>
@@ -30,6 +45,7 @@ function ClaimRow({ claim, view }: { claim: WikiClaimView; view: WikiPageView })
         <Badge tone={ORIGIN_TONE[claim.origin]}>{originLabel(claim.origin)}</Badge>
         <Badge>{claim.kind.replace(/_/g, ' ')}</Badge>
         {claim.status !== 'current' && <Badge tone="rose">{claim.status}</Badge>}
+        <CitationMarks claim={claim} numbers={numbers} active={activeSource} onSelect={(id) => onSelectSource(id === activeSource ? '' : id)} />
       </div>
       {claim.citations.length > 0 && (
         <ul className="mt-2 space-y-1">
@@ -81,6 +97,9 @@ export function WikiPageDialog({
 }
 
 function PageBody({ page, onOpenSource, onOpenPage }: { page: WikiPageView; onOpenSource?: (sourceId: string) => void; onOpenPage?: (pageId: string) => void }) {
+  const [activeSource, setActiveSource] = useState<string | null>(null);
+  const sourceIds = useMemo(() => page.sources.map((s) => s.id), [page.sources]);
+  const numbers = useMemo(() => sourceNumbers(sourceIds), [sourceIds]);
   return (
     <div className="space-y-5">
       <div className="flex flex-wrap items-center gap-1.5">
@@ -98,6 +117,15 @@ function PageBody({ page, onOpenSource, onOpenPage }: { page: WikiPageView; onOp
         </Markdown>
       )}
 
+      <Provenance
+        sourceIds={sourceIds}
+        missingSourceIds={page.missingSourceIds}
+        claims={page.claims}
+        active={activeSource}
+        onActiveChange={setActiveSource}
+        onOpenSource={onOpenSource}
+      />
+
       <Markdown variant="chat" className="max-h-72 overflow-y-auto rounded-xl bg-black/25 p-3.5 text-[13px] whitespace-pre-wrap">
         {page.body}
       </Markdown>
@@ -107,7 +135,7 @@ function PageBody({ page, onOpenSource, onOpenPage }: { page: WikiPageView; onOp
           <Eyebrow className="mb-2">Claims · {page.claims.length}</Eyebrow>
           <ul className="space-y-2">
             {page.claims.map((claim) => (
-              <ClaimRow key={claim.id} claim={claim} view={page} />
+              <ClaimRow key={claim.id} claim={claim} view={page} numbers={numbers} activeSource={activeSource} onSelectSource={(id) => setActiveSource(id || null)} />
             ))}
           </ul>
         </section>
@@ -133,34 +161,6 @@ function PageBody({ page, onOpenSource, onOpenPage }: { page: WikiPageView; onOp
               </li>
             ))}
           </ul>
-        </section>
-      )}
-
-      {(page.sources.length > 0 || page.missingSourceIds.length > 0) && (
-        <section>
-          <Eyebrow className="mb-2">Rests on · {page.sources.length + page.missingSourceIds.length} source{(page.sources.length + page.missingSourceIds.length) === 1 ? '' : 's'}</Eyebrow>
-          <div className="flex flex-wrap gap-1.5">
-            {page.sources.map((source) => {
-              const Icon = SOURCE_KIND_ICON[source.kind];
-              return (
-                <button
-                  key={source.id}
-                  type="button"
-                  onClick={() => onOpenSource?.(source.id)}
-                  className="inline-flex cursor-pointer items-center gap-1.5 rounded-full border border-white/[0.07] bg-white/[0.03] px-2.5 py-1 text-[11.5px] text-night-300 transition hover:border-white/[0.16] hover:text-night-100"
-                  title={`${sourceKindLabel(source.kind)} · ${originLabel(source.origin)} · ${source.id}`}
-                >
-                  <Icon className="size-3 text-beacon-300" />
-                  {source.title}
-                </button>
-              );
-            })}
-            {page.missingSourceIds.map((id) => (
-              <Badge key={id} tone="ember">
-                <AlertTriangle className="size-3" /> {id} — record gone
-              </Badge>
-            ))}
-          </div>
         </section>
       )}
 

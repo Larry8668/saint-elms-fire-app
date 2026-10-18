@@ -326,6 +326,13 @@ The student sees the diff, including what the deterministic pass dropped and why
 "Your brain grew" dialog. **Lint** (`lint.ts`) surfaces open misconceptions, oversized pages
 and shaky prerequisites — disputed claims appear as open misconceptions. These appear in
 Brain → Open questions, each with a "Work through it" button that opens the Guide with a prompt.
+`GET /api/wiki/disputes` (read-only) lists every disagreement the vault keeps — each disputed
+claim paired with the disputed claim it names in `supersedes`, both sides' cited sources
+resolved, plus unresolved misconceptions carried from the earlier vault — and the Brain view's
+"Your brain disagrees with itself" panel shows them side by side (with semantic-review
+contradictions not yet marked), each handed to the Guide with a prompt. Beside it, "What your
+brain learned" retells the growth ledger as sentences per commit and source modality, and every
+page's "Built from" row opens each original beside the text that was read from it.
 
 **Maintenance** (`maintenance/`, `MaintenanceService` on the workspace, routes under
 `/api/maintenance/*`, Brain → Maintenance) keeps the vault itself honest. A lint pass runs

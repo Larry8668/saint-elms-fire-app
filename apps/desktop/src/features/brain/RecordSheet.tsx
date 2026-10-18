@@ -1,5 +1,6 @@
 import { PAGE_SECTIONS, SECTION_TITLES, type PageRecordView } from '@sef/shared';
 import { AlertTriangle, MessageCircleQuestion, X } from 'lucide-react';
+import { useMemo, useState } from 'react';
 import { Markdown } from '@/components/Markdown';
 import { Button } from '@/components/ui/button';
 import { Sheet, SheetClose } from '@/components/ui/overlays';
@@ -10,6 +11,8 @@ import { useNav } from '@/lib/nav';
 import { useEvents, usePageRecord } from '@/lib/queries';
 import { timeAgo } from '@/lib/time';
 import { GrowthTrail } from './GrowthTrail';
+import { CitationMarks, Provenance } from './story/Provenance';
+import { sourceNumbers } from './story/story';
 
 const KIND_TITLE: Record<PageRecordView['kind'], string> = {
   concept: 'Concept',
@@ -34,6 +37,13 @@ export function RecordSheet({ pageId, onClose }: { pageId: string | null; onClos
   const record = usePageRecord(pageId);
   const events = useEvents(pageId);
   const data = record.data ?? null;
+  const [activeSource, setActiveSource] = useState<string | null>(null);
+  // Everything the page rests on: its sourceIds plus whatever its claims and links cite.
+  const sourceIds = useMemo(
+    () => (data ? [...new Set([...data.sourceIds, ...data.claims.flatMap((c) => c.citations.map((x) => x.sourceId)), ...data.links.flatMap((l) => l.citations.map((x) => x.sourceId))])] : []),
+    [data],
+  );
+  const numbers = useMemo(() => sourceNumbers(sourceIds), [sourceIds]);
 
   return (
     <Sheet open={Boolean(pageId)} onOpenChange={(open) => !open && onClose()} title={data?.title ?? 'Page details'}>
@@ -69,6 +79,7 @@ export function RecordSheet({ pageId, onClose }: { pageId: string | null; onClos
                 {data.summary}
               </Markdown>
             )}
+            <Provenance sourceIds={sourceIds} claims={data.claims} active={activeSource} onActiveChange={setActiveSource} />
             {data.markdown ? <Markdown variant="chat">{data.markdown}</Markdown> : null}
             {data.learner && (
               <div className="space-y-5">
@@ -88,12 +99,16 @@ export function RecordSheet({ pageId, onClose }: { pageId: string | null; onClos
                 <Eyebrow className="mb-2">Claims on this page</Eyebrow>
                 <div className="space-y-2">
                   {data.claims.map((claim) => (
-                    <div key={claim.id} className="rounded-xl border border-white/[0.06] p-3 text-sm">
+                    <div
+                      key={claim.id}
+                      className={`rounded-xl border p-3 text-sm transition ${activeSource && claim.citations.some((c) => c.sourceId === activeSource) ? 'border-aurora-400/40 bg-aurora-500/[0.06]' : 'border-white/[0.06]'}`}
+                    >
                       <p className="text-night-200">{claim.text}</p>
                       <p className="mt-1.5 flex flex-wrap gap-1.5 text-[11px] text-night-500">
                         <Badge>{claim.kind.replace('_', ' ')}</Badge>
                         <Badge>{claim.origin === 'student' ? 'yours' : `from ${claim.origin}`}</Badge>
                         {claim.status !== 'current' && <Badge tone={claim.status === 'disputed' ? 'ember' : 'neutral'}>{claim.status}</Badge>}
+                        <CitationMarks claim={claim} numbers={numbers} active={activeSource} onSelect={(id) => setActiveSource(id === activeSource ? null : id)} />
                       </p>
                     </div>
                   ))}

@@ -10,7 +10,7 @@ import { buildTools } from '../agents/tools';
 import type { ContentStore } from '../content/store';
 import type { SettingsReader } from '../settings/store';
 import type { Session } from '../sessions/store';
-import { conceptDraft, PROFILE, proposal, sourceFixture, synthesisDraft, T0, tempRoot, vault } from './testing/fixtures';
+import { conceptDraft, legacyPage, PROFILE, proposal, sourceFixture, synthesisDraft, T0, tempRoot, vault, writeLegacyVault } from './testing/fixtures';
 import { WikiQuery } from './query';
 import { BrainService } from './service';
 import { SourceIngestor, SourceRejection } from './sources/ingest';
@@ -357,4 +357,37 @@ test('a restore on a stale base revision refuses 409-style and writes nothing', 
     () => brain.restorePageRevision('damping', 'rev-never-was', page?.revision ?? ''),
     (error: unknown) => error instanceof SourceRejection && (error as SourceRejection).status === 404,
   );
+});
+
+test('disputes pair the two disputed claims, resolve their sources and carry legacy misconceptions', async () => {
+  const store = await vault('q-disputes');
+  const a = sourceFixture('source-lecture', 'Heavier objects fall faster.', { title: 'Lecture recording' });
+  const b = sourceFixture('source-photo', 'All objects fall at the same rate.', { title: 'Whiteboard photo' });
+  await store.putSource(a.record, a.bytes);
+  await store.putSource(b.record, b.bytes);
+  const earlier = claim({ id: 'claim-earlier', text: 'Heavier objects fall faster.', status: 'disputed', citations: [citation('source-lecture', 'rev-1', a.record.sha256)] });
+  const later = claim({ id: 'claim-later', text: 'All objects fall at the same rate.', status: 'disputed', supersedes: ['claim-earlier'], citations: [citation('source-photo', 'rev-1', b.record.sha256), citation('source-gone', 'rev-1', a.record.sha256)] });
+  const lonely = claim({ id: 'claim-lonely', text: 'Air resistance never matters.', status: 'disputed', citations: [citation('source-lecture', 'rev-1', a.record.sha256)] });
+  const standing = claim({ id: 'claim-standing', text: 'Gravity pulls things down.', citations: [citation('source-lecture', 'rev-1', a.record.sha256)] });
+  await store.applyProposal(proposal([{ op: 'upsert_page', page: conceptDraft('free-fall', { claims: [earlier, later, lonely, standing] }) }], { 'free-fall': null }));
+  await writeLegacyVault(store.root, { pages: [legacyPage('damping')] });
+
+  const { disputes } = await new WikiQuery(store).disputes();
+  const typed = disputes.filter((d) => d.kind === 'disputed_claims');
+  assert.equal(typed.length, 2, 'one pair and one claim whose partner is not disputed');
+  const pair = typed.find((d) => d.sides.length === 2)!;
+  assert.equal(pair.pageId, 'free-fall');
+  assert.deepEqual(pair.sides.map((s) => s.claimId), ['claim-earlier', 'claim-later'], 'earlier version first');
+  assert.deepEqual(pair.sides[0]!.sources.map((s) => s.title), ['Lecture recording']);
+  assert.deepEqual(pair.sides[1]!.sources.map((s) => s.id), ['source-photo']);
+  assert.deepEqual(pair.sides[1]!.missingSourceIds, ['source-gone'], 'a gone source is named, not hidden');
+  assert.match(pair.prompt, /Heavier objects fall faster/);
+  assert.equal(typed.find((d) => d.sides.length === 1)?.sides[0]?.claimId, 'claim-lonely');
+  assert.ok(!disputes.some((d) => d.sides.some((s) => s.claimId === 'claim-standing')), 'a current claim is no dispute');
+
+  const carried = disputes.find((d) => d.kind === 'misconception');
+  assert.ok(carried, 'an unresolved legacy misconception is listed');
+  assert.deepEqual(carried!.sides.map((s) => s.origin), ['student', 'course']);
+  assert.equal(carried!.sides[1]!.lessonRef, 'lesson-mechanics-1');
+  assert.equal(disputes.at(-1)?.kind, 'misconception', 'real disputes come before carried misconceptions');
 });

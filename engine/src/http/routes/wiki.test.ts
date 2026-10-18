@@ -94,6 +94,11 @@ test('the wiki catalogue and one page are served over HTTP', async () => {
   assert.match(view.body, /Force changes momentum/);
 
   assert.equal((await wiki.request('/wiki/pages/nothing-here', { headers: AUTH })).status, 404);
+
+  const disputes = await wiki.request('/wiki/disputes', { headers: AUTH });
+  assert.equal(disputes.status, 200);
+  assert.deepEqual(((await disputes.json()) as { disputes: unknown[] }).disputes, [], 'nothing disputed yet');
+  assert.equal((await wiki.request('/wiki/disputes', { headers: { 'content-type': 'application/json' } })).status, 401);
   assert.equal((await wiki.request('/wiki/pages', { headers: { 'content-type': 'application/json' } })).status, 401, 'unauthenticated is refused');
 });
 
