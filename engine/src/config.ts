@@ -14,6 +14,16 @@ function env(name: string, fallback: string): string {
 }
 
 /**
+ * The `thinking` setting a fresh profile starts with: ENGINE_THINKING_DEFAULT=false turns it
+ * off (central-model seats, where thinking makes every structured run crawl). Anything but
+ * `false`/`0`/`no`/`off` keeps the laptop default, on. Stored settings always win.
+ */
+export function parseThinkingDefault(environment: NodeJS.ProcessEnv = process.env): boolean {
+  const value = environment.ENGINE_THINKING_DEFAULT?.trim().toLowerCase();
+  return !(value === 'false' || value === '0' || value === 'no' || value === 'off');
+}
+
+/**
  * The operator's model gateway for hosted sessions (PR-43); null unless MODEL_GATEWAY_URL is set.
  * `url` is the gateway root: the engine speaks Ollama's native `/api/*` surface to it.
  */
@@ -151,6 +161,8 @@ export const config = {
     embedModel: env('EMBED_MODEL', 'embeddinggemma'),
     /** The on-device safety model used to screen peer shares — advisory only, never a teacher. */
     safetyModel: env('SAFETY_MODEL', 'shieldgemma:2b'),
+    /** ENGINE_THINKING_DEFAULT: the `thinking` setting before anything is stored. */
+    thinking: parseThinkingDefault(),
   },
   /** Null (off) by default; nothing but `pnpm store:check` uses it yet. */
   objectStore: parseObjectStoreConfig(),

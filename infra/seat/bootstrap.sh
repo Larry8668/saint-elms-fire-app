@@ -17,7 +17,11 @@
 #                     Golden mode is always central.
 #   SEAT_PUBLIC_HOST  the published hostname, 4100-<id>.instabox.tech (required for a seat)
 #   SEAT_UNI_URL      the university server's URL (required for a seat)
-#   SEAT_CHAT_MODEL   default gemma4:e2b; SEAT_EMBED_MODEL default embeddinggemma
+#   SEAT_CHAT_MODEL   default gemma4:e4b for a central-model seat (the GPU gateway runs it; e2b
+#                     writes malformed structured output there), gemma4:e2b for a local-model
+#                     seat (fits 8 GiB on CPU); SEAT_EMBED_MODEL default embeddinggemma.
+#                     A central seat also starts every new profile with thinking off
+#                     (ENGINE_THINKING_DEFAULT=false); a local seat keeps it on.
 #   SEAT_HOME         default /data/home/sef-seat
 #   SEAT_DRY_RUN=1    write every file but run no git, docker or network command (tests);
 #                     SEAT_SRC_DIR then names a local checkout to read the templates from.
@@ -134,11 +138,11 @@ load_inputs() {
   SEAT_REF=${SEAT_REF:-$saved_ref}
   SEAT_PUBLIC_HOST=${SEAT_PUBLIC_HOST:-$saved_host}
   SEAT_UNI_URL=${SEAT_UNI_URL:-$saved_uni}
-  SEAT_CHAT_MODEL=${SEAT_CHAT_MODEL:-${saved_chat:-gemma4:e2b}}
-  SEAT_EMBED_MODEL=${SEAT_EMBED_MODEL:-${saved_embed:-embeddinggemma}}
   SEAT_UNI_URL=${SEAT_UNI_URL%/}
   SEAT_MODE=${SEAT_MODE:-${saved_mode:-seat}}
   SEAT_MODEL_MODE=${SEAT_MODEL_MODE:-${saved_model_mode:-$([[ $SEAT_MODE == golden ]] && echo central || echo local)}}
+  SEAT_CHAT_MODEL=${SEAT_CHAT_MODEL:-${saved_chat:-$([[ $SEAT_MODEL_MODE == central ]] && echo gemma4:e4b || echo gemma4:e2b)}}
+  SEAT_EMBED_MODEL=${SEAT_EMBED_MODEL:-${saved_embed:-embeddinggemma}}
 
   [[ $SEAT_MODE == seat || $SEAT_MODE == golden ]] || die "SEAT_MODE must be seat or golden"
   [[ $SEAT_MODEL_MODE == local || $SEAT_MODEL_MODE == central ]] || die "SEAT_MODEL_MODE must be local or central"
@@ -206,14 +210,15 @@ configure() {
   mv -f "$SEAT_HOME/session-start.sh.tmp" "$SEAT_HOME/session-start.sh"
   # Lines that do not apply are dropped: central has no Ollama (the gateway comes from
   # session.env), golden keeps no per-session value (session-start.sh writes them).
-  local drop=()
-  [[ $SEAT_MODEL_MODE == central ]] && drop+=(-e '/^OLLAMA_URL=/d')
+  local drop=() thinking=true
+  [[ $SEAT_MODEL_MODE == central ]] && drop+=(-e '/^OLLAMA_URL=/d') && thinking=false
   [[ $SEAT_MODE == golden ]] && drop+=(-E -e "/$SESSION_KEYS_RE/d")
   # Values passed the patterns above, so none of them contains `|`, `&` or a newline.
   sed ${drop[@]+"${drop[@]}"} -e "s|@@PUBLIC_HOST@@|$SEAT_PUBLIC_HOST|g" \
     -e "s|@@UNI_SERVER_URL@@|$SEAT_UNI_URL|g" \
     -e "s|@@CHAT_MODEL@@|$SEAT_CHAT_MODEL|g" \
     -e "s|@@EMBED_MODEL@@|$SEAT_EMBED_MODEL|g" \
+    -e "s|@@THINKING_DEFAULT@@|$thinking|g" \
     "$SRC/infra/seat/seat.env.template" >"$SEAT_HOME/seat.env.tmp"
   if grep -q '@@' "$SEAT_HOME/seat.env.tmp"; then die "seat.env.template has a placeholder this script does not fill"; fi
   mv -f "$SEAT_HOME/seat.env.tmp" "$SEAT_HOME/seat.env"
