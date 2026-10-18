@@ -24,6 +24,26 @@ const serverRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '.
  */
 const adminDir = (): string => process.env.UNI_ADMIN_DIR?.trim() || path.join(serverRoot, '../../apps/admin/dist');
 
+/**
+ * Product analytics the onboarding shell may talk to (`PORTAL_ANALYTICS_ORIGINS`, comma-separated
+ * https origins, e.g. the PostHog ingest and assets hosts). Unset: none, and the shell's policy is
+ * unchanged. Anything that is not a bare https origin is dropped.
+ */
+export function analyticsOrigins(raw: string | undefined = process.env.PORTAL_ANALYTICS_ORIGINS): string[] {
+  return (raw ?? '')
+    .split(',')
+    .map((entry) => entry.trim())
+    .filter((entry) => {
+      try {
+        const url = new URL(entry);
+        return url.protocol === 'https:' && url.origin === entry.replace(/\/+$/, '');
+      } catch {
+        return false;
+      }
+    })
+    .map((entry) => new URL(entry).origin);
+}
+
 /** The device page carries its own inline script and style, both bound to one nonce. */
 const inlineCsp = (scriptNonce: string): string =>
   [
@@ -48,7 +68,7 @@ const bundleCsp = (workspaceOrigins: readonly string[] = []): string =>
     "script-src 'self'",
     "style-src 'self'",
     "style-src-attr 'unsafe-inline'",
-    // The hand-off reads a workspace VM's public health before leaving (PR-45); nothing else is cross-origin.
+    // The hand-off reads a workspace VM's public health before leaving (PR-45); analytics, when configured, is the only other cross-origin call.
     ['connect-src', "'self'", ...workspaceOrigins].join(' '),
     "img-src 'self' data:",
     "font-src 'self'",
@@ -101,7 +121,7 @@ export function portalRoutes(deps: UniDeps) {
       log.warn('portal_asset_missing', { path: requested });
       return c.json({ error: 'not_found' }, 404);
     }
-    return sendAsset(c, asset, deps.sessions?.config.workspaceOrigins);
+    return sendAsset(c, asset, [...(deps.sessions?.config.workspaceOrigins ?? []), ...analyticsOrigins()]);
   });
 
   /**

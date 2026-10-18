@@ -8,6 +8,7 @@ import { Tabs } from '@/components/ui/overlays';
 import { Badge, Eyebrow, Input, Label, Panel, Textarea } from '@/components/ui/primitives';
 import { api, fileToBase64 } from '@/lib/api';
 import { cn } from '@/lib/cn';
+import { capture } from '@/lib/analytics';
 import { log } from '@/lib/log';
 import { useInvalidateBrain, useSessions } from '@/lib/queries';
 import { timeAgo } from '@/lib/time';
@@ -110,7 +111,8 @@ export function ContributionComposer({ onFiled }: { onFiled: (receipt: SourceRec
 
   const contribute = useMutation({
     mutationFn: (body: ContributeBody) => api.contribute(body),
-    onSuccess: (receipt) => {
+    onSuccess: (receipt, body) => {
+      capture('source_uploaded', { kind: body.kind });
       invalidateBrain();
       onFiled(receipt);
       toast.success(
@@ -134,6 +136,7 @@ export function ContributionComposer({ onFiled }: { onFiled: (receipt: SourceRec
   const fetchLink = useMutation({
     mutationFn: (url: string) => api.videoIngest(url),
     onSuccess: (receipt) => {
+      capture('source_uploaded', { kind: 'video-link' });
       invalidateBrain();
       onFiled(receipt);
       toast.success('Kept — the transcript appears on the source once Gemma has listened to it');

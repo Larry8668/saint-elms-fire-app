@@ -1,4 +1,4 @@
-import { useCallback, useState } from 'react';
+import { useCallback, useEffect, useState } from 'react';
 import { AdmissionGate } from '@/features/auth/AdmissionGate';
 import { admissionOf, mayEnterDashboard } from '@/features/auth/admission';
 import { limitedReasonOf } from '@/features/auth/limited-access';
@@ -6,6 +6,8 @@ import { LimitedAccessView } from '@/features/auth/LimitedAccessView';
 import { SignInView } from '@/features/auth/SignInView';
 import { ChatProvider } from '@/features/teachers/chat-store';
 import { NavProvider } from '@/lib/nav';
+import { capture, identifyDemo } from '@/lib/analytics';
+import { currentEngineTarget, workspaceDemoPersona } from '@/lib/seat';
 import { useSession } from '@/lib/session';
 import { App } from './App';
 import { BootSplash } from './BootSplash';
@@ -14,6 +16,14 @@ import { BootSplash } from './BootSplash';
 export function Root() {
   const { state, refresh, signOut } = useSession();
   const [refreshing, setRefreshing] = useState(false);
+  const signedInAs = state.status === 'signed-in' ? state.session.profile.id : null;
+
+  useEffect(() => {
+    if (!signedInAs) return;
+    const persona = workspaceDemoPersona();
+    identifyDemo(persona);
+    capture('workspace_signed_in', { target: currentEngineTarget().kind, demo: persona ?? undefined });
+  }, [signedInAs]);
 
   const recheck = useCallback(async () => {
     setRefreshing(true);

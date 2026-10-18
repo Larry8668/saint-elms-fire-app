@@ -49,3 +49,20 @@ function say(emit: (state: DemoSignIn) => void, state: DemoSignIn): DemoSignIn {
   emit(state);
   return state;
 }
+
+/**
+ * Self-serve demo (VITE_DEMO_SELF_SERVE): one click on a persona card signs in with the
+ * password embedded in the build. Same sequence and refusals as the form; without an embedded
+ * password nothing is sent and the card reports it, so a misconfigured build fails loudly.
+ */
+export function selfServeSignIn(
+  personaId: DemoAccount['id'],
+  password: string | null,
+  login: (email: string, password: string) => Promise<void>,
+  emit: (state: DemoSignIn) => void,
+): Promise<DemoSignIn> {
+  return submitDemoSignIn(pickPersona(DEMO_START, personaId), password ?? '', login, emit);
+}
+
+/** Whether the portal leads with "Try the demo": a self-serve build on a university that seeds the demo students. */
+export const offersSelfServe = (password: string | null, demoSeeded: boolean): boolean => demoSeeded && password !== null;

@@ -8,6 +8,8 @@ import type { Banner } from '../portal-copy';
 import type { PortalMode } from '../portal-modes';
 import { signIn } from '../portal-api';
 import { useSubmit } from '../use-submit';
+import type { DemoAccount } from '@/lib/demo-accounts';
+import { TryDemoSection } from './TryDemoSection';
 
 export const SIGN_IN_LINKS: Array<{ mode: PortalMode; label: string }> = [
   { mode: 'register', label: 'Create an account' },
@@ -15,13 +17,27 @@ export const SIGN_IN_LINKS: Array<{ mode: PortalMode; label: string }> = [
   { mode: 'recover', label: 'Forgot your password' },
 ];
 
-export function SignInView({ onAuthenticated, go, banner, demo = false }: { onAuthenticated: () => void; go: (mode: PortalMode) => void; banner: Banner | null; demo?: boolean }) {
+export function SignInView({
+  onAuthenticated,
+  go,
+  banner,
+  demo = false,
+  onSelfServe,
+}: {
+  onAuthenticated: () => void;
+  go: (mode: PortalMode) => void;
+  banner: Banner | null;
+  demo?: boolean;
+  /** Self-serve demo builds: leads with "Try the demo"; called once a persona is signed in. */
+  onSelfServe?: (persona: DemoAccount) => void;
+}) {
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   const { busy, error, run } = useSubmit();
 
   return (
     <PortalShell eyebrow="Saint Elms University" title="Sign in" description="Your account and your place in the programme are both kept by the university.">
+      {onSelfServe && <TryDemoSection onSignedIn={onSelfServe} />}
       <form
         className="space-y-4"
         noValidate
