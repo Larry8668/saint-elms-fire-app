@@ -9,6 +9,7 @@ import type { WikiStore } from '../../brain/wiki-store';
 import { SourceIngestor, type AudioReader } from '../../brain/sources/ingest';
 import type { ImageReader } from '../../media/vision';
 import { YouTubeError, type YouTube } from '../../media/youtube';
+import { AudioTranscribeError } from '../../media/audio';
 import { WikiCompiler } from '../../brain/compiler/compile';
 import type { KeeperDraft } from '../../brain/compiler/draft';
 import { readProposalRecord } from '../../brain/proposals';
@@ -106,7 +107,7 @@ test('an uploaded PNG is read by the vision model on arrival and compiles like a
   png.writeUInt32BE(800, 16);
   png.writeUInt32BE(600, 20);
   const prompts: string[] = [];
-  const { app } = await routeHarness('route-image', {
+  const { app, sources } = await routeHarness('route-image', {
     vision: { read: async () => ({ text: 'Force changes momentum over time.' }) },
     propose: async (prompt) => {
       prompts.push(prompt);
@@ -116,9 +117,12 @@ test('an uploaded PNG is read by the vision model on arrival and compiles like a
   const filed = await post(app, '/sources', { kind: 'image', title: 'Whiteboard photo', mediaType: 'image/png', data: png.toString('base64'), origin: 'student' });
   assert.equal(filed.status, 201);
   const receipt = (await filed.json()) as SourceReceipt;
-  assert.equal(receipt.extraction?.method, 'vision');
-  assert.equal(receipt.extraction?.text, 'Force changes momentum over time.');
-  assert.equal(receipt.source.extracted, true);
+  assert.equal(receipt.extraction, null, 'the photo is read after the upload answers');
+  await sources.settled(receipt.jobId);
+  const detail = (await (await app.request(`/sources/${receipt.source.id}`, { headers: AUTH })).json()) as SourceDetail;
+  assert.equal(detail.extraction?.method, 'vision');
+  assert.equal(detail.extraction?.text, 'Force changes momentum over time.');
+  assert.equal(detail.job?.stage, 'awaiting_source_review');
 
   const compiled = await post(app, `/sources/${receipt.jobId}/compile`, {});
   assert.equal(compiled.status, 200);
@@ -385,7 +389,7 @@ test('a video link previews metadata-only, then the consented fetch files a vide
       return { bytes: new Uint8Array([0x52, 0x49, 0x46, 0x46]), mediaType: 'audio/wav', title: 'Orbits, explained', uploader: 'Example Lectures', seconds: 95, link };
     },
   };
-  const { app } = await routeHarness('route-video', {
+  const { app, sources } = await routeHarness('route-video', {
     youtube,
     audio: {
       probe: async () => ({ seconds: 95 }),
@@ -404,9 +408,72 @@ test('a video link previews metadata-only, then the consented fetch files a vide
   assert.equal(fetchRes.status, 201);
   const receipt = (await fetchRes.json()) as SourceReceipt;
   assert.equal(receipt.source.kind, 'video');
-  assert.equal(receipt.extraction?.method, 'audio', 'the fetched track reads through the audio pipeline');
-  assert.match(receipt.extraction?.text ?? '', /Kepler/);
+  assert.equal(receipt.extraction, null, 'the transcription runs after the fetch answers');
+  await sources.settled(receipt.jobId);
+  const detail = (await (await app.request(`/sources/${receipt.source.id}`, { headers: AUTH })).json()) as SourceDetail;
+  assert.equal(detail.extraction?.method, 'audio', 'the fetched track reads through the audio pipeline');
+  assert.match(detail.extraction?.text ?? '', /Kepler/);
   assert.deepEqual(calls, ['preview:https://youtu.be/abc123XYZ_0', `fetch:${link.url}`], 'preview and fetch are the two distinct, consented calls');
+});
+
+test('a long media read does not block the 201 — the client polls the job out of reading', async () => {
+  let release!: () => void;
+  const gate = new Promise<void>((resolve) => (release = resolve));
+  const { app, sources } = await routeHarness('route-async-read', {
+    audio: {
+      probe: async () => ({ seconds: 180 }),
+      transcribe: async () => {
+        await gate;
+        return { text: '[0:00] A three-minute memo.', seconds: 180, chunks: 4, attemptedChunks: 4, failedChunks: 0, partial: false };
+      },
+    },
+  });
+  const started = Date.now();
+  const filed = await post(app, '/sources', { kind: 'audio', title: 'Memo', mediaType: 'audio/wav', data: Buffer.from('RIFF').toString('base64'), origin: 'student' });
+  assert.equal(filed.status, 201, 'the upload answers while the read is still gated');
+  assert.ok(Date.now() - started < 2_000);
+  const receipt = (await filed.json()) as SourceReceipt;
+  assert.equal(receipt.extraction, null);
+
+  const reading = (await (await app.request(`/sources/${receipt.source.id}`, { headers: AUTH })).json()) as SourceDetail;
+  assert.equal(reading.job?.stage, 'reading');
+  assert.equal(reading.extraction, null);
+  const early = await post(app, `/sources/${receipt.jobId}/compile`, {});
+  assert.equal(early.status, 409, 'a job still reading cannot be compiled');
+
+  release();
+  await sources.settled(receipt.jobId);
+  const done = (await (await app.request(`/sources/${receipt.source.id}`, { headers: AUTH })).json()) as SourceDetail;
+  assert.equal(done.job?.stage, 'awaiting_source_review');
+  assert.match(done.extraction?.text ?? '', /three-minute memo/);
+});
+
+test('a failed background read surfaces as a named job failure, and retry reads again', async () => {
+  let up = false;
+  const { app, sources } = await routeHarness('route-async-fail', {
+    audio: {
+      probe: async () => ({ seconds: 30 }),
+      transcribe: async () => {
+        if (!up) throw new AudioTranscribeError('The transcription model could not be reached.', 'transcription_unavailable');
+        return { text: '[0:00] Read on retry.', seconds: 30, chunks: 1, attemptedChunks: 1, failedChunks: 0, partial: false };
+      },
+    },
+  });
+  const receipt = (await (await post(app, '/sources', { kind: 'audio', title: 'Memo', mediaType: 'audio/wav', data: Buffer.from('RIFF').toString('base64') })).json()) as SourceReceipt;
+  await sources.settled(receipt.jobId);
+  const failed = (await (await app.request(`/sources/${receipt.source.id}`, { headers: AUTH })).json()) as SourceDetail;
+  assert.equal(failed.job?.stage, 'failed');
+  assert.match(failed.job?.error ?? '', /could not be reached/);
+  assert.equal(failed.extraction?.text, '', 'no transcript is invented');
+
+  up = true;
+  const retried = await post(app, `/sources/${receipt.jobId}/retry`, {});
+  assert.equal(retried.status, 202);
+  assert.deepEqual(await retried.json(), { stage: 'reading' });
+  await sources.settled(receipt.jobId);
+  const done = (await (await app.request(`/sources/${receipt.source.id}`, { headers: AUTH })).json()) as SourceDetail;
+  assert.equal(done.job?.stage, 'awaiting_source_review');
+  assert.match(done.extraction?.text ?? '', /Read on retry/);
 });
 
 test('video failures map to their named codes over HTTP', async () => {

@@ -1,9 +1,9 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
 import type { ProposalPreview, SourceCitation, WikiJob } from '@sef/shared';
-import { STAGE_INFO, canCorrect, citationExcerpt, flowStep, formatSeconds, isLiveJob, locatorLabel, normalizeMediaType, pageBody, previewSummary, sourceKindLabel, textContribution, uploadContribution } from './review';
+import { STAGE_INFO, canCorrect, canWithdraw, citationExcerpt, flowStep, isWorking, readingLabel, formatSeconds, isLiveJob, locatorLabel, normalizeMediaType, pageBody, previewSummary, sourceKindLabel, textContribution, uploadContribution } from './review';
 
-const STAGES: WikiJob['stage'][] = ['queued', 'extracting', 'awaiting_source_review', 'compiling', 'awaiting_review', 'committed', 'no_changes', 'failed', 'cancelled'];
+const STAGES: WikiJob['stage'][] = ['queued', 'reading', 'extracting', 'awaiting_source_review', 'compiling', 'awaiting_review', 'committed', 'no_changes', 'failed', 'cancelled'];
 
 test('every durable stage has honest copy and a terminal answer', () => {
   for (const stage of STAGES) {
@@ -116,4 +116,18 @@ test('a revision reader shows prose, not the frontmatter it is kept under', () =
   const raw = '---\nkind: concept\nrevision: rev-1\n---\n# Gravity\n\nFalls.\n';
   assert.equal(pageBody(raw), '# Gravity\n\nFalls.\n');
   assert.equal(pageBody('# No frontmatter\n'), '# No frontmatter\n');
+});
+
+test('a background read is named for what Gemma is doing, and the job stays withdrawable but not correctable', () => {
+  assert.equal(readingLabel({ kind: 'audio', mediaType: 'audio/wav' }), 'Reading your recording…');
+  assert.equal(readingLabel({ kind: 'video', mediaType: 'video/mp4' }), 'Watching your video…');
+  assert.equal(readingLabel({ kind: 'video', mediaType: 'audio/wav' }), 'Reading your recording…', 'a fetched link is kept as its audio track');
+  assert.equal(readingLabel({ kind: 'image', mediaType: 'image/png' }), 'Reading your photo…');
+  assert.equal(STAGE_INFO.reading.busy, true, 'a reading job is polled');
+  assert.equal(flowStep('reading'), 1);
+  assert.equal(isWorking('reading'), true);
+  assert.equal(canWithdraw('reading'), true);
+  assert.equal(canWithdraw('awaiting_review'), false);
+  const job = { stage: 'reading' } as WikiJob;
+  assert.equal(canCorrect(job), false, 'a correction would be overwritten by the read still landing');
 });

@@ -113,7 +113,13 @@ export function ContributionComposer({ onFiled }: { onFiled: (receipt: SourceRec
     onSuccess: (receipt) => {
       invalidateBrain();
       onFiled(receipt);
-      toast.success(receipt.reused ? 'Already on file — its job picks up where it left off' : 'Kept — check the reading before it is proposed');
+      toast.success(
+        receipt.reused
+          ? 'Already on file — its job picks up where it left off'
+          : receipt.extraction === null
+            ? 'Kept — Gemma is reading it now; the reading appears on the source when it is done'
+            : 'Kept — check the reading before it is proposed',
+      );
       reset();
     },
     onError: (e) => toast.error((e as Error).message),
@@ -130,7 +136,7 @@ export function ContributionComposer({ onFiled }: { onFiled: (receipt: SourceRec
     onSuccess: (receipt) => {
       invalidateBrain();
       onFiled(receipt);
-      toast.success('Kept — check the transcript before it is proposed');
+      toast.success('Kept — the transcript appears on the source once Gemma has listened to it');
       reset();
     },
     onError: (e) => toast.error((e as Error).message),

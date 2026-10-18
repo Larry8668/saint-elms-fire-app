@@ -284,8 +284,10 @@ export function sourceRoutes(deps: EngineDeps) {
 
   app.post('/sources/:jobId/retry', guard, async (c) => {
     try {
-      await c.get('ws').sources.retry(c.req.param('jobId'));
-      return c.body(null, 202);
+      // A failed model read retries as a fresh background read (`reading`); anything else
+      // goes back to `queued` for the caller's compile.
+      const stage = await c.get('ws').sources.retry(c.req.param('jobId'));
+      return c.json({ stage }, 202);
     } catch (error) {
       const { body, status } = handled(error, 'retry_failed');
       return c.json(body, status);

@@ -249,6 +249,8 @@ export const WikiJobSchema = z
     updatedAt: TimestampSchema,
     stage: z.enum([
       'queued',
+      // A model read (recording, video, photo) running in the background after the upload answered.
+      'reading',
       'extracting',
       'awaiting_source_review',
       'compiling',
