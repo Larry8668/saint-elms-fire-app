@@ -341,7 +341,7 @@ export async function runChatTurn(req: ChatRequest, deps: HarnessDeps, emit: (ev
     proposedLogistics: ctx.proposedLogistics,
     foreignIds: (await deps.content.allLessons()).map((l) => l.id).filter((id) => !permitted.has(`lesson:${id}`) && !permitted.has(`support:${id}`)),
   });
-  const assessed = assessAnswer(text, grounding, evidence, { teacher: req.teacher, hasImage });
+  const assessed = assessAnswer(text, question, evidence, { teacher: req.teacher, hasImage });
 
   const sources = await attributeSources(assessed.text, grounding, [...ctx.sources.values()], deps.content);
   const verified = new Set(assessed.segments.flatMap((s) => s.sources ?? []));
