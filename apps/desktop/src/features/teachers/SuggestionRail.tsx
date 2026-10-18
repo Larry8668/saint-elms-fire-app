@@ -1,13 +1,13 @@
-import type { TeacherId } from '@sef/shared';
-import { Lightbulb, X } from 'lucide-react';
-import { useEffect, useRef, useState } from 'react';
-import { Skeleton } from '@/components/ui/primitives';
-import { Tooltip } from '@/components/ui/overlays';
-import { cn } from '@/lib/cn';
-import { log } from '@/lib/log';
-import { metrics, useReportShown } from '@/lib/metrics';
-import { useSuggestions } from '@/lib/queries';
-import { railState, readHidden, whyText, writeHidden } from './suggestions';
+import type { TeacherId } from "@sef/shared";
+import { Lightbulb, X } from "lucide-react";
+import { useEffect, useRef, useState } from "react";
+import { Skeleton } from "@/components/ui/primitives";
+import { Tooltip } from "@/components/ui/overlays";
+import { cn } from "@/lib/cn";
+import { log } from "@/lib/log";
+import { metrics, useReportShown } from "@/lib/metrics";
+import { useSuggestions } from "@/lib/queries";
+import { railState, readHidden, whyText, writeHidden } from "./suggestions";
 
 const storage = (): Storage | undefined => {
   try {
@@ -21,7 +21,17 @@ const storage = (): Storage | undefined => {
  * Ready-to-click questions above the composer. A click sends the text as the student's own
  * message through the ordinary turn — no suggestion ever posts by itself.
  */
-export function SuggestionRail({ teacher, busy, onPick }: { teacher: TeacherId; busy: boolean; onPick: (text: string) => void }) {
+export function SuggestionRail({
+  teacher,
+  busy,
+  onPick,
+  exclude,
+}: {
+  teacher: TeacherId;
+  busy: boolean;
+  onPick: (text: string) => void;
+  exclude?: readonly string[];
+}) {
   const query = useSuggestions(teacher);
   const [hidden, setHidden] = useState(() => readHidden(storage()));
   const wasBusy = useRef(busy);
@@ -34,7 +44,11 @@ export function SuggestionRail({ teacher, busy, onPick }: { teacher: TeacherId; 
   }, [busy, refetch]);
 
   useEffect(() => {
-    if (isError) log.warn('suggestions_unavailable', { teacher, error: (error as Error).message });
+    if (isError)
+      log.warn("suggestions_unavailable", {
+        teacher,
+        error: (error as Error).message,
+      });
   }, [isError, error, teacher]);
 
   const toggle = (next: boolean) => {
@@ -42,55 +56,88 @@ export function SuggestionRail({ teacher, busy, onPick }: { teacher: TeacherId; 
     writeHidden(storage(), next);
   };
 
-  const state = railState({ pending: query.isPending, data: query.data, hidden });
-  useReportShown('suggestion_shown', state.kind === 'ready' ? state.questions.map((q) => ({ ref: q.id, tag: teacher })) : [], state.kind === 'ready');
+  const state = railState({
+    pending: query.isPending,
+    data:
+      query.data && exclude?.length
+        ? {
+            ...query.data,
+            questions: query.data.questions.filter(
+              (q) => !exclude.includes(q.text),
+            ),
+          }
+        : query.data,
+    hidden,
+  });
+  useReportShown(
+    "suggestion_shown",
+    state.kind === "ready"
+      ? state.questions.map((q) => ({ ref: q.id, tag: teacher }))
+      : [],
+    state.kind === "ready",
+  );
 
-  if (state.kind === 'hidden') {
+  if (state.kind === "hidden") {
     return (
-      <button onClick={() => toggle(false)} className="mb-2 flex cursor-pointer items-center gap-1.5 text-[11.5px] text-night-500 transition hover:text-night-300">
+      <button
+        onClick={() => toggle(false)}
+        className="mb-2 flex cursor-pointer items-center gap-1.5 text-[11.5px] text-night-500 transition hover:text-night-300"
+      >
         <Lightbulb className="size-3" /> Show suggestions
       </button>
     );
   }
-  if (state.kind === 'loading') {
+  if (state.kind === "loading") {
     return (
       <div className="mb-3 flex gap-2" aria-hidden>
-        {['w-44', 'w-56', 'w-36'].map((w) => (
-          <Skeleton key={w} className={cn('h-7 rounded-full', w)} />
+        {["w-44", "w-56", "w-36"].map((w) => (
+          <Skeleton key={w} className={cn("h-7 rounded-full", w)} />
         ))}
       </div>
     );
   }
-  if (state.kind === 'empty') return null;
+  if (state.kind === "empty") return null;
 
   return (
-    <div className="mb-3 flex items-start gap-2">
-      <ul aria-label="Suggested questions" className="flex min-w-0 flex-1 flex-wrap gap-2">
-        {state.questions.map((q) => (
-          <li key={q.id}>
-            <Tooltip content={whyText(q, state.worded)}>
-              <button
-                onClick={() => {
-                  metrics.report('suggestion_sent', q.id, teacher);
-                  onPick(q.text);
-                }}
-                disabled={busy}
-                className={cn(
-                  'glass max-w-full cursor-pointer truncate rounded-full px-3 py-1.5 text-left text-[12.5px] text-night-300 transition',
-                  'hover:border-white/[0.14] hover:text-night-100 disabled:cursor-not-allowed disabled:opacity-50',
-                )}
-              >
-                {q.text}
-              </button>
-            </Tooltip>
-          </li>
-        ))}
-      </ul>
-      <Tooltip content="Hide suggestions">
-        <button onClick={() => toggle(true)} aria-label="Hide suggestions" className="mt-1 cursor-pointer rounded-md p-1 text-night-600 transition hover:text-night-300">
-          <X className="size-3.5" />
-        </button>
-      </Tooltip>
+    <div className="mb-3">
+      <p className="mb-1.5 text-[11px] font-medium uppercase tracking-wide text-night-500">
+        From your recent work
+      </p>
+      <div className="flex items-start gap-2">
+        <ul
+          aria-label="Suggested questions"
+          className="flex min-w-0 flex-1 flex-wrap gap-2"
+        >
+          {state.questions.map((q) => (
+            <li key={q.id}>
+              <Tooltip content={whyText(q, state.worded)}>
+                <button
+                  onClick={() => {
+                    metrics.report("suggestion_sent", q.id, teacher);
+                    onPick(q.text);
+                  }}
+                  disabled={busy}
+                  className={cn(
+                    "glass max-w-full cursor-pointer truncate rounded-full px-3 py-1.5 text-left text-[12.5px] text-night-300 transition",
+                    "hover:border-white/[0.14] hover:text-night-100 disabled:cursor-not-allowed disabled:opacity-50",
+                  )}
+                >
+                  {q.text}
+                </button>
+              </Tooltip>
+            </li>
+          ))}
+        </ul>
+        <Tooltip content="Hide suggestions">
+          <button
+            onClick={() => toggle(true)}
+            aria-label="Hide suggestions"
+            className="mt-1 cursor-pointer rounded-md p-1 text-night-600 transition hover:text-night-300"
+          >
+            <X className="size-3.5" />
+          </button>
+        </Tooltip>
+      </div>
     </div>
   );
 }
