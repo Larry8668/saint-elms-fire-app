@@ -102,7 +102,8 @@ export function BrainView() {
 
   return (
     <div className="h-full overflow-y-auto">
-      <div className="mx-auto max-w-6xl px-8 py-8">
+      {/* The brain is the page: a full-screen map first, the pages themselves on scroll. */}
+      <div className="relative">
         <BrainMapHero
           records={records.data}
           graph={graph.data}
@@ -125,6 +126,8 @@ export function BrainView() {
             },
           }}
         />
+      </div>
+      <div className="mx-auto max-w-6xl px-8 py-8">
         <div className="mt-6 mb-10 grid items-start gap-4 lg:grid-cols-[minmax(0,1.3fr)_minmax(0,1fr)]">
           <LearnedTimeline onOpenPage={openPage} />
           <Contradictions onOpenPage={openPage} onOpenSource={setSourceId} />
