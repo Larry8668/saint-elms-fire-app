@@ -615,6 +615,48 @@ export const WikiPageViewSchema = z.strictObject({
 });
 export type WikiPageView = z.infer<typeof WikiPageViewSchema>;
 
+/** One version a disagreement keeps — the claim text, whose it is, and what it rests on. */
+export const WikiDisputeSideSchema = z.strictObject({
+  /** Absent for a misconception carried from the earlier vault, which kept no claim ids. */
+  claimId: IdentifierSchema.optional(),
+  text: z.string(),
+  origin: z.enum(['course', 'external', 'student', 'peer', 'model']),
+  /** The sources this side's citations name, resolved where a record still exists. */
+  sources: z.array(WikiPageSourceSchema),
+  missingSourceIds: IdentifierListSchema,
+  /** A course lesson the side points at, when it is the course's version. */
+  lessonRef: z.string().optional(),
+});
+export type WikiDisputeSide = z.infer<typeof WikiDisputeSideSchema>;
+
+/**
+ * Two versions the brain keeps side by side. 'disputed_claims' is the merge policy's
+ * dispute (same subject, different content — both claims stay, marked disputed);
+ * 'misconception' is an unresolved one from the earlier vault: what the student said
+ * against what the course says. Read-only: nothing here resolves anything.
+ */
+export const WikiDisputeSchema = z.strictObject({
+  id: z.string().min(1).max(200),
+  kind: z.enum(['disputed_claims', 'misconception']),
+  pageId: IdentifierSchema,
+  pageTitle: z.string(),
+  pageKind: z.enum(['concept', 'source_summary', 'synthesis', 'question']),
+  /** When the page last changed (or the misconception was flagged), if known. */
+  at: z.string().nullable(),
+  /** Earlier version first. One side only when the other claim is no longer on the page. */
+  sides: z.array(WikiDisputeSideSchema).min(1).max(2),
+  /** A Socratic opener the Guide can start from. */
+  prompt: z.string(),
+});
+export type WikiDispute = z.infer<typeof WikiDisputeSchema>;
+
+/** GET /api/wiki/disputes — every disagreement the vault currently keeps. */
+export const WikiDisputesSchema = z.strictObject({
+  schemaVersion: ContractVersionSchema,
+  disputes: z.array(WikiDisputeSchema),
+});
+export type WikiDisputes = z.infer<typeof WikiDisputesSchema>;
+
 /**
  * POST /api/wiki/save — freeze one assistant answer as an 'answer' source and queue its
  * job. `saveKind` is a hint the keeper reads from the retained document; code never trusts

@@ -80,6 +80,7 @@ import type {
   WikiAskStreamEvent,
   WikiIndex,
   WikiPageView,
+  WikiDisputes,
   WikiJob,
   WikiProposalRecord,
 } from '@sef/shared';
@@ -292,6 +293,7 @@ export const api = {
   /** The whole wiki as nodes and edges — one request for the brain map. */
   wikiGraph: () => request<WikiGraph>('/api/wiki/graph'),
   wikiPage: (id: string) => request<WikiPageView>(`/api/wiki/pages/${encodeURIComponent(id)}`),
+  wikiDisputes: () => request<WikiDisputes>('/api/wiki/disputes'),
   /** Freezes one answer turn as a model-provenance source and queues its compile job. */
   saveAnswer: (body: SaveAnswerRequest) => post<SourceReceipt>('/api/wiki/save', body),
   brainLog: () => request<BrainLogEntry[]>('/api/brain/log'),

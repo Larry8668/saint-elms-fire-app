@@ -9,6 +9,7 @@ import {
   SourceReceiptSchema,
   WikiAskRequestSchema,
   WikiAskResultSchema,
+  WikiDisputesSchema,
   WikiGraphSchema,
   WikiIndexSchema,
   WikiPageViewSchema,
@@ -62,6 +63,16 @@ export function wikiRoutes(deps: EngineDeps, opts: WikiRouteOptions = {}) {
       return c.json(WikiGraphSchema.parse(await new WikiQuery(c.get('ws').wiki).graph()));
     } catch (error) {
       const { body, status } = handled(error, 'graph_failed');
+      return c.json(body, status);
+    }
+  });
+
+  /** Every disagreement the vault keeps — disputed claim pairs and unresolved misconceptions. Read-only. */
+  app.get('/wiki/disputes', guard, async (c) => {
+    try {
+      return c.json(WikiDisputesSchema.parse(await new WikiQuery(c.get('ws').wiki).disputes()));
+    } catch (error) {
+      const { body, status } = handled(error, 'disputes_failed');
       return c.json(body, status);
     }
   });

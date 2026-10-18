@@ -3,9 +3,13 @@ import {
   IdentifierSchema,
   type SearchMode,
   type SourceRecord,
+  type WikiClaim,
   type WikiClaimView,
   type WikiGraph,
   type WikiGraphEdge,
+  type WikiDispute,
+  type WikiDisputeSide,
+  type WikiDisputes,
   type WikiIndex,
   type WikiLink,
   type WikiPageEntry,
@@ -247,7 +251,86 @@ export class WikiQuery {
       courseRefs: meta?.courseRefs ?? [],
     };
   }
+
+  /**
+   * Every disagreement the vault keeps, newest page first. A dispute pairs a disputed claim
+   * with the disputed claim it names in `supersedes` (the merge policy marks both); a
+   * disputed claim whose partner is gone stands alone. Unresolved misconceptions from the
+   * earlier vault pair the student's words with the course's. Read-only — resolving one is
+   * still a reviewed proposal.
+   */
+  async disputes(): Promise<WikiDisputes> {
+    const [pages, catalogue] = await Promise.all([this.reader.listPages(), this.reader.listSources()]);
+    const side = (claim: WikiClaim): WikiDisputeSide => {
+      const ids = [...new Set(claim.citations.map((citation) => citation.sourceId))];
+      const sources: WikiPageSource[] = [];
+      const missingSourceIds: string[] = [];
+      for (const id of ids) {
+        const record = catalogue[id];
+        if (record) sources.push({ id: record.id, title: record.title, kind: record.kind, origin: record.origin });
+        else missingSourceIds.push(id);
+      }
+      return { claimId: claim.id, text: claim.text, origin: claim.origin, sources, missingSourceIds };
+    };
+    const disputes: WikiDispute[] = [];
+    for (const snapshot of pages) {
+      const meta = snapshot.metadata;
+      if (meta) {
+        const disputed = meta.claims.filter((claim) => claim.status === 'disputed');
+        const byId = new Map(disputed.map((claim) => [claim.id, claim]));
+        const paired = new Set<string>();
+        // Later claims name the earlier one they dispute; pair those first so each claim shows once.
+        for (const later of disputed) {
+          const earlier = later.supersedes.map((id) => byId.get(id)).find((claim) => claim && !paired.has(claim.id));
+          if (!earlier || paired.has(later.id)) continue;
+          paired.add(earlier.id).add(later.id);
+          disputes.push(disputeOf(snapshot.id, meta, [side(earlier), side(later)], `${earlier.id}|${later.id}`));
+        }
+        for (const claim of disputed) {
+          if (!paired.has(claim.id)) disputes.push(disputeOf(snapshot.id, meta, [side(claim)], claim.id));
+        }
+        continue;
+      }
+      const legacy = snapshot.legacy;
+      for (const [i, m] of (legacy?.misconceptions ?? []).entries()) {
+        if (m.resolved) continue;
+        disputes.push({
+          id: `${snapshot.id}:misconception:${i}`,
+          kind: 'misconception',
+          pageId: snapshot.id,
+          pageTitle: legacy!.concept,
+          pageKind: 'concept',
+          at: m.flagged || null,
+          sides: [
+            { text: m.claim, origin: 'student', sources: [], missingSourceIds: [] },
+            { text: m.course, origin: 'course', sources: [], missingSourceIds: [], ...(m.lessonRef ? { lessonRef: m.lessonRef } : {}) },
+          ],
+          prompt: `Earlier you said "${m.claim}" about ${legacy!.concept}, and the course says: ${m.course} Which one holds up — and what would you check to decide?`,
+        });
+      }
+    }
+    // Real disputes before carried-over misconceptions, newest first within each.
+    disputes.sort((a, b) => (a.kind === b.kind ? (b.at ?? '').localeCompare(a.at ?? '') : a.kind === 'disputed_claims' ? -1 : 1));
+    return { schemaVersion: CONTRACT_VERSION, disputes };
+  }
 }
+
+function disputeOf(pageId: string, meta: { title: string; kind: WikiDispute['pageKind']; updatedAt: string }, sides: WikiDisputeSide[], key: string): WikiDispute {
+  const [a, b] = sides;
+  return {
+    id: `${pageId}:${key}`,
+    kind: 'disputed_claims',
+    pageId,
+    pageTitle: meta.title,
+    pageKind: meta.kind,
+    at: meta.updatedAt,
+    sides,
+    prompt: b
+      ? `My page on ${meta.title} holds two versions that disagree: "${a!.text}" and "${b.text}". Help me work out which one holds up, and what I would check to decide.`
+      : `My page on ${meta.title} marks this as disputed: "${a!.text}". Help me work out whether it holds up.`,
+  };
+}
+
 
 /** The text a tool may feed the evidence set for one page — bounded so a giant page stays a page. */
 export function pageEvidenceText(view: WikiPageView): string {

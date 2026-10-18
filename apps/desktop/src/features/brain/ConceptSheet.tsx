@@ -10,6 +10,7 @@ import { KIND_STYLE, LESSON_HEX, NODE_ORIGIN_RIM, ORIGIN_STYLE, STATUS_STYLE } f
 import { useNav } from '@/lib/nav';
 import { useEvents, usePage, usePageRecord } from '@/lib/queries';
 import { GrowthTrail } from './GrowthTrail';
+import { PageProvenance, Provenance } from './story/Provenance';
 import { PageHistory } from './PageHistory';
 import { QuizDialog } from './QuizDialog';
 
@@ -102,6 +103,7 @@ export function ConceptSheet({ node, graph, onSelect }: { node: GraphNode | null
                   </div>
                 </section>
               )}
+              {node.pageId && <PageProvenance pageId={node.pageId} />}
               <section>
                 <Eyebrow className="mb-2">Evidence</Eyebrow>
                 <div className="flex flex-wrap gap-1.5">
@@ -141,9 +143,7 @@ export function ConceptSheet({ node, graph, onSelect }: { node: GraphNode | null
                   </div>
                 </section>
               )}
-              {record.data.sourceIds.length > 0 && (
-                <p className="text-[11.5px] text-night-500">Built on {record.data.sourceIds.length} kept source{record.data.sourceIds.length === 1 ? '' : 's'}.</p>
-              )}
+              <Provenance sourceIds={[...record.data.sourceIds, ...record.data.claims.flatMap((c) => c.citations.map((x) => x.sourceId))]} claims={record.data.claims} />
             </div>
           )}
 
