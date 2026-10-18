@@ -11,8 +11,9 @@ import { cn } from '@/lib/cn';
 import { DEMO_MODE } from '@/lib/demo';
 import { DEMO_ACCOUNTS } from '@/lib/demo-accounts';
 import { useHealth } from '@/lib/queries';
-import { currentEngineTarget, forgetWorkspace } from '@/lib/seat';
+import { currentEngineTarget, forgetWorkspace, isHostedWithoutWorkspace } from '@/lib/seat';
 import { useSession } from '@/lib/session';
+import { portalUrl } from '@/lib/uni-url';
 import { UNI_URL } from '@/lib/uni-url';
 import { WorkspaceWakeNotice, useWorkspaceWake } from '@/features/workspace/WorkspaceWakeNotice';
 import { personaClick, promptSubmit } from './demo-sign-in';
@@ -44,6 +45,17 @@ export function SignInView() {
           ) : mode === 'hosted' && health.isPending ? (
             // The first answer from the workspace has not come back yet.
             <ConnectingScene startedAt={openedAt} className="animate-rise py-6 [animation-delay:250ms]" />
+          ) : engineDown && isHostedWithoutWorkspace(currentEngineTarget()) ? (
+            <EmptyState
+              icon={<GraduationCap />}
+              title="Sign in through your university"
+              body="Your workspace is opened from the university portal."
+              action={
+                <Button variant="primary" onClick={() => location.assign(portalUrl())}>
+                  Open the university portal
+                </Button>
+              }
+            />
           ) : engineDown ? (
             <EmptyState
               icon={<ServerCrash />}

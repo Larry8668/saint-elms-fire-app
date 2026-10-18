@@ -106,6 +106,14 @@ export function engineTarget(configured = configuredEngineUrl, host: string | nu
   return { kind: 'local', base: configured ?? 'http://127.0.0.1:4100' };
 }
 
+/**
+ * True on a hosted page origin with no workspace: the target fell back to `local`, but nobody
+ * runs a local engine for a page served from a non-loopback host. The student has to come
+ * through the university portal, which hands over the workspace. Real local development
+ * (loopback page host) is never this.
+ */
+export const isHostedWithoutWorkspace = (target: EngineTarget, host: string | null = pageHost()): boolean => target.kind === 'local' && host !== null && !LOOPBACK.has(host);
+
 /** True when engine calls cross a network edge that may answer for the engine (waking, gone). */
 export const isRemoteTarget = (target: EngineTarget) => target.kind === 'workspace' || (target.kind === 'served' && target.remote);
 
