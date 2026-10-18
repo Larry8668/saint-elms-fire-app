@@ -22,6 +22,28 @@ import {
 /** The label every session VM carries. The reaper and the orphan sweep act on nothing else. */
 export const SESSION_APP_LABEL = 'sef-session';
 export const ENGINE_PORT = 4100;
+/**
+ * Student-safe reasons per spawn failure code. `last_error` holds staff detail (machine ids,
+ * URLs, exec output) and must never reach the student; only these fixed sentences do.
+ */
+const SPAWN_REASONS: Record<string, string> = {
+  no_capacity: 'All workspaces were busy for too long.',
+  quota_exceeded: 'All workspaces were busy for too long.',
+  start_timeout: 'The workspace machine did not start in time.',
+  machine_gone: 'The workspace machine disappeared while starting.',
+  machine_unusable: 'The workspace machine could not be used.',
+  bad_url: 'The workspace machine reported an unexpected address.',
+  session_start_failed: 'The workspace could not finish setting itself up.',
+  sync_error: 'The engine could not restore the vault.',
+  health_timeout: 'The workspace never reported that it was ready.',
+};
+
+/** A short, safe sentence for the code at the front of `last_error`, or a generic one. */
+export function spawnFailureReason(lastError: string | null): string {
+  const code = lastError?.split(':')[0]?.trim() ?? '';
+  return SPAWN_REASONS[code] ?? 'The workspace machine could not be prepared.';
+}
+
 const CAPACITY_CODES = new Set(['no_capacity', 'quota_exceeded']);
 
 export interface HealthProbe {
@@ -588,7 +610,7 @@ export class SessionOrchestrator {
     if (row.state === 'spawning' && code && CAPACITY_CODES.has(code)) {
       status.error = { code: 'no_capacity', message: 'All workspaces are busy right now; yours starts as soon as one is free.', retryable: true };
     } else if (row.state === 'failed' || (row.state === 'stopping' && row.end_reason === 'spawn_failed')) {
-      status.error = { code: 'spawn_failed', message: 'Your workspace could not start. Please try again.', retryable: true };
+      status.error = { code: 'spawn_failed', message: 'Your workspace could not start. Please try again.', retryable: true, reason: spawnFailureReason(row.last_error) };
     }
     return status;
   }

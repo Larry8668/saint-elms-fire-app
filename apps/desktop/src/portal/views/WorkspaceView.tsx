@@ -15,7 +15,7 @@ const FAILURE_COPY: Record<FlowFailure, { title: string; body: string }> = {
   unavailable: { title: 'Hosted workspaces are not available', body: 'This university server has no hosted workspaces set up. Use the desktop app instead.' },
   unapproved: { title: 'Your account cannot open a workspace', body: 'Only approved, enrolled students can. Refresh your status, or contact the registrar.' },
   signed_out: { title: 'You were signed out', body: 'Sign in again to open your workspace.' },
-  spawn_failed: { title: 'We could not start your workspace', body: 'Something went wrong on the university’s side. Nothing of yours was lost. Try again.' },
+  spawn_failed: { title: 'We could not start your workspace', body: 'Something went wrong on the university’s side. Nothing of yours was lost. Try again when you are ready.' },
   ended: { title: 'Your workspace ended', body: 'It was closed before it finished starting (signed out elsewhere, or ended by staff). Open a new one.' },
   network: { title: 'Lost contact with the university', body: 'Check your connection, then try again.' },
   unreachable: { title: 'Your workspace is not answering this browser', body: 'The university started it, but it did not answer here within a minute and a half. Try again.' },
@@ -152,7 +152,10 @@ export function WorkspaceView({ onBack }: { onBack: () => void }) {
 
         {flow.phase === 'failed' && (
           <div className="space-y-4">
-            <Notice tone="error">{FAILURE_COPY[flow.reason].body}</Notice>
+            <Notice tone="error">
+              {FAILURE_COPY[flow.reason].body}
+              {flow.detail && <span className="mt-1 block">Reason: {flow.detail}</span>}
+            </Notice>
             <div className="flex flex-wrap gap-2">
               {flow.retryable && (
                 <Button variant="primary" onClick={run}>

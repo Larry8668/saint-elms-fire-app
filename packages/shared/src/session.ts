@@ -43,7 +43,8 @@ export interface StudentSessionStatus {
   url?: string;
   position?: number;
   /** Set while the spawn waits for Instabox capacity, or after a failure. Never holds internals. */
-  error?: { code: string; message: string; retryable: boolean };
+  /** `reason` (spawn_failed only) is a fixed, student-safe sentence on why; never an id, URL or raw output. */
+  error?: { code: string; message: string; retryable: boolean; reason?: string };
   createdAt: string;
   readyAt?: string;
 }

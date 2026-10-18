@@ -206,6 +206,40 @@ test('the hand-off waits through restoring, then leaves; a sync error or silence
   assert.ok(silent.elapsed() >= HANDOFF_TIMEOUT_MS && silent.elapsed() < HANDOFF_TIMEOUT_MS + 2_000);
 });
 
+const failedError = { code: 'spawn_failed', message: 'Your workspace could not start.', retryable: true, reason: 'The engine could not restore the vault.' };
+
+test('a failed spawn shows the reason the university gave and does not ask again', async () => {
+  const h = harness({ start: [session('spawning', {}, 'health')], polls: [session('failed', { error: failedError }, 'health')] });
+  assert.deepEqual(await runWorkspaceFlow(h.deps, h.emit), { phase: 'failed', reason: 'spawn_failed', retryable: true, detail: 'The engine could not restore the vault.' });
+  assert.equal(h.calls.filter((c) => c === 'POST').length, 1);
+});
+
+test('a spawn being torn down after failing is reported at once, not waited out and retried', async () => {
+  const h = harness({ start: [session('spawning', {}, 'create')], polls: [session('stopping', { error: failedError }, 'health')] });
+  const final = await runWorkspaceFlow(h.deps, h.emit);
+  assert.equal(final.phase === 'failed' && final.reason, 'spawn_failed');
+  assert.deepEqual(h.calls, ['POST', 'GET']);
+});
+
+test('every spawn failing never loops: at most one automatic new request', async () => {
+  // Tonight: POST, stopping (old session), ended, POST, stopping, failed, POST ... for ever.
+  const h = harness({
+    start: [session('stopping'), session('spawning', {}, 'create')],
+    polls: [session('ended'), session('stopping'), session('failed', { error: failedError })],
+  });
+  const final = await runWorkspaceFlow(h.deps, h.emit);
+  assert.equal(final.phase === 'failed' && final.reason, 'spawn_failed');
+  assert.ok(h.calls.filter((c) => c === 'POST').length <= 2, `POSTs: ${h.calls.join(',')}`);
+  assert.ok(h.calls.length < 10, 'the flow terminated');
+});
+
+test('a second previous-session stop does not trigger a second automatic restart', async () => {
+  const h = harness({ start: [session('stopping'), session('stopping')], polls: [session('ended')] });
+  const final = await runWorkspaceFlow(h.deps, h.emit);
+  assert.deepEqual(final, { phase: 'failed', reason: 'ended', retryable: true });
+  assert.equal(h.calls.filter((c) => c === 'POST').length, 2);
+});
+
 test('the hand-off goes to the web app with the workspace in ?workspace= when VITE_APP_URL is set, else to the VM', () => {
   const vm = 'https://4100-m1abc.instabox.tech';
   assert.equal(handoffUrl(vm, 'https://sef.vercel.app'), 'https://sef.vercel.app/?workspace=https%3A%2F%2F4100-m1abc.instabox.tech');
