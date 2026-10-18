@@ -36,7 +36,7 @@ On the portal choose **Sign in as a demo student** — First-, Second- or Third-
 | Sky | 62 lit of 286 | 752 lit of 1,039 | 1,383 lit of 1,773 |
 | Story | Mechanics half done; textbook misconceptions open in amber | Strong and well connected; her own physics → maths links | Research mode: Philosopher trails, peer links, a self-correcting misconception |
 
-Two features don't show well on the hosted demo: peer sharing is off on demo accounts (it needs admitted cohorts), and video-link ingestion is blocked by YouTube's bot wall on datacenter IPs — both work in local mode, and an audio or video *file* can always be uploaded instead.
+Two features don't show well on the hosted demo: peer sharing is off on demo accounts (it needs admitted cohorts), and video-link ingestion is blocked by YouTube's bot wall on datacenter IPs — an audio file can always be uploaded instead (video *files* aren't accepted yet, in either mode).
 
 How the hosted path works: the portal sign-in asks the uni for the student's workspace → the uni spawns (or resumes) a **per-student VM** from a golden snapshot → the VM restores the student's vault from the object store → the browser is handed to the web app, which drives that VM cross-origin → every model call goes through a token-checked **model gateway** in front of the Ollama workers. On logout the vault flushes back to the store and the VM is deleted — or kept, for the pinned demo accounts.
 
