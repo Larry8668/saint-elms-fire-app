@@ -13,6 +13,8 @@
 #   MODEL_GATEWAY_TOKEN  the session's gateway token (optional)
 #   OBJECT_STORE_*       vault sync store (PR-41): ENDPOINT, BUCKET, ACCESS_KEY, SECRET_KEY,
 #                        REGION, FORCE_PATH_STYLE; all optional, passed through when set
+#   SEARXNG_URL          the hosted SearXNG for the Philosopher's web search: an https origin (or
+#                        http on loopback), no path (optional; unset leaves web search off)
 #   VAULT_SYNC_ACCOUNT   the uni account whose vault syncs (PR-41b); must be one of
 #                        ENGINE_SEAT_OWNER, or the engine refuses to boot with sync on (optional)
 #   SYNC_FLUSH_TOKEN     the bearer for the engine's flush endpoint (session-stop.sh), at least
@@ -47,6 +49,7 @@ URL_RE='^https?://[A-Za-z0-9.-]+(:[0-9]{1,5})?(/[A-Za-z0-9._~/-]*)?$'
 ID_RE='^[A-Za-z0-9][A-Za-z0-9._-]{0,127}(,[A-Za-z0-9][A-Za-z0-9._-]{0,127}){0,7}$'
 TOKEN_RE='^[A-Za-z0-9._~+/=-]+$'
 ORIGIN='https://[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?(\.[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?)+(:[0-9]{1,5})?'
+SEARXNG_RE='^(https://[A-Za-z0-9.-]+|http://(localhost|127\.0\.0\.1))(:[0-9]{1,5})?$'
 ORIGINS_RE="^${ORIGIN}(,${ORIGIN}){0,7}\$"
 
 # name, pattern, required. Values go to an env file compose reads, so the patterns also keep
@@ -87,6 +90,7 @@ check VAULT_SYNC_ACCOUNT '^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$' 0
 flush=${SYNC_FLUSH_TOKEN:-}
 [[ -z $flush || ${#flush} -ge 24 ]] || die "SYNC_FLUSH_TOKEN is shorter than 24 characters"
 check SYNC_FLUSH_TOKEN "$TOKEN_RE" 0
+check SEARXNG_URL "$SEARXNG_RE" 0
 check ENGINE_ALLOWED_ORIGINS "$ORIGINS_RE" 0
 mv -f "$SEAT_HOME/session.env.tmp" "$SEAT_HOME/session.env"
 log "wrote session.env: $(cut -d= -f1 session.env | tr '\n' ' ')"

@@ -70,6 +70,7 @@ The status body (`StudentSessionStatus` in `@sef/shared`) has `steps[]`, each wi
 | `APP_PUBLIC_ORIGIN` | (unset) | The student web app's origin when it is hosted apart from the VM (for example `https://sef.vercel.app`, see `docs/deploy-vercel.md`). One https origin (http on loopback for tests), else boot stops. Passed to each VM as `ENGINE_ALLOWED_ORIGINS`. |
 | `UNI_PUBLIC_URL` | `http://localhost:4200` | Sent to the VM as `UNI_SERVER_URL`. It must be reachable from Instabox. |
 | `MODEL_GATEWAY_URL` | `https://gateway.invalid/v1` | The central model gateway (PR-43). |
+| `SEARXNG_URL` | (unset) | The hosted SearXNG (`sef-search` in `render.yaml`, for example `https://sef-search.onrender.com`), sent to the VM so the Philosopher's web search works there. An https origin (http on loopback) with no path or query; a trailing slash is dropped; anything else fails the config at boot. Unset, the VM has no web search (the engine would default to `localhost:8888`). |
 | `GATEWAY_TOKEN_SECRET` | (none) | At least 32 bytes. HMAC key for `MODEL_GATEWAY_TOKEN`. Required in production. |
 | `MODEL_GATEWAY_TOKEN_MINUTES` | `480` | Token lifetime. The token is minted when the engine starts and is not refreshed yet (see the follow-ups). |
 | `OBJECT_STORE_ENDPOINT`, `_REGION`, `_BUCKET`, `_ACCESS_KEY`, `_SECRET_KEY`, `_FORCE_PATH_STYLE` | (none) | Passed through to the VM for vault sync (PR-41). If any is unset, the engine runs without sync. |
@@ -78,7 +79,7 @@ The orchestrator also needs `UNI_DATABASE_URL` and migration 5 (`pnpm --filter @
 
 ### What the VM gets (exec `envs` of session-start.sh)
 
-`ENGINE_PUBLIC_HOST` (the host of the published URL, which is why publishing comes before session-start), `ENGINE_SEAT_OWNER` and `VAULT_SYNC_ACCOUNT` (the same account id: with sync on, the engine refuses to boot unless the sync account is a seat owner), `UNI_SERVER_URL`, `MODEL_GATEWAY_URL`, `MODEL_GATEWAY_TOKEN`, `SYNC_FLUSH_TOKEN` (32 random bytes per session, base64url: 43 characters, over the engine's 24-character minimum), the `OBJECT_STORE_*` values, and `ENGINE_ALLOWED_ORIGINS` (the uni's `APP_PUBLIC_ORIGIN`) when set. The command line is a fixed string with no values, because the command line shows up in the box's process list and in API logs.
+`ENGINE_PUBLIC_HOST` (the host of the published URL, which is why publishing comes before session-start), `ENGINE_SEAT_OWNER` and `VAULT_SYNC_ACCOUNT` (the same account id: with sync on, the engine refuses to boot unless the sync account is a seat owner), `UNI_SERVER_URL`, `MODEL_GATEWAY_URL`, `MODEL_GATEWAY_TOKEN`, `SEARXNG_URL` (when set), `SYNC_FLUSH_TOKEN` (32 random bytes per session, base64url: 43 characters, over the engine's 24-character minimum), the `OBJECT_STORE_*` values, and `ENGINE_ALLOWED_ORIGINS` (the uni's `APP_PUBLIC_ORIGIN`) when set. The command line is a fixed string with no values, because the command line shows up in the box's process list and in API logs.
 
 **Which account id:** the engine pins the seat (PR-37d) to the id that the student's own sign-in produces. For a legacy password login that is the legacy `account.id` (for example `ananya`). For a better-auth device sign-in it is `user.id`. The orchestrator uses the same id: the token's `sub` for a legacy caller, and the session's `user.id` otherwise.
 

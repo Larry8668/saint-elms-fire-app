@@ -113,7 +113,7 @@ HOST_RE='^[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?(\.[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])
 URL_RE='^https?://[A-Za-z0-9.-]+(:[0-9]{1,5})?(/[A-Za-z0-9._~/-]*)?$'
 MODEL_RE='^[a-z0-9][a-z0-9._:/-]{0,99}$'
 # Variables that belong to one session: never in a golden image's seat.env.
-SESSION_KEYS_RE='^(ENGINE_PUBLIC_HOST|ENGINE_SEAT_OWNER|UNI_SERVER_URL|MODEL_GATEWAY_[A-Z_]+|OBJECT_STORE_[A-Z_]+|VAULT_SYNC_ACCOUNT|SYNC_FLUSH_TOKEN)='
+SESSION_KEYS_RE='^(ENGINE_PUBLIC_HOST|ENGINE_SEAT_OWNER|UNI_SERVER_URL|MODEL_GATEWAY_[A-Z_]+|OBJECT_STORE_[A-Z_]+|SEARXNG_URL|VAULT_SYNC_ACCOUNT|SYNC_FLUSH_TOKEN)='
 
 load_inputs() {
   local saved_ref="" saved_host="" saved_uni="" saved_chat="" saved_embed="" saved_mode="" saved_model_mode=""
