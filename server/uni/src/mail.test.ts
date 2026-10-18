@@ -11,6 +11,7 @@ interface SentMail {
   to: string;
   subject: string;
   text: string;
+  html: string;
 }
 
 function capturingTransport() {
@@ -55,10 +56,32 @@ test('each template renders its own link and subject', async () => {
   assert.match(sent[1]!.subject, /Verify/);
   assert.match(sent[1]!.text, /verify-email\?token=def/);
   assert.match(sent[2]!.text, /reset-password\/ghi/);
+  const urls = [
+    'https://uni.example/v1/auth/magic-link/confirm?token=abc',
+    'https://uni.example/verify-email?token=def',
+    'https://uni.example/reset-password/ghi',
+  ];
+  sent.forEach((mail, index) => {
+    assert.equal(mail.html.split(`href="${urls[index]}"`).length - 1, 1, 'link appears once as an href');
+    assert.ok(mail.html.includes('Saint Elms University'));
+    assert.ok(mail.html.includes('If you did not request this, you can ignore this message.'));
+    assert.ok(!/<script|<img|<link|@import/i.test(mail.html));
+  });
+  assert.match(sent[0]!.html, /expires in 15 minutes and can be used once/);
   for (const mail of sent) {
     assert.equal(mail.to, 'student@example.test');
     assert.equal(mail.from, configFixture.from);
   }
+});
+
+test('the HTML escapes URLs containing ampersands and quotes', async () => {
+  const { sent, transport } = capturingTransport();
+  const mailer = createMailer(configFixture, transport);
+  await mailer.sendPasswordReset('student@example.test', 'https://uni.example/reset?a=1&b="x"<y>');
+  const mail = sent[0]!;
+  assert.ok(mail.html.includes('href="https://uni.example/reset?a=1&amp;b=&quot;x&quot;&lt;y&gt;"'));
+  assert.ok(!mail.html.includes('b="x"'));
+  assert.ok(mail.text.includes('https://uni.example/reset?a=1&b="x"<y>'));
 });
 
 test('send failures surface a generic error without leaking transport details', async (t) => {
@@ -110,6 +133,7 @@ test('MAIL_RESEND_API_KEY selects the Resend HTTPS transport, with the sandbox s
   assert.equal(calls[0]!.body.from, config.from);
   assert.equal(calls[0]!.body.to, 'student@example.test');
   assert.match(calls[0]!.body.text, /magic\?token=t1/);
+  assert.ok(calls[0]!.body.html!.includes('href="https://uni.example/magic?token=t1"'));
 
   status = 403;
   await assert.rejects(() => mailer.sendPasswordReset('student@example.test', 'https://uni.example/reset'), /Account email delivery failed/);
