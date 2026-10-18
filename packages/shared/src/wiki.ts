@@ -622,7 +622,10 @@ export type WikiPageView = z.infer<typeof WikiPageViewSchema>;
  */
 export const SaveAnswerRequestSchema = z
   .strictObject({
-    sessionId: IdentifierSchema,
+    /** The conversation the answer came from. Exactly one of sessionId and askId is sent. */
+    sessionId: IdentifierSchema.optional(),
+    /** An "Ask your brain" answer the engine kept (POST /api/wiki/ask → done.result.askId). */
+    askId: IdentifierSchema.optional(),
     /** Index into the session's turns; must point at an assistant message. Defaults to the latest one. */
     turnIndex: z.number().int().nonnegative().optional(),
     /**
@@ -635,8 +638,62 @@ export const SaveAnswerRequestSchema = z
     title: z.string().trim().min(1).max(300).optional(),
     saveKind: z.enum(['synthesis', 'question']).optional(),
   })
-  .strict();
+  .strict()
+  .refine((body) => (body.sessionId === undefined) !== (body.askId === undefined), { message: 'Send exactly one of sessionId or askId' });
 export type SaveAnswerRequest = z.infer<typeof SaveAnswerRequestSchema>;
+
+/** POST /api/wiki/ask — a question answered only from the student's own compiled pages. */
+export const WikiAskRequestSchema = z.strictObject({
+  question: z.string().trim().min(3).max(1000),
+});
+export type WikiAskRequest = z.infer<typeof WikiAskRequestSchema>;
+
+const askPageRef = z.strictObject({
+  pageId: IdentifierSchema,
+  title: z.string(),
+  kind: WikiPageEntrySchema.shape.kind,
+  /**
+   * A source summary, synthesis or question page is model-written: it can be named as
+   * context but is never evidence — the same rule read_wiki_page applies to teachers.
+   */
+  generated: z.boolean(),
+});
+export const WikiAskPageSchema = askPageRef;
+export type WikiAskPage = z.infer<typeof WikiAskPageSchema>;
+
+/**
+ * What "Ask your brain" answered. Every citation names a page that was in the model's
+ * context — anything else was dropped and is listed. `evidence` is always 'student_wiki':
+ * these are the student's own pages, never course evidence.
+ */
+export const WikiAskResultSchema = z.strictObject({
+  schemaVersion: ContractVersionSchema,
+  /** Present when the answer was kept for "Save to wiki"; null when nothing was composed. */
+  askId: IdentifierSchema.nullable(),
+  question: z.string(),
+  answer: z.string(),
+  outcome: z.enum(['answered', 'empty_brain', 'no_hits', 'model_unavailable']),
+  citations: z.array(askPageRef),
+  /** Citations the model wrote that named no page it was shown — removed from the answer. */
+  droppedCitations: z.array(z.string()),
+  /** Pages in the vault the search ran over. */
+  pagesSearched: z.number().int().nonnegative(),
+  /** The top hits whose permitted views were read into the model's context. */
+  pagesRead: z.array(askPageRef),
+  searchMode: SearchModeSchema,
+  /** The "served by" label, or null when no model was called. */
+  model: z.string().nullable(),
+  evidence: z.literal('student_wiki'),
+});
+export type WikiAskResult = z.infer<typeof WikiAskResultSchema>;
+
+/** The SSE frames of POST /api/wiki/ask: progress first, then text, then one done (or error). */
+export type WikiAskStreamEvent =
+  | { type: 'status'; message: string }
+  | { type: 'pages'; pages: WikiAskPage[] }
+  | { type: 'delta'; text: string }
+  | { type: 'done'; result: WikiAskResult }
+  | { type: 'error'; message: string; code?: string };
 
 /**
  * POST /api/brain/pages/:key/restore — writes the named historical revision as a NEW

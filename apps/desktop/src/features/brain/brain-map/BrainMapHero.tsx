@@ -9,6 +9,7 @@ import { useMediaQuery } from '@/lib/use-media-query';
 import { buildBrainMap, describeBrainMap, MAP_HEX, type BrainMap } from './layout';
 import { BrainRenderer, type View } from './renderer';
 import type { SearchResult } from './search';
+import { AskModeToggle } from '../ask/AskBrainPanel';
 
 const REPLAY_MS = 9000;
 const MIN_K = 1;
@@ -22,6 +23,8 @@ export interface SearchProps {
   onQuery: (query: string) => void;
   /** The debounced result for that query, or null when there is no query. */
   result: SearchResult | null;
+  /** "Ask your brain": when on, Enter sends the query as a question and `panel` shows the answer. */
+  ask?: { on: boolean; onToggle: (on: boolean) => void; onSubmit: (question: string) => void; panel: ReactNode };
 }
 
 type Tip = { index: number; x: number; y: number };
@@ -338,7 +341,7 @@ function BrainMapCanvas({ map, onOpen, onScrollToList, search }: { map: BrainMap
           <Dot />
           <Stat value={stats.openQuestions} label={stats.openQuestions === 1 ? 'open question' : 'open questions'} hex={MAP_HEX.question} />
         </div>
-        <div className="pointer-events-auto relative mt-5 w-[min(380px,100%)]">
+        <div className={cn('pointer-events-auto relative mt-5', search.ask?.on ? 'w-[min(480px,100%)]' : 'w-[min(380px,100%)]')}>
           <div className="glass flex h-11 items-center gap-2.5 rounded-2xl pr-2 pl-3.5 transition focus-within:border-aurora-400/40 focus-within:shadow-[0_0_0_3px_oklch(0.78_0.14_172/0.12)]">
             <Search className="size-4 shrink-0 text-night-400" aria-hidden />
             <input
@@ -356,12 +359,14 @@ function BrainMapCanvas({ map, onOpen, onScrollToList, search }: { map: BrainMap
                   e.preventDefault();
                   if (search.query) search.onQuery('');
                   else e.currentTarget.blur();
+                } else if (e.key === 'Enter' && search.ask?.on) {
+                  if (search.query.trim()) search.ask.onSubmit(search.query.trim());
                 } else if (e.key === 'Enter' && search.result?.ids[0]) {
                   focusNode(search.result.ids[0]);
                 }
               }}
-              placeholder="Search your brain…"
-              aria-label="Search your pages by title, summary or claim"
+              placeholder={search.ask?.on ? 'Ask your brain a question…' : 'Search your brain…'}
+              aria-label={search.ask?.on ? 'Ask a question answered only from your own pages' : 'Search your pages by title, summary or claim'}
               aria-describedby="brain-search-count"
               className="h-full min-w-0 flex-1 bg-transparent text-[14px] text-night-100 placeholder:text-night-500 focus:outline-none [&::-webkit-search-cancel-button]:hidden"
             />
@@ -372,14 +377,18 @@ function BrainMapCanvas({ map, onOpen, onScrollToList, search }: { map: BrainMap
             ) : (
               <kbd className="rounded-md border border-white/10 px-1.5 py-0.5 font-sans text-[10.5px] text-night-400">/</kbd>
             )}
+            {search.ask && <AskModeToggle mode={search.ask.on ? 'ask' : 'search'} onChange={(mode) => search.ask!.onToggle(mode === 'ask')} />}
           </div>
           <div id="brain-search-count" aria-live="polite" className="mt-1.5 h-4 pl-1 text-[11.5px] text-night-400">
-            {search.result &&
+            {search.ask?.on
+              ? 'Enter asks · answered only from your own pages, with citations'
+              : search.result &&
               (search.result.ids.length
                 ? `${search.result.ids.length.toLocaleString('en')} of ${stats.pages.toLocaleString('en')} pages match · the list below is filtered`
                 : 'No page matches')}
           </div>
-          {searchOpen && search.result && search.result.ids.length > 0 && (
+          {search.ask?.on && search.ask.panel && <div className="absolute top-[4.25rem] right-0 left-0 z-20 max-h-[min(440px,52vh)] overflow-y-auto rounded-2xl bg-night-950/90 shadow-[0_20px_60px_-20px_oklch(0_0_0/0.8)] backdrop-blur-md">{search.ask.panel}</div>}
+          {!search.ask?.on && searchOpen && search.result && search.result.ids.length > 0 && (
             <ul className="glass-strong absolute top-12 right-0 left-0 z-20 max-h-72 overflow-y-auto rounded-2xl p-1.5 shadow-[0_20px_60px_-20px_oklch(0_0_0/0.8)]">
               {search.result.ids.slice(0, 8).map((id) => {
                 const n = map.nodes[indexById.get(id) ?? -1];

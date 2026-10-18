@@ -2,6 +2,9 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import {
   LearningEventSchema,
+  SaveAnswerRequestSchema,
+  WikiAskRequestSchema,
+  WikiAskResultSchema,
   SearchMatchKindSchema,
   SearchModeSchema,
   SourceCitationSchema,
@@ -211,4 +214,30 @@ test('learning events only credit student evidence toward mastery', () => {
     rejects(LearningEventSchema, { ...events.modelEvent, actor, knowledgeOnly: false });
   }
   rejects(LearningEventSchema, { ...events.studentEvent, evidence: [] });
+});
+
+test('save takes exactly one of a session turn or a kept ask; an ask needs a real question', () => {
+  assert.equal(SaveAnswerRequestSchema.safeParse({ sessionId: 'sess-1' }).success, true);
+  assert.equal(SaveAnswerRequestSchema.safeParse({ askId: 'ask-1', title: 'Band gap' }).success, true);
+  rejects(SaveAnswerRequestSchema, {}, 'neither');
+  rejects(SaveAnswerRequestSchema, { sessionId: 'sess-1', askId: 'ask-1' }, 'both');
+  assert.equal(WikiAskRequestSchema.safeParse({ question: 'What is a band gap?' }).success, true);
+  rejects(WikiAskRequestSchema, { question: '  ' });
+  rejects(WikiAskRequestSchema, { question: 'What?', extra: true });
+  const result = {
+    schemaVersion: 2,
+    askId: null,
+    question: 'q',
+    answer: 'a',
+    outcome: 'no_hits',
+    citations: [],
+    droppedCitations: [],
+    pagesSearched: 0,
+    pagesRead: [],
+    searchMode: 'keyword_only',
+    model: null,
+    evidence: 'student_wiki',
+  };
+  assert.equal(WikiAskResultSchema.safeParse(result).success, true);
+  rejects(WikiAskResultSchema, { ...result, evidence: 'course' }, 'an ask is never course evidence');
 });

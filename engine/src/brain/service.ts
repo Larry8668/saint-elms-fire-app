@@ -27,6 +27,7 @@ import { readJson, writeJson } from '../lib/fs';
 import { sha256Hex } from '../lib/hash';
 import { ModelConfigError, resolveModel } from '../models/registry';
 import type { Session } from '../sessions/store';
+import type { KeptAsk } from './ask';
 import type { SettingsReader } from '../settings/store';
 import { buildCourseGraph, type CourseGraph } from './course-graph';
 import { buildGraphView, type BrainGraphPage } from './graph';
@@ -496,6 +497,51 @@ export class BrainService {
       extraction: { method: 'text', text: lines },
     });
     log.info('wiki_answer_saved', { sessionId: session.id, turnIndex: index, sourceId: result.source.id, teacher: session.teacher });
+    return result;
+  }
+
+  /**
+   * Freezes one "Ask your brain" answer the same way: an 'answer' source (origin model)
+   * whose document carries the question, the answer and the pages it cited, and a queued
+   * job. The answer was composed from the student's own pages, so the frozen document says
+   * so — it is never filed as course evidence, and the proposal accept is still the writer.
+   */
+  async saveAsk(
+    ask: KeptAsk,
+    input: { title?: string; saveKind?: 'synthesis' | 'question' } = {},
+  ): Promise<Awaited<ReturnType<SourceIngestor['ingest']>>> {
+    const title = input.title ?? `Asked my brain: ${ask.question.replace(/\s+/g, ' ').slice(0, 80)}`;
+    const lines = [
+      `# ${title}`,
+      '',
+      `Asked: ${ask.question}`,
+      `Model: ${ask.model} — composed only from my own wiki pages (not course material)`,
+      `Ask: ${ask.id}`,
+      input.saveKind ? `Requested shape: ${input.saveKind}` : null,
+      '',
+      ask.answer.trim(),
+      '',
+      '## What the answer drew on',
+      ...(ask.citations.length
+        ? ask.citations.map((page) => `- [brain] ${page.pageId} — ${page.title}${page.generated ? ' (model-written page)' : ''}`)
+        : ['- nothing cited']),
+      '',
+      '## What it looked at',
+      `- wiki_ask: ${ask.pagesRead.map((page) => page.pageId).join(', ') || 'no pages'}`,
+    ]
+      .filter((line): line is string => line !== null)
+      .join('\n');
+    const result = await this.deps.sources.ingest({
+      kind: 'answer',
+      title,
+      mediaType: 'text/markdown',
+      bytes: new TextEncoder().encode(lines),
+      // An ask has no teacher conversation; the ref names the kept ask and the tutor role's voice.
+      session: { sessionId: ask.id, teacher: 'guide', firstTurn: 0, lastTurn: 0 },
+      attribution: { creator: `Ask your brain · ${ask.model}` },
+      extraction: { method: 'text', text: lines },
+    });
+    log.info('wiki_ask_saved', { askId: ask.id, sourceId: result.source.id });
     return result;
   }
 
