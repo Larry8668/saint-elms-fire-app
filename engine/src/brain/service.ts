@@ -19,13 +19,13 @@ import {
   type WikiProposalRecord,
 } from '@sef/shared';
 import { z } from 'zod';
-import { generateStructured } from '../agents/factory';
+import { generateStructured, StructuredOutputError } from '../agents/factory';
 import { QUIZ_INSTRUCTIONS } from '../agents/prompts';
 import { log } from '../config';
 import type { ContentStore } from '../content/store';
 import { readJson, writeJson } from '../lib/fs';
 import { sha256Hex } from '../lib/hash';
-import { resolveModel } from '../models/registry';
+import { ModelConfigError, resolveModel } from '../models/registry';
 import type { Session } from '../sessions/store';
 import type { SettingsReader } from '../settings/store';
 import { buildCourseGraph, type CourseGraph } from './course-graph';
@@ -73,6 +73,50 @@ interface Quiz {
   questions: QuizQuestion[];
 }
 
+/** What a served quiz looks like to the student: the answers stay on the engine. */
+export interface QuizPayload {
+  id: string;
+  key: string;
+  concept: string;
+  model: string;
+  questions: Array<{ question: string; options: string[] }>;
+}
+
+/**
+ * A quiz being written in the background. Generation through a hosted gateway outlives the
+ * edge's request timeout, so the create route answers at once and the client polls this.
+ * Held in memory on the profile's workspace: an engine restart loses an unfinished quiz
+ * (the client sees "not found" and offers to try again).
+ */
+export interface QuizJobView {
+  jobId: string;
+  key: string;
+  stage: 'writing' | 'ready' | 'failed';
+  quiz?: QuizPayload;
+  error?: string;
+}
+
+/** Thrown before any job starts when the concept key names nothing in the course graph. */
+export class UnknownConceptError extends Error {}
+
+export const QUIZ_MALFORMED = 'The model did not produce any well-formed questions. Try again.';
+/** Lesson text sent to the quiz master: enough to ground three questions, small enough to stay quick. */
+const QUIZ_LESSONS = 2;
+const QUIZ_LESSON_CHARS = 2_200;
+/** Finished jobs are kept this long so a slow poll still finds its quiz. */
+const QUIZ_JOB_TTL_MS = 30 * 60_000;
+
+/** A transport or configuration failure is named as such; anything else is a malformed result. */
+function quizFailure(error: unknown): { message: string; retry: boolean } {
+  const message = (error as Error)?.message ?? String(error);
+  if (error instanceof ModelConfigError) return { message, retry: false };
+  if (/ECONNREFUSED|fetch failed|connect|ENOTFOUND|Ollama HTTP 5\d\d/i.test(message)) {
+    return { message: 'Could not reach the model. Check Settings → Models.', retry: false };
+  }
+  if (/model\b.*\bnot found|try pulling/i.test(message)) return { message: `Model not available: ${message}`, retry: false };
+  return { message: QUIZ_MALFORMED, retry: true };
+}
+
 /** A quiz result is persisted as its own artifact so evidenceIds can resolve to real scores. */
 interface QuizResult {
   id: string;
@@ -114,8 +158,14 @@ export class BrainService {
       wiki: WikiStore;
       sources: SourceIngestor;
       identity: () => Promise<ProfileIdentity>;
+      /** The structured generator; tests pass a fake model here. */
+      generate?: typeof generateStructured;
     },
   ) {}
+
+  private readonly quizJobs = new Map<string, QuizJobView & { finishedAt?: number }>();
+  /** concept key → the job writing it now: one quiz in flight per concept per profile. */
+  private readonly quizzesInFlight = new Map<string, string>();
 
   async courseGraph(): Promise<CourseGraph> {
     const lessons = await this.content.academicLessons();
@@ -531,24 +581,89 @@ export class BrainService {
     return { reading };
   }
 
-  async createQuiz(key: string) {
+  /**
+   * Starts writing a quiz for one concept and returns its job at once. A second call for the
+   * same concept while one is being written joins that job instead of starting another.
+   */
+  async startQuiz(key: string): Promise<QuizJobView> {
+    this.pruneQuizJobs();
+    const running = this.quizzesInFlight.get(key);
+    const existing = running ? this.quizJobs.get(running) : undefined;
+    if (existing?.stage === 'writing') return this.quizJobView(existing);
+    const graph = await this.courseGraph();
+    if (!graph.concepts.has(key)) throw new UnknownConceptError(`Unknown concept ${key}`);
+    const job: QuizJobView & { finishedAt?: number } = { jobId: `qjob_${randomUUID()}`, key, stage: 'writing' };
+    this.quizJobs.set(job.jobId, job);
+    this.quizzesInFlight.set(key, job.jobId);
+    log.info('quiz_job_started', { jobId: job.jobId, key });
+    void this.createQuiz(key)
+      .then((quiz) => {
+        job.stage = 'ready';
+        job.quiz = quiz;
+      })
+      .catch((error: unknown) => {
+        job.stage = 'failed';
+        job.error = error instanceof UnknownConceptError ? error.message : quizFailure(error).message;
+        log.warn('quiz_job_failed', { jobId: job.jobId, key, error: (error as Error)?.message });
+      })
+      .finally(() => {
+        job.finishedAt = Date.now();
+        if (this.quizzesInFlight.get(key) === job.jobId) this.quizzesInFlight.delete(key);
+      });
+    return this.quizJobView(job);
+  }
+
+  /** The current state of a background quiz, or null when this engine has no such job. */
+  quizJob(jobId: string): QuizJobView | null {
+    this.pruneQuizJobs();
+    const job = this.quizJobs.get(jobId);
+    return job ? this.quizJobView(job) : null;
+  }
+
+  private quizJobView({ finishedAt: _f, ...job }: QuizJobView & { finishedAt?: number }): QuizJobView {
+    return { ...job };
+  }
+
+  private pruneQuizJobs() {
+    const cutoff = Date.now() - QUIZ_JOB_TTL_MS;
+    for (const [id, job] of this.quizJobs) if (job.finishedAt !== undefined && job.finishedAt < cutoff) this.quizJobs.delete(id);
+  }
+
+  /** Writes and stores one quiz. Slow on a hosted gateway: callers go through startQuiz. */
+  async createQuiz(key: string): Promise<QuizPayload> {
     const graph = await this.courseGraph();
     const concept = graph.concepts.get(key);
-    if (!concept) throw new Error(`Unknown concept ${key}`);
+    if (!concept) throw new UnknownConceptError(`Unknown concept ${key}`);
     const page = await this.vault.get(key);
     const settings = await this.settings.get();
-    const resolved = resolveModel(settings, 'tutor');
-    const lessonText = concept.mentions.slice(0, 2).map((l) => `### ${l.title}\n${l.markdown.slice(0, 3500)}`).join('\n\n');
+    // Thinking makes structured runs crawl; three MCQs from given text need none.
+    const resolved = resolveModel(settings, 'tutor', { think: false });
+    const lessonText = concept.mentions
+      .slice(0, QUIZ_LESSONS)
+      .map((l) => `### ${l.title}\n${l.markdown.slice(0, QUIZ_LESSON_CHARS)}`)
+      .join('\n\n');
     const open = page?.misconceptions.filter((m) => !m.resolved).map((m) => m.claim).join('; ');
-    const { object } = await generateStructured({
-      agentId: 'quiz-master',
-      instructions: QUIZ_INSTRUCTIONS,
-      resolved,
-      prompt: `CONCEPT: ${concept.label}\n${open ? `OPEN MISCONCEPTION: ${open}\n` : ''}Write 3 questions.\n\nLESSON TEXT:\n${lessonText}`,
-      schema: QuizDraftSchema,
-    });
-    const questions = finalizeQuestions(object);
-    if (!questions.length) throw new Error('The model did not produce any well-formed questions. Try again.');
+    const generate = this.deps.generate ?? generateStructured;
+    let questions: QuizQuestion[] = [];
+    // One internal retry on a malformed result; a transport failure is not retried.
+    for (let attempt = 1; attempt <= 2 && !questions.length; attempt++) {
+      try {
+        const { object } = await generate({
+          agentId: 'quiz-master',
+          instructions: QUIZ_INSTRUCTIONS,
+          resolved,
+          prompt: `CONCEPT: ${concept.label}\n${open ? `OPEN MISCONCEPTION: ${open}\n` : ''}Write exactly 3 questions.\n\nLESSON TEXT:\n${lessonText}`,
+          schema: QuizDraftSchema,
+        });
+        questions = finalizeQuestions(object);
+        if (!questions.length) log.warn('quiz_malformed', { key, attempt });
+      } catch (error) {
+        const failure = quizFailure(error);
+        if (!failure.retry || attempt === 2) throw error;
+        log.warn('quiz_malformed', { key, attempt, error: (error as Error)?.message });
+      }
+    }
+    if (!questions.length) throw new StructuredOutputError(QUIZ_MALFORMED);
     const quiz: Quiz = { questions, id: randomUUID(), key, concept: concept.label, createdAt: new Date().toISOString(), model: resolved.label };
     await writeJson(path.join(this.quizzesDir, `${quiz.id}.json`), quiz);
     log.info('quiz_created', { key, questions: quiz.questions.length });

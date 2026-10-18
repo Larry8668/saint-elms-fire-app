@@ -58,7 +58,7 @@ function defaultSettings(): StoredSettings {
   return {
     uniServerUrl: d.uniServerUrl,
     searxngUrl: d.searxngUrl,
-    thinking: true,
+    thinking: d.thinking,
     providers: [
       { id: 'ollama', kind: 'ollama', label: 'Ollama (on this device)', baseUrl: d.ollamaUrl },
       // What a laptop stores; on a hosted session withGateway() overlays the gateway on every read.

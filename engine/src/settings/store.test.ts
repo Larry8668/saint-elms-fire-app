@@ -99,3 +99,23 @@ test('proactivity defaults are private, backfilled for older files, and merged p
   assert.equal(SettingsPatchSchema.safeParse({ proactivity: { kinds: { bogus: true } } }).success, false);
   assert.equal((await new ProfileSettingsStore(device, profilePaths('frank').privateSettings).get()).proactivity.nudges, true, 'one student’s choice never leaks to another');
 });
+
+test('ENGINE_THINKING_DEFAULT sets thinking only for a profile with nothing stored', async () => {
+  const { parseThinkingDefault } = await import('../config');
+  assert.equal(parseThinkingDefault({}), true, 'unset keeps the laptop default');
+  assert.equal(parseThinkingDefault({ ENGINE_THINKING_DEFAULT: 'false' }), false);
+  assert.equal(parseThinkingDefault({ ENGINE_THINKING_DEFAULT: ' FALSE ' }), false);
+  assert.equal(parseThinkingDefault({ ENGINE_THINKING_DEFAULT: 'true' }), true);
+
+  const saved = config.defaults.thinking;
+  try {
+    (config.defaults as { thinking: boolean }).thinking = false;
+    const dir = await mkdtemp(path.join(tmpdir(), 'sef-thinking-default-'));
+    const device = new SettingsStore(path.join(dir, 'settings.json'));
+    assert.equal((await new ProfileSettingsStore(device, path.join(dir, 'fresh.json')).get()).thinking, false, 'a fresh profile takes the env default');
+    await writeJson(path.join(dir, 'stored.json'), { thinking: true });
+    assert.equal((await new ProfileSettingsStore(device, path.join(dir, 'stored.json')).get()).thinking, true, 'a stored choice wins');
+  } finally {
+    (config.defaults as { thinking: boolean }).thinking = saved;
+  }
+});

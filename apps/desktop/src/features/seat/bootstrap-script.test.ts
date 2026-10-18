@@ -64,6 +64,7 @@ test('a dry run renders the engine env for the published host and the given uni'
     BRAIN_MODEL: 'gemma4:e2b',
     VISION_MODEL: 'gemma4:e2b',
     EMBED_MODEL: 'embeddinggemma',
+    ENGINE_THINKING_DEFAULT: 'true',
     SEED_DEMO: 'false',
     NODE_ENV: 'production',
   });
@@ -118,6 +119,13 @@ test('a bare re-run reuses the saved inputs; a re-run with a new value reconfigu
   assert.equal(envOf(moved.read('seat.env')).ENGINE_PUBLIC_HOST, GOOD.SEAT_PUBLIC_HOST);
 });
 
+test('an explicit SEAT_CHAT_MODEL still wins on a central seat', () => {
+  const run = bootstrap(freshHome(), { ...GOOD, SEAT_MODEL_MODE: 'central', SEAT_CHAT_MODEL: 'gemma4:e2b' });
+  assert.equal(run.code, 0, run.output);
+  assert.equal(envOf(run.read('seat.env')).TUTOR_MODEL, 'gemma4:e2b');
+  assert.equal(envOf(run.read('seat.env')).ENGINE_THINKING_DEFAULT, 'false');
+});
+
 const HOSTILE: Array<[string, Record<string, string>]> = [
   ['a host with a shell metacharacter', { SEAT_PUBLIC_HOST: '4100-x.instabox.tech;reboot' }],
   ['a host that is not a hostname', { SEAT_PUBLIC_HOST: 'http://4100-x.instabox.tech' }],
@@ -156,6 +164,10 @@ test('central model mode skips Ollama and the models, and leaves the gateway to 
   const env = envOf(run.read('seat.env'));
   assert.equal(env.OLLAMA_URL, undefined);
   assert.equal(env.ENGINE_PUBLIC_HOST, GOOD.SEAT_PUBLIC_HOST);
+  // The GPU gateway runs e4b; e2b writes malformed structured output there. Thinking starts off.
+  for (const role of ['TUTOR_MODEL', 'BRAIN_MODEL', 'VISION_MODEL']) assert.equal(env[role], 'gemma4:e4b', role);
+  assert.equal(env.ENGINE_THINKING_DEFAULT, 'false');
+  assert.match(run.read('bootstrap.inputs'), /^SEAT_CHAT_MODEL=gemma4:e4b$/m);
   const marks = steps(run.read('status'));
   assert.ok(!marks.includes('ollama start') && !marks.includes('models start'), marks.join());
   assert.ok(marks.includes('build done') && marks.includes('engine done'));
@@ -172,6 +184,8 @@ test('golden mode builds, verifies the image and scrubs, with no per-session val
   for (const step of ['ollama', 'models', 'engine']) assert.ok(!marks.includes(`${step} start`), `${step} skipped`);
   assert.doesNotMatch(run.read('seat.env'), SESSION_KEYS);
   assert.equal(envOf(run.read('seat.env')).ENGINE_DATA_DIR, '/seat/engine-data');
+  assert.equal(envOf(run.read('seat.env')).TUTOR_MODEL, 'gemma4:e4b', 'a golden image is central: e4b');
+  assert.equal(envOf(run.read('seat.env')).ENGINE_THINKING_DEFAULT, 'false');
   assert.equal(run.read('session-start.sh'), readFileSync(SESSION_START, 'utf8'));
   assert.deepEqual(Object.keys(JSON.parse(run.read('golden.json'))), ['ref', 'commit', 'image', 'builtAt']);
   assert.equal(JSON.parse(run.read('golden.json')).image, 'node:24-slim');

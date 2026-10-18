@@ -81,6 +81,7 @@ import type {
   WikiJob,
   WikiProposalRecord,
 } from '@sef/shared';
+import type { QuizJobStart, QuizJobState } from '@/features/brain/quiz-job';
 import { log } from './log';
 import { currentEngineTarget, isRemoteTarget } from './seat';
 import { edgeCause, seatWaker, type WakeCause, type WakeOutcome } from './seat-wake';
@@ -210,6 +211,7 @@ export interface QuizPayload {
   model: string;
   questions: Array<{ question: string; options: string[] }>;
 }
+export type { QuizJobStart, QuizJobState };
 export interface QuizResult {
   score: number;
   outOf: number;
@@ -334,7 +336,9 @@ export const api = {
   acceptProposal: (id: string, only?: { pageIds: string[] }) => post<ProposalAcceptance>(`/api/proposals/${encodeURIComponent(id)}/accept`, only ?? {}),
   rejectProposal: (id: string, note?: string) => post<WikiProposalRecord>(`/api/proposals/${encodeURIComponent(id)}/reject`, { note }),
 
-  createQuiz: (key: string) => post<QuizPayload>(`/api/quiz/${encodeURIComponent(key)}`),
+  /** Starts writing a quiz in the background (202); poll quizJob until it is ready. */
+  createQuiz: (key: string) => post<QuizJobStart>(`/api/quiz/${encodeURIComponent(key)}`),
+  quizJob: (jobId: string) => request<QuizJobState<QuizPayload>>(`/api/quiz/jobs/${encodeURIComponent(jobId)}`),
   submitQuiz: (id: string, answers: number[], attemptId: string) => post<QuizResult>(`/api/quiz/${encodeURIComponent(id)}/submit`, { answers, attemptId }),
 
 

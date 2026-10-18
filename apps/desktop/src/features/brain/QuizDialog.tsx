@@ -8,6 +8,7 @@ import { Dialog } from '@/components/ui/overlays';
 import { WorkingLabel } from '@/components/ui/loading';
 import { Skeleton } from '@/components/ui/primitives';
 import { api, type QuizPayload, type QuizResult } from '@/lib/api';
+import { waitForQuiz } from './quiz-job';
 import { cn } from '@/lib/cn';
 import { useInvalidateBrain } from '@/lib/queries';
 import { BrainDiff } from './BrainDiff';
@@ -21,7 +22,8 @@ export function QuizDialog({ conceptKey, conceptLabel, open, onOpenChange }: { c
   const invalidateBrain = useInvalidateBrain();
 
   const create = useMutation({
-    mutationFn: () => api.createQuiz(conceptKey),
+    // The engine writes the quiz in the background (it can outlast the hosted edge's timeout).
+    mutationFn: () => waitForQuiz(() => api.createQuiz(conceptKey), api.quizJob),
     onSuccess: (q) => {
       setQuiz(q);
       setAnswers(q.questions.map(() => -1));
@@ -29,7 +31,6 @@ export function QuizDialog({ conceptKey, conceptLabel, open, onOpenChange }: { c
       // One attempt id per served set: a retried submit replays its stored result, never a second mark.
       setAttemptId(crypto.randomUUID());
     },
-    onError: (e) => toast.error((e as Error).message),
   });
 
   const submit = useMutation({
@@ -59,7 +60,7 @@ export function QuizDialog({ conceptKey, conceptLabel, open, onOpenChange }: { c
     >
       {create.isPending && (
         <div className="space-y-5">
-          <WorkingLabel label="Writing questions from your lesson" startedAt={create.submittedAt || undefined} className="text-beacon-300" />
+          <WorkingLabel label="Writing your quiz…" startedAt={create.submittedAt || undefined} className="text-beacon-300" />
           {[0, 1].map((i) => (
             <div key={i} className="space-y-2.5">
               <Skeleton className="h-4 w-4/5" />
@@ -68,6 +69,16 @@ export function QuizDialog({ conceptKey, conceptLabel, open, onOpenChange }: { c
               ))}
             </div>
           ))}
+        </div>
+      )}
+      {create.isError && !quiz && (
+        <div className="space-y-4" role="alert">
+          <p className="text-sm text-rose-300">{(create.error as Error).message}</p>
+          <div className="flex justify-end">
+            <Button variant="primary" onClick={() => create.mutate()}>
+              Try again
+            </Button>
+          </div>
         </div>
       )}
       {quiz && (
@@ -126,7 +137,14 @@ export function QuizDialog({ conceptKey, conceptLabel, open, onOpenChange }: { c
               {result.replayed && <p className="text-[12px] text-night-500">That attempt was already recorded — this is its stored result, not a second mark.</p>}
               <BrainDiff diff={result.diff} applied={[]} rejected={[]} />
               <div className="flex justify-end gap-2">
-                <Button variant="ghost" onClick={() => create.mutate()}>
+                <Button
+                  variant="ghost"
+                  onClick={() => {
+                    setQuiz(null);
+                    setResult(null);
+                    create.mutate();
+                  }}
+                >
                   Another set
                 </Button>
                 <Button variant="primary" onClick={() => onOpenChange(false)}>
