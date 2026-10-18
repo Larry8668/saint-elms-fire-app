@@ -5,13 +5,13 @@ import { Notice } from '../components/Notice';
 import { PortalShell } from '../components/PortalShell';
 import { SubmitButton } from '../components/SubmitButton';
 import type { PortalMode } from '../portal-modes';
-import { registerAccount } from '../portal-api';
+import { registerAccount, mailOutcome, type MailOutcome } from '../portal-api';
 import { useSubmit } from '../use-submit';
 import { SIGN_IN_LINKS } from './SignInView';
 
 const PASSWORD_HINT = 'At least 8 characters.';
 
-export function RegisterView({ go, onSent }: { go: (mode: PortalMode) => void; onSent: (email: string) => void }) {
+export function RegisterView({ go, onSent }: { go: (mode: PortalMode) => void; onSent: (email: string, outcome: MailOutcome) => void }) {
   const [name, setName] = useState('');
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
@@ -30,9 +30,9 @@ export function RegisterView({ go, onSent }: { go: (mode: PortalMode) => void; o
           event.preventDefault();
           void run(async () => {
             const address = email.trim();
-            await registerAccount({ name: name.trim(), email: address, password });
+            const outcome = await mailOutcome(() => registerAccount({ name: name.trim(), email: address, password }));
             setPassword('');
-            onSent(address);
+            onSent(address, outcome);
           });
         }}
       >

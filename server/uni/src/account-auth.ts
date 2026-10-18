@@ -1,3 +1,4 @@
+import { AsyncLocalStorage } from 'node:async_hooks';
 import { betterAuth } from 'better-auth';
 import { bearer, deviceAuthorization, magicLink, twoFactor } from 'better-auth/plugins';
 import type { Pool } from 'pg';
@@ -105,6 +106,36 @@ export function accountAuthOrigins(
  * Options for the pinned better-auth release. Exported so schema tooling and tests exercise the
  * exact configuration the server runs.
  */
+/**
+ * better-auth runs every mail callback through `runInBackgroundOrAwait`, which logs a thrown
+ * error and carries on, so a failed send still answers 200 and the portal said "Sent". The
+ * callbacks record the failure here instead, and the handler reports it to the caller.
+ */
+const mailDelivery = new AsyncLocalStorage<{ failed: boolean }>();
+export const MAIL_DELIVERY_HEADER = 'x-mail-delivery';
+
+async function deliver(send: () => Promise<void>): Promise<void> {
+  try {
+    await send();
+  } catch (error) {
+    const scope = mailDelivery.getStore();
+    if (scope) scope.failed = true;
+    throw error;
+  }
+}
+
+/** Marks the response `x-mail-delivery: failed` when any mail sent while serving it failed. */
+export function withMailDeliveryReport(handler: (request: Request) => Promise<Response>): (request: Request) => Promise<Response> {
+  return async (request) => {
+    const scope = { failed: false };
+    const response = await mailDelivery.run(scope, () => handler(request));
+    if (!scope.failed) return response;
+    const headers = new Headers(response.headers);
+    headers.set(MAIL_DELIVERY_HEADER, 'failed');
+    return new Response(response.body, { status: response.status, statusText: response.statusText, headers });
+  };
+}
+
 export function accountAuthOptions({ pool, mail, publicUrl, secret, trustedOrigins = [] }: AccountAuthOptions) {
   return {
     basePath: '/v1/auth',
@@ -131,14 +162,14 @@ export function accountAuthOptions({ pool, mail, publicUrl, secret, trustedOrigi
       autoSignIn: false,
       revokeSessionsOnPasswordReset: true,
       sendResetPassword: async ({ user, url }: { user: { email: string }; url: string }) => {
-        await mail.sendPasswordReset(user.email, url);
+        await deliver(() => mail.sendPasswordReset(user.email, url));
       },
     },
     emailVerification: {
       sendOnSignUp: true,
       autoSignInAfterVerification: false,
       sendVerificationEmail: async ({ user, url }: { user: { email: string }; url: string }) => {
-        await mail.sendVerificationEmail(user.email, url);
+        await deliver(() => mail.sendVerificationEmail(user.email, url));
       },
     },
     session: {
@@ -164,7 +195,7 @@ export function accountAuthOptions({ pool, mail, publicUrl, secret, trustedOrigi
         expiresIn: MAGIC_LINK_TTL_SECONDS,
         storeToken: 'hashed',
         sendMagicLink: async ({ email, url }) => {
-          await mail.sendMagicLink(email, confirmationUrl(url));
+          await deliver(() => mail.sendMagicLink(email, confirmationUrl(url)));
         },
       }),
       // Device sign-in and staff MFA primitives are configured now; PR-07 and PR-10 build the flows.
@@ -186,7 +217,7 @@ export function createAccountAuth(options: AccountAuthOptions): AccountAuth {
   log.info('account_auth_ready', { magicLinkTtlSeconds: MAGIC_LINK_TTL_SECONDS });
   return {
     handler: withStaffDeviceApprovalRefusal(
-      withMagicLinkConfirmation((request: Request) => auth.handler(request), origins[0]),
+      withMagicLinkConfirmation(withMailDeliveryReport((request: Request) => auth.handler(request)), origins[0]),
       { pool: options.pool, getSession },
     ),
     storage,

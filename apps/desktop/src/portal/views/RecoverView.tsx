@@ -3,10 +3,10 @@ import { Field } from '../components/Field';
 import { Notice } from '../components/Notice';
 import { PortalShell } from '../components/PortalShell';
 import { SubmitButton } from '../components/SubmitButton';
-import { requestPasswordReset } from '../portal-api';
+import { requestPasswordReset, mailOutcome, type MailOutcome } from '../portal-api';
 import { useSubmit } from '../use-submit';
 
-export function RecoverView({ go, onSent }: { go: (mode: 'sign-in') => void; onSent: (email: string) => void }) {
+export function RecoverView({ go, onSent }: { go: (mode: 'sign-in') => void; onSent: (email: string, outcome: MailOutcome) => void }) {
   const [email, setEmail] = useState('');
   const { busy, error, run } = useSubmit();
 
@@ -19,8 +19,8 @@ export function RecoverView({ go, onSent }: { go: (mode: 'sign-in') => void; onS
           event.preventDefault();
           void run(async () => {
             const address = email.trim();
-            await requestPasswordReset(address);
-            onSent(address);
+            const outcome = await mailOutcome(() => requestPasswordReset(address));
+            onSent(address, outcome);
           });
         }}
       >

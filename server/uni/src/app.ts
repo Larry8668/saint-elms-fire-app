@@ -33,6 +33,7 @@ export function createApp(deps: UniDeps) {
   const accountCors = cors({
     origin: (origin) => ((deps.accountAuth?.trustedOrigins ?? []).includes(origin) ? origin : undefined),
     credentials: true,
+    exposeHeaders: ['x-mail-delivery'],
   });
   const authBodyLimit = bodyLimit({ maxSize: 64 * 1024 });
   app.use('*', async (c, next) => (isAccountAuthPath(c.req.path) ? accountCors(c, next) : defaultCors(c, next)));

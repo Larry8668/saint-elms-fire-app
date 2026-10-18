@@ -38,7 +38,10 @@ export class PortalError extends Error {
  * internal detail, so an unrecognised code gets a generic message plus the code for support
  * rather than the server's string.
  */
+export const MAIL_SEND_FAILED = 'mail_send_failed';
+
 const MESSAGES: Record<string, string> = {
+  [MAIL_SEND_FAILED]: 'We could not send the email. Try again in a moment.',
   // Account layer.
   USER_ALREADY_EXISTS: 'An account already exists for that email address. Sign in instead, or reset the password.',
   INVALID_EMAIL_OR_PASSWORD: 'That email address and password do not match an account.',
@@ -89,6 +92,12 @@ async function request<T>(path: string, init: RequestInit, parse: (raw: unknown)
   }
 
   const raw = await response.json().catch(() => null);
+  // The uni answers 200 even when better-auth could not hand the mail to the provider (it
+  // swallows the error); this header is how the failure reaches the student.
+  if (response.ok && response.headers.get('x-mail-delivery') === 'failed') {
+    log.warn('portal_request_failed', { path, status: response.status, code: MAIL_SEND_FAILED });
+    throw new PortalError(MESSAGES[MAIL_SEND_FAILED]!, response.status, MAIL_SEND_FAILED);
+  }
   if (!response.ok) {
     const code = (raw as { code?: string; error?: string } | null)?.code ?? (raw as { error?: string } | null)?.error ?? '';
     log.warn('portal_request_failed', { path, status: response.status, code });
@@ -272,5 +281,23 @@ export async function probeWorkspaceHealth(url: string): Promise<{ status: numbe
     return { status: response.status, body: await response.json().catch(() => null) };
   } catch {
     return null;
+  }
+}
+
+
+/**
+ * Runs a mail-sending call and folds a delivery failure into the result, so the caller can still
+ * show the check-your-email screen (the account may exist) but say the mail did not go out. The
+ * outcome never depends on whether the address was registered beyond what the mail path did.
+ */
+export type MailOutcome = 'sent' | 'failed';
+
+export async function mailOutcome(send: () => Promise<void>): Promise<MailOutcome> {
+  try {
+    await send();
+    return 'sent';
+  } catch (error) {
+    if (error instanceof PortalError && error.code === MAIL_SEND_FAILED) return 'failed';
+    throw error;
   }
 }
