@@ -13,6 +13,7 @@ import { DEMO_MODE } from '@/lib/demo';
 import { DEMO_ACCOUNTS } from '@/lib/demo-accounts';
 import { DEMO_SELF_SERVE_PASSWORD } from '@/lib/demo-self-serve';
 import { WorkingLabel } from '@/components/ui/loading';
+import { cancelTourRequest, requestTour } from '@/features/tour/tour-state';
 import { useHealth } from '@/lib/queries';
 import { currentEngineTarget, forgetWorkspace, isHostedWithoutWorkspace, workspaceDemoPersona } from '@/lib/seat';
 import { useSession } from '@/lib/session';
@@ -164,7 +165,10 @@ function useAutoDemoSignIn(mode: 'hosted' | 'local', ready: boolean): AutoSignIn
   useEffect(() => {
     if (!plan || !ready || autoAttempted.has(plan.email)) return;
     autoAttempted.add(plan.email);
+    // Asked before signing in: the dashboard mounts as soon as the session lands.
+    requestTour();
     signIn(plan.email, plan.password).catch((err: unknown) => {
+      cancelTourRequest();
       setState({ phase: 'failed', error: err instanceof EngineError ? err.message : 'Sign-in failed. Try again.' });
     });
   }, [plan, ready, signIn]);

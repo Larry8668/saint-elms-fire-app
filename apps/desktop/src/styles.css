@@ -224,3 +224,43 @@
 .prose-compact :is(h1, h2, h3, h4, p, ul, ol, blockquote, pre, table, hr, .katex-display) { @apply my-0; }
 .prose-compact :is(h1, h2, h3, h4) { @apply font-sans text-[1em] font-semibold text-night-200; }
 .prose-compact > * + * { @apply mt-1.5; }
+
+/* Guided tour (driver.js): the app's dark glass surface, font and accent. Doubled classes beat driver.css, which loads later. */
+.driver-popover.sef-tour {
+  font-family: var(--font-sans);
+  color: var(--color-night-200);
+  background-color: color-mix(in oklch, var(--color-night-900) 94%, transparent);
+  border: 1px solid oklch(1 0 0 / 0.1);
+  border-radius: 16px;
+  padding: 18px 18px 14px;
+  max-width: 340px;
+  box-shadow: 0 24px 60px -20px oklch(0 0 0 / 0.8), 0 0 0 1px oklch(1 0 0 / 0.03) inset;
+  backdrop-filter: blur(20px);
+}
+.driver-popover.sef-tour .driver-popover-title { font-family: var(--font-display); font-size: 24px; font-weight: 400; line-height: 1.15; color: var(--color-night-100); }
+.driver-popover.sef-tour .driver-popover-description { margin-top: 6px; font-size: 13.5px; line-height: 1.55; color: var(--color-night-300); }
+.driver-popover.sef-tour .driver-popover-progress-text { font-size: 11.5px; color: var(--color-night-500); }
+.driver-popover.sef-tour .driver-popover-close-btn { color: var(--color-night-500); }
+.driver-popover.sef-tour .driver-popover-close-btn:hover,
+.driver-popover.sef-tour .driver-popover-close-btn:focus-visible { color: var(--color-night-100); }
+.driver-popover.sef-tour .driver-popover-footer-btn {
+  font-family: var(--font-sans);
+  font-size: 12.5px;
+  font-weight: 500;
+  text-shadow: none;
+  color: var(--color-night-200);
+  background-color: oklch(1 0 0 / 0.06);
+  border: 1px solid oklch(1 0 0 / 0.08);
+  border-radius: 10px;
+  padding: 5px 12px;
+}
+.driver-popover.sef-tour .driver-popover-footer-btn:hover,
+.driver-popover.sef-tour .driver-popover-footer-btn:focus-visible { background-color: oklch(1 0 0 / 0.1); color: var(--color-night-100); }
+.driver-popover.sef-tour .driver-popover-next-btn { color: white; background-color: var(--color-beacon-500); border-color: oklch(1 0 0 / 0.12); }
+.driver-popover.sef-tour .driver-popover-next-btn:hover,
+.driver-popover.sef-tour .driver-popover-next-btn:focus-visible { background-color: var(--color-beacon-400); color: white; }
+.driver-popover.sef-tour .driver-popover-arrow { border-color: var(--color-night-900); }
+.driver-popover.sef-tour .driver-popover-arrow-side-left { border-top-color: transparent; border-bottom-color: transparent; border-right-color: transparent; }
+.driver-popover.sef-tour .driver-popover-arrow-side-right { border-top-color: transparent; border-bottom-color: transparent; border-left-color: transparent; }
+.driver-popover.sef-tour .driver-popover-arrow-side-top { border-bottom-color: transparent; border-left-color: transparent; border-right-color: transparent; }
+.driver-popover.sef-tour .driver-popover-arrow-side-bottom { border-top-color: transparent; border-left-color: transparent; border-right-color: transparent; }

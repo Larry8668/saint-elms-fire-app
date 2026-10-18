@@ -1,5 +1,5 @@
 import { AnimatePresence, motion } from 'motion/react';
-import { Component, useState, type ErrorInfo, type ReactNode } from 'react';
+import { Component, useEffect, useState, type ErrorInfo, type ReactNode } from 'react';
 import { AttentionBanner } from '@/features/attention/AttentionBanner';
 import { AttentionSheet } from '@/features/attention/AttentionSheet';
 import { BrainView } from '@/features/brain/BrainView';
@@ -12,6 +12,8 @@ import { SkyView } from '@/features/sky/SkyView';
 import { TeachersView } from '@/features/teachers/TeachersView';
 import { WorkspaceSession } from '@/features/workspace/WorkspaceSession';
 import { WorkspaceWakeNotice } from '@/features/workspace/WorkspaceWakeNotice';
+import { consumeTourRequest } from '@/features/tour/tour-state';
+import { startGuidedTour } from '@/features/tour/run-tour';
 import { log } from '@/lib/log';
 import { useNav, type View } from '@/lib/nav';
 import { Sidebar } from './Sidebar';
@@ -28,8 +30,12 @@ const VIEWS: Record<View, () => ReactNode> = {
 };
 
 export function App() {
-  const { view } = useNav();
+  const { view, go } = useNav();
   const [railOpen, setRailOpen] = useState(false);
+  // A self-serve demo sign-in asks for the tour once; it runs when the dashboard is up.
+  useEffect(() => {
+    if (consumeTourRequest()) startGuidedTour(go);
+  }, [go]);
   const Current = VIEWS[view];
   return (
     <div className="flex h-screen overflow-hidden bg-night-950 text-night-100">

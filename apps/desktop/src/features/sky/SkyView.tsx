@@ -139,7 +139,7 @@ function SkyChart({ graph }: { graph: GraphResponse }) {
 
   return (
     <div className="sky-backdrop relative h-full overflow-hidden" style={{ cursor: hoveredId ? 'pointer' : 'grab' }}>
-      <div className="absolute inset-0">
+      <div className="absolute inset-0" data-tour="sky">
         <SkyCanvas
           graph={graph}
           layout={layout}
@@ -243,7 +243,7 @@ function Stats({ graph }: { graph: GraphResponse }) {
   const { stats } = graph;
   const litPct = stats.courseConcepts ? Math.round((stats.lit / stats.courseConcepts) * 100) : 0;
   return (
-    <motion.div initial={{ opacity: 0, y: -8 }} animate={{ opacity: 1, y: 0 }}>
+    <motion.div initial={{ opacity: 0, y: -8 }} animate={{ opacity: 1, y: 0 }} data-tour="sky-stats">
       <div className="text-[11px] font-semibold tracking-[0.2em] text-night-400 uppercase">Your second brain</div>
       <h1 className="mt-1 font-display text-[44px] leading-none text-night-100">
         <span className="text-gradient">{stats.lit}</span> <span className="text-night-400">of {stats.courseConcepts} lit</span>
@@ -282,7 +282,7 @@ function Stats({ graph }: { graph: GraphResponse }) {
 function NextUp({ items, selectedId, onPick }: { items: ReturnType<typeof nextUp>; selectedId: string | null; onPick: (id: string) => void }) {
   if (!items.length) return null;
   return (
-    <motion.div initial={{ opacity: 0, y: 6 }} animate={{ opacity: 1, y: 0 }} transition={{ delay: 0.15 }} className="glass pointer-events-auto rounded-2xl p-2">
+    <motion.div initial={{ opacity: 0, y: 6 }} animate={{ opacity: 1, y: 0 }} transition={{ delay: 0.15 }} className="glass pointer-events-auto rounded-2xl p-2" data-tour="next-up">
       <div className="px-2.5 pt-1.5 pb-1 text-[10.5px] font-semibold tracking-[0.18em] text-night-500 uppercase">Next up</div>
       {items.map(({ node, reason }) => (
         <button
