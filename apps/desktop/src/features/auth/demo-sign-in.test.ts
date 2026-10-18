@@ -2,7 +2,7 @@ import assert from 'node:assert/strict';
 import { test } from 'node:test';
 import { DEMO_PASSWORD_DEFAULT } from '@sef/shared';
 import { engineTarget } from '@/lib/seat';
-import { matchDemoProfile, personaClick, promptSubmit } from './demo-sign-in';
+import { matchDemoProfile, preselectedPersona, personaClick, promptSubmit } from './demo-sign-in';
 import { signInCopyMode } from './sign-in-copy';
 
 const email = 'ananya@saintelms.local';
@@ -49,4 +49,11 @@ test('no, many or non-demo profiles preselect nothing', () => {
     ),
     null,
   );
+});
+
+test('the portal hand-off wins over the profile list, which stays a fallback', () => {
+  const profiles = [{ id: 'rohan', email: 'rohan@saintelms.local' }];
+  assert.equal(preselectedPersona('ananya', profiles, accounts), 'ananya@saintelms.local');
+  assert.equal(preselectedPersona(null, profiles, accounts), 'rohan@saintelms.local');
+  assert.equal(preselectedPersona('nobody', undefined, accounts), null);
 });

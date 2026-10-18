@@ -12,12 +12,12 @@ import { cn } from '@/lib/cn';
 import { DEMO_MODE } from '@/lib/demo';
 import { DEMO_ACCOUNTS } from '@/lib/demo-accounts';
 import { useHealth } from '@/lib/queries';
-import { currentEngineTarget, forgetWorkspace, isHostedWithoutWorkspace } from '@/lib/seat';
+import { currentEngineTarget, forgetWorkspace, isHostedWithoutWorkspace, workspaceDemoPersona } from '@/lib/seat';
 import { useSession } from '@/lib/session';
 import { portalUrl } from '@/lib/uni-url';
 import { UNI_URL } from '@/lib/uni-url';
 import { WorkspaceWakeNotice, useWorkspaceWake } from '@/features/workspace/WorkspaceWakeNotice';
-import { matchDemoProfile, personaClick, promptSubmit } from './demo-sign-in';
+import { preselectedPersona, personaClick, promptSubmit } from './demo-sign-in';
 import { DeviceSignInCard } from './DeviceSignInCard';
 import { HOSTED_SIGN_IN_NOTE, SIGN_IN_PROMISES, signInCopyMode, type PromiseIcon } from './sign-in-copy';
 import { uniOfflineFrom } from './uni-offline';
@@ -152,7 +152,7 @@ function DemoAccounts({ mode }: { mode: 'hosted' | 'local' }) {
   const [password, setPassword] = useState('');
   // A hosted workspace may list its owner's profile; when that is one demo persona, only the password is left to type.
   const profiles = useQuery({ queryKey: ['auth', 'profiles'], queryFn: api.profiles, enabled: mode === 'hosted', retry: false, staleTime: Infinity });
-  const preselected = mode === 'hosted' ? matchDemoProfile(profiles.data, DEMO_ACCOUNTS) : null;
+  const preselected = mode === 'hosted' ? preselectedPersona(DEMO_MODE ? workspaceDemoPersona() : null, profiles.data, DEMO_ACCOUNTS) : null;
   const applied = useRef(false);
   useEffect(() => {
     if (!preselected || applied.current) return;

@@ -1,3 +1,5 @@
+import { DEMO_PERSONAS } from '@sef/shared';
+
 /**
  * Where engine calls go. lib/api.ts reads `engineTarget()` on every call, so the address is
  * never a build-time constant baked into a module.
@@ -27,7 +29,12 @@ const pageHost = (): string | null => (typeof location === 'undefined' ? null : 
 /** The stored workspace record (`{ engineUrl }`), as the PR-39 seat record kept it, minus the machine id. */
 export interface WorkspaceRecord {
   engineUrl: string;
+  /** Demo persona id the portal signed in, handed over only in demo builds. */
+  demo?: string;
 }
+
+const configuredDemoMode = env?.VITE_DEMO_MODE === 'true';
+const isPersonaId = (value: unknown): value is string => typeof value === 'string' && DEMO_PERSONAS.some((p) => p.id === value);
 
 const WORKSPACE_KEY = 'sef.workspace';
 
@@ -69,8 +76,9 @@ export function readWorkspace(store: Storage | null = appStorage(), suffix = con
   try {
     const raw = store?.getItem(WORKSPACE_KEY) ?? null;
     if (raw === null) return null;
-    const engineUrl = normalizeWorkspaceUrl((JSON.parse(raw) as Partial<WorkspaceRecord> | null)?.engineUrl, suffix);
-    if (engineUrl) return { engineUrl };
+    const parsed = JSON.parse(raw) as Partial<WorkspaceRecord> | null;
+    const engineUrl = normalizeWorkspaceUrl(parsed?.engineUrl, suffix);
+    if (engineUrl) return isPersonaId(parsed?.demo) ? { engineUrl, demo: parsed.demo } : { engineUrl };
   } catch {
     // Falls through to clearing the record.
   }
@@ -79,11 +87,11 @@ export function readWorkspace(store: Storage | null = appStorage(), suffix = con
 }
 
 /** Stores a workspace; false (and nothing stored) when the URL is not an allowed one. Never throws. */
-export function writeWorkspace(engineUrl: string, store: Storage | null = appStorage(), suffix = configuredHostSuffix): boolean {
+export function writeWorkspace(engineUrl: string, store: Storage | null = appStorage(), suffix = configuredHostSuffix, demo?: string): boolean {
   const origin = normalizeWorkspaceUrl(engineUrl, suffix);
   if (!origin) return false;
   try {
-    store?.setItem(WORKSPACE_KEY, JSON.stringify({ engineUrl: origin } satisfies WorkspaceRecord));
+    store?.setItem(WORKSPACE_KEY, JSON.stringify((isPersonaId(demo) ? { engineUrl: origin, demo } : { engineUrl: origin }) satisfies WorkspaceRecord));
     return Boolean(store);
   } catch {
     return false;
@@ -145,6 +153,8 @@ export function takeWorkspaceFromUrl(
     store?: Storage | null;
     session?: Storage | null;
     suffix?: string;
+    /** Whether this build is a demo build; a hand-off persona is ignored otherwise. */
+    demoMode?: boolean;
   },
 ): WorkspaceIntake {
   let url: URL;
@@ -156,11 +166,13 @@ export function takeWorkspaceFromUrl(
   if (!url.searchParams.has('workspace')) return 'none';
   const raw = url.searchParams.get('workspace');
   url.searchParams.delete('workspace');
+  const demo = url.searchParams.get('demo');
+  url.searchParams.delete('demo');
   deps.replaceUrl(`${url.pathname}${url.search}${url.hash}`);
   const store = deps.store === undefined ? appStorage() : deps.store;
   const suffix = deps.suffix ?? configuredHostSuffix;
   const before = readWorkspace(store, suffix)?.engineUrl;
-  if (!writeWorkspace(raw ?? '', store, suffix)) return 'refused';
+  if (!writeWorkspace(raw ?? '', store, suffix, (deps.demoMode ?? configuredDemoMode) && isPersonaId(demo) ? demo : undefined)) return 'refused';
   if (before !== normalizeWorkspaceUrl(raw, suffix)) {
     try {
       (deps.session === undefined ? sessionStorage : deps.session)?.removeItem(SESSION_KEY);
@@ -170,3 +182,6 @@ export function takeWorkspaceFromUrl(
   }
   return 'stored';
 }
+
+/** The demo persona the portal handed over with the stored workspace, if any. */
+export const workspaceDemoPersona = (store: Storage | null = appStorage(), suffix = configuredHostSuffix): string | null => readWorkspace(store, suffix)?.demo ?? null;

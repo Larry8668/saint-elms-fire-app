@@ -128,10 +128,11 @@ export function safeWorkspaceUrl(raw: string | undefined): string | null {
  * VM (`VITE_APP_URL`, e.g. on Vercel), that is the app, told which workspace to use; the app
  * validates the URL again before it calls it. Without one, the VM serves its own UI: go there.
  */
-export function handoffUrl(workspaceUrl: string, appUrl: string | undefined): string {
+export function handoffUrl(workspaceUrl: string, appUrl: string | undefined, demoPersonaId?: string): string {
   const app = appUrl?.trim().replace(/\/+$/, '');
   if (!app) return workspaceUrl;
-  return `${app}/?workspace=${encodeURIComponent(workspaceUrl)}`;
+  const demo = demoPersonaId ? `&demo=${encodeURIComponent(demoPersonaId)}` : '';
+  return `${app}/?workspace=${encodeURIComponent(workspaceUrl)}${demo}`;
 }
 
 /**

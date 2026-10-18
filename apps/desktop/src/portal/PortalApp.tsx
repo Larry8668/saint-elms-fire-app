@@ -99,7 +99,7 @@ export function PortalApp() {
       });
   }, []);
 
-  if (demoStudent && workspace) return <WorkspaceView onBack={() => setWorkspace(false)} />;
+  if (demoStudent && workspace) return <WorkspaceView onBack={() => setWorkspace(false)} demoPersonaId={demoStudent.id} />;
 
   if (demoStudent) {
     return (

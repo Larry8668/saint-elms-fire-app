@@ -213,3 +213,9 @@ test('the hand-off goes to the web app with the workspace in ?workspace= when VI
   assert.equal(new URL(handoffUrl(vm, 'https://sef.vercel.app')).searchParams.get('workspace'), vm, 'the app reads back exactly the VM url');
   for (const unset of [undefined, '', '  ']) assert.equal(handoffUrl(vm, unset), vm, 'unset: the VM serves its own UI, as before');
 });
+
+test('the hand-off carries the demo persona only when one is given', () => {
+  const vm = 'https://4100-m1abc.instabox.tech';
+  assert.equal(handoffUrl(vm, 'https://sef.vercel.app', 'ananya'), 'https://sef.vercel.app/?workspace=https%3A%2F%2F4100-m1abc.instabox.tech&demo=ananya');
+  assert.equal(handoffUrl(vm, undefined, 'ananya'), vm);
+});

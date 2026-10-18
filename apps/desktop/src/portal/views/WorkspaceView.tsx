@@ -52,7 +52,7 @@ function realStep(flow: WorkspaceFlow, steps: SessionStepStatus[]): string | und
 }
 
 /** "Starting your workspace…": the real steps from the university, then the hand-off. */
-export function WorkspaceView({ onBack }: { onBack: () => void }) {
+export function WorkspaceView({ onBack, demoPersonaId }: { onBack: () => void; demoPersonaId?: string }) {
   const [flow, setFlow] = useState<WorkspaceFlow>({ phase: 'requesting' });
   const [startedAt, setStartedAt] = useState(() => Date.now());
   const [cancelling, setCancelling] = useState(false);
@@ -78,12 +78,12 @@ export function WorkspaceView({ onBack }: { onBack: () => void }) {
       if (abort.signal.aborted) return;
       if (final.phase === 'ready') {
         log.info('workspace_handoff', {});
-        window.location.assign(handoffUrl(final.url, APP_URL));
+        window.location.assign(handoffUrl(final.url, APP_URL, demoPersonaId));
       } else if (final.phase === 'failed') {
         log.warn('workspace_failed', { reason: final.reason });
       }
     });
-  }, []);
+  }, [demoPersonaId]);
 
   useEffect(() => {
     run();
