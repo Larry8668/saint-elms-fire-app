@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 import type { Transporter } from 'nodemailer';
-import { createMailer, parseMailConfig } from './mail';
+import { createMailer, parseMailConfig, resendTransport } from './mail';
 import { log } from './logger';
 
 const configFixture = { smtpUrl: 'smtp://127.0.0.1:1025', from: 'Saint Elms Test <test@saintelms.test>' };
@@ -87,4 +87,31 @@ test('a transport that accepts no recipients still fails the send', async () => 
   const rejected = { sendMail: async () => ({ accepted: [], rejected: ['a@b.c'] }) } as unknown as Transporter;
   const mailer = createMailer(configFixture, rejected);
   await assert.rejects(() => mailer.sendVerificationEmail('a@b.c', 'https://uni.example/verify-email?token=x'), /Account email delivery failed/);
+});
+
+test('MAIL_RESEND_API_KEY selects the Resend HTTPS transport, with the sandbox sender by default', async () => {
+  assert.throws(() => parseMailConfig({ MAIL_RESEND_API_KEY: 'not-a-key' }), /MAIL_RESEND_API_KEY/);
+  const config = parseMailConfig({ NODE_ENV: 'production', MAIL_RESEND_API_KEY: 're_abcdefghijklmnop' });
+  assert.equal(config.resendApiKey, 're_abcdefghijklmnop');
+  assert.equal(config.from, 'Saint Elms University <onboarding@resend.dev>');
+  assert.equal(parseMailConfig({ MAIL_RESEND_API_KEY: 're_abcdefghijklmnop', MAIL_FROM: 'Uni <hello@uni.test>' }).from, 'Uni <hello@uni.test>');
+
+  const calls: Array<{ url: string; auth: string | undefined; body: Record<string, string> }> = [];
+  let status = 200;
+  const fetchFn = (async (url: string | URL | Request, init?: RequestInit) => {
+    calls.push({ url: String(url), auth: (init?.headers as Record<string, string>).authorization, body: JSON.parse(String(init?.body)) as Record<string, string> });
+    return new Response(JSON.stringify({ id: 'em_1' }), { status });
+  }) as typeof fetch;
+  const mailer = createMailer(config, undefined, fetchFn);
+  await mailer.sendMagicLink('student@example.test', 'https://uni.example/magic?token=t1');
+  assert.equal(calls.length, 1);
+  assert.equal(calls[0]!.url, 'https://api.resend.com/emails');
+  assert.equal(calls[0]!.auth, 'Bearer re_abcdefghijklmnop');
+  assert.equal(calls[0]!.body.from, config.from);
+  assert.equal(calls[0]!.body.to, 'student@example.test');
+  assert.match(calls[0]!.body.text, /magic\?token=t1/);
+
+  status = 403;
+  await assert.rejects(() => mailer.sendPasswordReset('student@example.test', 'https://uni.example/reset'), /Account email delivery failed/);
+  assert.equal(typeof resendTransport('re_x').sendMail, 'function');
 });
