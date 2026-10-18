@@ -285,6 +285,54 @@ The sign-in screen deliberately shows no names. Sign in with a university device
 - Source attribution is lexical (term overlap), not semantic; a heavily paraphrased answer can be under-credited. Seeded demo sessions have no stored sources.
 - Retrieval is **hybrid**: the weighted keyword scorer union-merges with a local embedding lane (`engine/src/embed/`, `embed` role → `embeddinggemma` by default); an absent embed model degrades to honest `keyword_only` results, never an error. It's fine for about 500 lessons; a reranker is the natural next step.
 - The desktop has no staff surfaces — admin work happens at the uni-hosted `/admin` portal. The share-moderation API exists server-side but has no portal view yet.
-- Proactive features are planned but not built: no per-teacher suggested questions, attention/nudge surface, subject feeds or study plans; today nothing initiates work without a student click.
-- A hosted-seat deployment (each student's engine on their own cloud box) is a planned direction — today the engine assumes loopback.
+- Hosted sessions (§11) still have gaps: no staff screen for enrolment decisions (operator script only), YouTube links are blocked on cloud IPs, video *files* are not accepted (audio and images are), the golden snapshot and the vault store are single-region, and Instabox's `resume` can answer `no_capacity` for a suspended VM (a `start` call succeeds where `resume` fails; the orchestrator does not fall back yet).
 - Ideas: cohort-level anonymised misconception heatmaps for lecturers.
+
+---
+
+## 11. What was built after §10 (2026-10-17 → 2026-10-18)
+
+Two series landed after the capability sweep, both merged to `main` and deployed. The deep references are `docs/hosted-seat.md`, `docs/session-orchestrator.md`, `docs/model-gateway.md`, `docs/object-store.md`, `docs/deploy-render.md` and `docs/deploy-vercel.md`.
+
+### Proactive layer (PR-31 → PR-36, #57–#71)
+
+- **Hardware-tiered model suggestions** (advisory, never applied silently) and the **signals/attention API**: derived offline from the student's own stores, no model calls; the desktop shows an attention rail, urgent banner, per-teacher badges and proactivity settings.
+- **Suggested-question bank** (PR-33): policy-scoped seeds, deterministic ranking, opt-in drafted wording; a chip rail above the composer ("From your recent work"), distinct from each teacher's static starters ("Ways to start with this teacher").
+- **Consented subject feeds** (PR-34): host-scoped RSS/Atom per feed with per-feed consent, feeding Philosopher seeds.
+- **Bounded study plans** (PR-35): the model proposes, code validates, evidence moves steps; a Plans card on the sky.
+- **Agent eval** (PR-36): local metrics, `pnpm eval` scenario runner, red-team suite, a teacher metrics card.
+
+### Hosted sessions: the product promise changed (PR-37 → PR-45, #67–#92)
+
+The engine no longer lives only on the student's laptop. A student signs in at the university **portal**, the uni spawns a **per-student VM** (Instabox) from a **golden snapshot**, the VM restores the student's **vault** from a central S3-compatible **store**, the browser is handed to the **web app** (Vercel) which drives that VM cross-origin, and every model call goes through a central **model gateway** in front of Ollama. On logout the vault is flushed back to the store and the VM is deleted (or kept, for pinned demo accounts).
+
+- **Engine, remote-ready (PR-37):** trusted-edge host gate (`ENGINE_PUBLIC_HOST`, `ENGINE_TRUST_PROXY`, `ENGINE_TRUSTED_PROXIES`, `ENGINE_ALLOWED_ORIGINS`), sign-in rate limits, per-device sessions with list/revoke, liveness-only public health, the UI served from the engine, and a seat pinned to its owner (`ENGINE_SEAT_OWNER`).
+- **Seat bootstrap and golden image (PR-38, PR-44):** `infra/seat/bootstrap.sh` turns a fresh box into a seat (compose, env templates, pinned static ffmpeg under `cache/bin`), golden mode builds the snapshot session VMs are created from; `session-start.sh` supplies the per-session env.
+- **Vault sync (PR-41):** MinIO/S3 adapter, manifest-based sync with sha256 and compare-and-swap, restore-on-boot with lazy media, tombstones, an embeddings cache, and a loopback-only flush endpoint the orchestrator calls on logout.
+- **Session orchestrator (PR-42, `server/uni/src/sessions`):** Instabox client, `student_sessions` table, one-VM-per-student lease, spawn worker (`create → start → publish → session-start → health`), `POST/GET/DELETE /v1/session` + heartbeat, idle reaper and orphan sweep, `SESSION_PINNED_ACCOUNTS` (logout flushes but keeps the VM), honest spawn-failure reasons to the student.
+- **Model gateway (PR-43, `server/gateway`):** HMAC session tokens (`sefgw1.…`), allowlisted Ollama/OpenAI routes incl. multipart `/v1/audio/transcriptions`, least-in-flight upstreams, per-student limits, streaming passthrough. The engine speaks native Ollama to it with a bearer token.
+- **Web app on its own origin (PR-45):** per-call engine target (served / workspace / local), workspace waker and connecting animation, `?workspace=` intake validated by host suffix, portal "Open my workspace" with real spawn steps and a checked hand-off, heartbeat/end-session/devices relayed through the engine, demo persona passed in the hand-off.
+- **Infra:** Render (uni, gateway, Postgres), Vercel (web app), `scripts/store-target.sh` to swap the vault store, durable uni signing key from env, Resend mail over HTTPS (Render blocks SMTP), HTML transactional emails.
+
+### Demo-day fixes (#95–#105)
+
+Sky titles clipped to their column; audio sources on hosted VMs (ffmpeg on the seat + gateway route); images read by the vision model on upload; Library "Download all" one course at a time with progress; markdown summaries; teacher suggestions de-duplicated; sky left column folds while a star is open; bare web-app URL points to the portal; sign-up reports mail failures honestly; no endless retry after a failed spawn; Peers shows a clear message on demo accounts (feature intact).
+
+## 12. Using the deployed app right now (as of 2026-10-18)
+
+| What | Where |
+|---|---|
+| Portal (sign in, create account, open workspace) | https://sef-uni.onrender.com/app |
+| Web app (the workspace; opened by the portal) | https://saint-elms-fire.vercel.app |
+| Uni API / health | https://sef-uni.onrender.com/health (`demo: true`) |
+| Model gateway health | https://sef-gateway.onrender.com/health |
+
+**Demo students (three persistent workspaces):** on the portal click **Sign in as a demo student**, pick First-/Second-/Third-year student (Ananya / Brinda / Chetna), enter the demo password (the hosted stack uses a private `DEMO_PASSWORD`; ask the operator), then **Open my workspace**. The VM is already there, so the hand-off takes a few seconds (plus 5–30 s if the VM was suspended; it suspends after 5 minutes idle). The workspace sign-in opens with the same persona preselected: type the password again (the VM is a separate machine and cannot see the portal's cookie). Expected skies: Ananya 62 of 286 lit, Brinda 752 of 1039, Chetna 1383 of 1773. Signing out keeps these three workspaces (pinned); the next sign-in resumes them.
+
+**What to show:** the sky and Next up; the three teachers (Friend for logistics, Guide strictly from released lessons, Philosopher beyond the syllabus, each with a verification view); **Add to my wiki** with a note, a PDF, a photo of handwritten notes (read by Gemma on upload) and a voice memo or recorded lecture (transcribed with timestamps); the proposal → review → compiled page → star lit loop; Library (all courses installed); Settings (model roles read "University model"). Guide/Philosopher answers take 5–30 s through the gateway; a first answer after a long idle can take ~60 s while the model loads.
+
+**Avoid on stage:** pasting a YouTube link (blocked on cloud IPs: upload the file instead), Peers on a demo account (shows "not available on demo accounts"), uploading a video file (not accepted yet; audio and images are).
+
+**Real accounts:** Create an account → verification mail (Resend; only the Resend owner's address receives mail until a domain is verified) → Apply to the programme → an operator approves the enrolment (no staff screen yet) → Open my workspace spawns a fresh VM (~25 s) → confirm the device with the one-click code on the portal → empty sky, "Get my courses". Logout of a real account deletes its VM; the vault stays in the store. Instabox's quota is 5 machines: the three demo VMs plus the owner's box leave one slot.
+
+**Operations:** the runbook, the engineering log, deploy/patch scripts and the live ids live in `docs/internal/` (gitignored, held by the operator): `START_HERE.md` is the entry point. Secrets are in `~/.config/sef/*.env` on the operator's machine, never in the repo. Today the Gemma models and the vault store still run on the operator's laptop behind cloudflared tunnels; the planned swap is a DigitalOcean GPU droplet (`GATEWAY_UPSTREAMS`) and DO Spaces (`scripts/store-target.sh`), both env-only changes. Production deploys are explicit: Vercel from the CLI, Render through its API; a push to `main` deploys nothing.
