@@ -103,6 +103,11 @@ export function groundingQuery(messages: Array<{ role: string; content: string }
   return latest;
 }
 
+/** A topic-only web query aimed at real-world use and what is happening now. */
+export function worldQuery(topic: string, year = new Date().getFullYear()): string {
+  return `${topic} real-world applications latest developments ${year}`;
+}
+
 export async function runChatTurn(req: ChatRequest, deps: HarnessDeps, emit: (event: ChatStreamEvent) => void): Promise<void> {
   const started = Date.now();
   const ctx = new TurnContext(emit);
@@ -246,7 +251,9 @@ export async function runChatTurn(req: ChatRequest, deps: HarnessDeps, emit: (ev
   if (can(req.teacher, 'tool:web_search') && policy.web === 'explicit_consent' && webConsented) {
     // Nothing the student typed leaves this device: the up-front query is the topic alone,
     // bounded like anything else that may reach the network.
-    const webQuery = sanitizeWebQuery(webTopic ?? question);
+    // The Philosopher's job is the world beyond the syllabus: steer the topic toward real uses
+    // and recent developments (still topic-only, derived in code).
+    const webQuery = sanitizeWebQuery(webTopic ? worldQuery(webTopic) : question);
     ctx.status('Searching the web…');
     try {
       webResults = await (deps.searchWeb ?? webSearch)((await deps.settings.get()).searxngUrl, webQuery, 4);

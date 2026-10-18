@@ -1,3 +1,4 @@
+import { worldQuery } from '../../agents/harness';
 import { Hono } from 'hono';
 import { AnchorCatalogSchema, AnchorMatchResultSchema, CONTRACT_VERSION, IdentifierSchema, WebPreviewSchema } from '@sef/shared';
 import { ANCHOR_FAILURE_COPY } from '../../agents/anchor';
@@ -91,7 +92,7 @@ export function anchorRoutes(deps: EngineDeps) {
       host = searxngUrl;
     }
     const reachable = await webReachable(searxngUrl);
-    return c.json(WebPreviewSchema.parse({ schemaVersion: CONTRACT_VERSION, query: anchorTopic(resolution.candidate), engine: 'searxng', host, reachable }));
+    return c.json(WebPreviewSchema.parse({ schemaVersion: CONTRACT_VERSION, query: worldQuery(anchorTopic(resolution.candidate)), engine: 'searxng', host, reachable }));
   });
 
   return app;

@@ -2,7 +2,7 @@ import assert from 'node:assert/strict';
 import { test } from 'node:test';
 import type { ChatRequest, ChatStreamEvent, WikiClaim } from '@sef/shared';
 import type { StoredSettings } from '../settings/store';
-import { groundingQuery, MODEL_UNAVAILABLE, runChatTurn, type HarnessDeps } from './harness';
+import { groundingQuery, MODEL_UNAVAILABLE, runChatTurn, worldQuery, type HarnessDeps } from './harness';
 import { ACADEMIC_REDIRECT, PRIVACY_REFUSAL } from './lanes';
 import { UNTRUSTED_CONTENT_NOTE } from './prompts';
 import type { ClaimReader } from '../brain/claim-evidence';
@@ -280,7 +280,8 @@ test('an anchored Philosopher turn searches the concept, never the student’s w
     h.deps,
     (e) => h.events.push(e),
   );
-  assert.deepEqual(queries, ['damping'], 'the topic-only query — chat text never leaves the device');
+  assert.deepEqual(queries, [worldQuery('damping')], 'the topic, aimed at the real world — chat text never leaves the device');
+  assert.ok(!queries[0]!.includes('?'), 'nothing the student typed is in it');
   assert.match(h.instructions(), /WEB RESULTS/);
   assert.ok(h.instructions().includes(UNTRUSTED_CONTENT_NOTE), 'the web results are marked as untrusted data');
   const finished = done(h.events);
