@@ -1,7 +1,7 @@
 # Render Blueprint for the hosted backends (docs/deploy-render.md).
-# Four services + one database: uni (accounts, portal, session orchestrator), gateway (central
-# model proxy), MinIO (vault object store) and Postgres. Values marked `sync: false` are set by
-# the operator in the dashboard (or the API); nothing secret is committed here.
+# Five services + one database: uni (accounts, portal, session orchestrator), gateway (central
+# model proxy), search (SearXNG for the Philosopher's web search), MinIO (vault object store) and
+# Postgres. Values marked `sync: false` are set by the operator in the dashboard (or the API); nothing secret is committed here.
 databases:
   - name: sef-uni-db
     plan: basic-256mb
@@ -101,6 +101,22 @@ services:
         value: gemma4:e2b,gemma4:e4b,embeddinggemma,shieldgemma:2b
       - key: GATEWAY_UPSTREAMS # comma list of Ollama/vLLM workers; the one var to swap
         sync: false
+
+  - type: web
+    name: sef-search # SearXNG; its URL is the uni's SEARXNG_URL, passed to every seat
+    runtime: docker
+    plan: starter
+    region: singapore
+    dockerfilePath: ./infra/searxng/Dockerfile
+    dockerContext: .
+    healthCheckPath: /healthz
+    envVars:
+      - key: PORT
+        value: "8080"
+      - key: SEARXNG_BASE_URL
+        value: https://sef-search.onrender.com/
+      - key: SEARXNG_SECRET
+        generateValue: true
 
   - type: web
     name: sef-minio

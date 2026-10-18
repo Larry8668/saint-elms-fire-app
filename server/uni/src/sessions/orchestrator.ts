@@ -636,6 +636,7 @@ export function sessionStartEnvs(config: SessionConfig, row: Pick<SessionRow, 'u
     MODEL_GATEWAY_URL: config.gatewayUrl,
     SYNC_FLUSH_TOKEN: row.flush_token,
     ...config.objectStore,
+    ...(config.searxngUrl ? { SEARXNG_URL: config.searxngUrl } : {}),
     // The web app hosted apart from the VM (APP_PUBLIC_ORIGIN) calls it cross-origin.
     ...(config.appOrigin ? { ENGINE_ALLOWED_ORIGINS: config.appOrigin } : {}),
   };

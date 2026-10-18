@@ -14,8 +14,10 @@ use_default_settings:
       - brave
 
 server:
-  # Overridden by the SEARXNG_SECRET environment variable.
+  # Overridden by the SEARXNG_SECRET environment variable (always set it on a public deployment).
   secret_key: "change-me-for-public-deployments"
+  # The engine is the only client, so no bot limiter (it needs Valkey anyway); public traffic
+  # is not expected, the URL is only handed to seats.
   limiter: false
   image_proxy: false
 
