@@ -218,3 +218,9 @@
 .prose-chat { @apply text-[14.5px] leading-6.5; }
 .prose-chat p { @apply my-2; }
 .prose-chat h2, .prose-chat h3 { @apply mt-4 mb-1 font-sans text-[15px] font-semibold; }
+
+/* Short markdown (a page summary) set in its container's own size and colour, no block margins. */
+.prose-compact { font-size: inherit; line-height: inherit; color: inherit; }
+.prose-compact :is(h1, h2, h3, h4, p, ul, ol, blockquote, pre, table, hr, .katex-display) { @apply my-0; }
+.prose-compact :is(h1, h2, h3, h4) { @apply font-sans text-[1em] font-semibold text-night-200; }
+.prose-compact > * + * { @apply mt-1.5; }

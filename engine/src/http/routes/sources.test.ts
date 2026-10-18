@@ -7,6 +7,7 @@ import type { SettingsReader } from '../../settings/store';
 import { SessionStore, type Session } from '../../sessions/store';
 import type { WikiStore } from '../../brain/wiki-store';
 import { SourceIngestor, type AudioReader } from '../../brain/sources/ingest';
+import type { ImageReader } from '../../media/vision';
 import { YouTubeError, type YouTube } from '../../media/youtube';
 import { WikiCompiler } from '../../brain/compiler/compile';
 import type { KeeperDraft } from '../../brain/compiler/draft';
@@ -78,10 +79,10 @@ interface RouteHarness {
   sessions: SessionStore;
 }
 
-async function routeHarness(prefix: string, opts: { store?: WikiStore; studentId?: string; audio?: AudioReader; youtube?: Partial<YouTube>; propose?: (prompt: string) => Promise<KeeperDraft> } = {}): Promise<RouteHarness> {
+async function routeHarness(prefix: string, opts: { store?: WikiStore; studentId?: string; audio?: AudioReader; vision?: ImageReader; youtube?: Partial<YouTube>; propose?: (prompt: string) => Promise<KeeperDraft> } = {}): Promise<RouteHarness> {
   const store = opts.store ?? (await vault(prefix));
   const identity = { ...PROFILE, studentId: opts.studentId ?? PROFILE.studentId };
-  const sources = new SourceIngestor(store, async () => identity, opts.audio);
+  const sources = new SourceIngestor(store, async () => identity, opts.audio, opts.vision);
   const compiler = new WikiCompiler(store, { settings, content, profile: async () => identity, propose: opts.propose });
   const sessions = new SessionStore(await tempRoot(`${prefix}-sessions`));
   const profile = { id: identity.studentId, name: 'Student', email: 's@example.test', cohortId: 'cohort-a' };
@@ -96,6 +97,36 @@ async function routeHarness(prefix: string, opts: { store?: WikiStore; studentId
 }
 
 const post = (app: RouteHarness['app'], path: string, body?: unknown) => app.request(path, { method: 'POST', headers: AUTH, body: body === undefined ? undefined : JSON.stringify(body) });
+
+test('an uploaded PNG is read by the vision model on arrival and compiles like any other reading', async () => {
+  const png = Buffer.alloc(33);
+  Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]).copy(png, 0);
+  png.writeUInt32BE(13, 8);
+  png.write('IHDR', 12, 'ascii');
+  png.writeUInt32BE(800, 16);
+  png.writeUInt32BE(600, 20);
+  const prompts: string[] = [];
+  const { app } = await routeHarness('route-image', {
+    vision: { read: async () => ({ text: 'Force changes momentum over time.' }) },
+    propose: async (prompt) => {
+      prompts.push(prompt);
+      return draft({ pages: [pageDraft({ claims: [{ text: 'Force changes momentum', kind: 'source_fact', quote: 'Force changes momentum over time.' }] })] });
+    },
+  });
+  const filed = await post(app, '/sources', { kind: 'image', title: 'Whiteboard photo', mediaType: 'image/png', data: png.toString('base64'), origin: 'student' });
+  assert.equal(filed.status, 201);
+  const receipt = (await filed.json()) as SourceReceipt;
+  assert.equal(receipt.extraction?.method, 'vision');
+  assert.equal(receipt.extraction?.text, 'Force changes momentum over time.');
+  assert.equal(receipt.source.extracted, true);
+
+  const compiled = await post(app, `/sources/${receipt.jobId}/compile`, {});
+  assert.equal(compiled.status, 200);
+  const result = (await compiled.json()) as CompileResult;
+  assert.equal(result.job.stage, 'awaiting_review');
+  assert.ok(result.proposalId);
+  assert.match(prompts.join('\n'), /Force changes momentum over time/, 'the compiler reads the vision transcription');
+});
 
 test('a source is filed, read back in detail, corrected and previewed — all over HTTP', async () => {
   const { app, store } = await routeHarness('route-flow', {

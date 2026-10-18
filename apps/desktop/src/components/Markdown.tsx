@@ -17,9 +17,9 @@ function tagProvenance(text: string): string {
   return text.replace(/\[(course|web)\]/gi, (_, tag: string) => `\`${tag.toLowerCase()}\``);
 }
 
-export const Markdown = memo(function Markdown({ children, className, variant = 'sky' }: { children: string; className?: string; variant?: 'sky' | 'chat' }) {
+export const Markdown = memo(function Markdown({ children, className, variant = 'sky' }: { children: string; className?: string; variant?: 'sky' | 'chat' | 'compact' }) {
   return (
-    <div className={cn('prose-sky', variant === 'chat' && 'prose-chat', className)}>
+    <div className={cn('prose-sky', variant === 'chat' && 'prose-chat', variant === 'compact' && 'prose-compact', className)}>
       <ReactMarkdown
         remarkPlugins={[remarkGfm, remarkMath]}
         rehypePlugins={[[rehypeKatex, { throwOnError: false, strict: 'ignore' }]]}

@@ -15,9 +15,11 @@ import {
 import type { ContentfulStatusCode } from 'hono/utils/http-status';
 import { errorFields, log } from '../../config';
 import { AudioTranscribeError, type AudioProbe, type AudioTranscription } from '../../media/audio';
-import { extractPdf, extractText, recordAudioTranscript, recordStudentCorrection, sha256, type ExtractionMethod, type ExtractionResult } from './extract';
+import { ImageReadError, type ImageReader } from '../../media/vision';
+import { extractPdf, extractText, recordAudioTranscript, recordStudentCorrection, recordVisionText, sha256, type ExtractionMethod, type ExtractionResult } from './extract';
+import { probeImageDimensions } from './image';
 import { assertJobCapacity, advanceJob, cancelJob, createJob, jobStore, JobConflictError, JobStateError, listProfileJobs, retryJob } from './jobs';
-import { checkAudioDuration, checkMediaType, checkSourceBytes, countChars, sanitiseTitle, sliceChars, titleIsSafe, INGEST_LIMITS, type Limits } from './limits';
+import { checkAudioDuration, checkImageDimensions, checkMediaType, checkSourceBytes, countChars, sanitiseTitle, sliceChars, titleIsSafe, INGEST_LIMITS, type Limits } from './limits';
 import { openPdf, PdfParseError } from './pdf';
 import type { WikiStore } from '../wiki-store';
 
@@ -127,6 +129,7 @@ export class SourceIngestor {
     private readonly store: WikiStore,
     private readonly profile: () => Promise<ProfileIdentity>,
     private readonly audio?: AudioReader,
+    private readonly vision?: ImageReader,
   ) {
     // Jobs live under the vault's own .meta/jobs — the same place WikiStore.readJob looks.
     this.jobs = jobStore(store.root);
@@ -294,18 +297,30 @@ export class SourceIngestor {
         }
       }
       if (method === 'vision') {
-        // Local vision is not wired yet. Say so rather than inventing a reading.
-        return this.readFailure(record, 'No text has been read from this image yet.');
+        if (!this.vision) {
+          return this.readFailure(record, 'No text has been read from this image yet — image reading is not configured on this device.');
+        }
+        // Measured before the model is asked: an image too large to read safely — or one
+        // whose header cannot be read at all — is never handed over. The photo stays kept.
+        const dimensions = probeImageDimensions(bytes);
+        const tooLarge = checkImageDimensions(dimensions?.width ?? 0, dimensions?.height ?? 0, limits);
+        if (tooLarge) return this.readFailure(record, tooLarge.message);
+        const reading = await this.vision.read(bytes, record.mediaType);
+        const outcome = recordVisionText(bytes, reading.text, limits);
+        if (!outcome.ok) return this.readFailure(record, outcome.rejection.message);
+        if (!outcome.result.text.trim()) return this.readFailure(record, 'The vision model found no text in this image.');
+        return outcome.result;
       }
       const outcome = extractText(bytes, limits);
       return outcome.ok ? outcome.result : this.readFailure(record, outcome.rejection.message);
     } catch (error) {
       // A bug in the extractor is not a "could not read" — keep it visible in the log so a
       // broken reader is not indistinguishable from a corrupt file.
-      if (!(error instanceof PdfParseError || error instanceof AudioTranscribeError)) {
+      const named = error instanceof PdfParseError || error instanceof AudioTranscribeError || error instanceof ImageReadError;
+      if (!named) {
         log.error('source_extraction_unexpected', { sourceId: record.id, mediaType: record.mediaType, ...errorFields(error) });
       }
-      const message = error instanceof PdfParseError || error instanceof AudioTranscribeError ? error.message : 'That source could not be read here.';
+      const message = named ? error.message : 'That source could not be read here.';
       return this.readFailure(record, message);
     }
   }

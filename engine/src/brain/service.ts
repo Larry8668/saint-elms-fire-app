@@ -37,17 +37,12 @@ import { writeProposalRecord } from './proposals';
 import { countChars, checkImageDimensions } from './sources/limits';
 import { probeImageDimensions } from './sources/image';
 import { recordVisionText } from './sources/extract';
+import { readNotesImage, type NotesReading } from '../media/vision';
 import { SourceRejection, type SourceIngestor } from './sources/ingest';
 import type { BrainVault } from './vault';
 import { VaultConflictError } from './vault-errors';
 import { legacyPageSummary, readPageFile, wikiContentFromConceptPage, type PageMetadata } from './wiki-page-format';
 import type { PageChange, WikiStore } from './wiki-store';
-
-const NotesReadingSchema = z.object({
-  topic: z.string().describe('What the notes are about, in a few words'),
-  transcription: z.string().describe('Faithful transcription of the handwritten or printed notes, including formulas in LaTeX'),
-  concepts: z.array(z.string()).describe('Physics or maths concepts that appear in the notes'),
-});
 
 /** The model writes the correct option as text (easier for small models than an index); code maps it back. */
 const QuizDraftSchema = z.object({
@@ -512,7 +507,7 @@ export class BrainService {
    * source's extraction — the student sees it, can correct it, and only then a compile
    * reads it. Returns null for anything that is not this student's image source.
    */
-  async readImageSource(sourceId: string): Promise<{ reading: z.infer<typeof NotesReadingSchema> } | null> {
+  async readImageSource(sourceId: string): Promise<{ reading: NotesReading } | null> {
     const [record, identity] = await Promise.all([this.deps.wiki.readSource(sourceId), this.deps.identity()]);
     if (!record || record.profile.studentId !== identity.studentId || record.kind !== 'image') return null;
     const bytes = await this.deps.wiki.readSourceBytes(record.id);
@@ -524,14 +519,7 @@ export class BrainService {
     if (rejection) throw new SourceRejection(rejection.message, rejection.code, 413);
     const settings = await this.settings.get();
     const vision = resolveModel(settings, 'vision');
-    const { object: reading } = await generateStructured({
-      agentId: 'notes-reader',
-      instructions: 'You read photos of a student\'s handwritten or printed study notes and transcribe them faithfully. Do not add content that is not on the page.',
-      resolved: vision,
-      prompt: 'Transcribe these notes.',
-      images: [{ kind: 'image', mimeType: record.mediaType, data: bytes.toString('base64') }],
-      schema: NotesReadingSchema,
-    });
+    const reading = await readNotesImage(vision, record.mediaType, new Uint8Array(bytes));
     const outcome = recordVisionText(new Uint8Array(bytes), reading.transcription);
     if (outcome.ok) {
       await this.deps.wiki.recordExtraction(
