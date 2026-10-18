@@ -5,6 +5,8 @@ import { log } from './logger';
 export interface MailConfig {
   smtpUrl: string;
   from: string;
+  /** Set, mail goes out through Resend's HTTPS API instead of SMTP (hosts that block SMTP ports). */
+  resendApiKey?: string;
 }
 
 /**
@@ -16,8 +18,15 @@ export interface MailConfig {
 export function parseMailConfig(environment: NodeJS.ProcessEnv = process.env): MailConfig {
   const smtpUrl = environment.MAIL_SMTP_URL?.trim();
   const from = environment.MAIL_FROM?.trim();
+  const resendApiKey = environment.MAIL_RESEND_API_KEY?.trim();
   if (from && /[\r\n]/.test(from)) {
     throw new Error('MAIL_FROM must not contain line breaks');
+  }
+  if (resendApiKey) {
+    // Resend's HTTPS API: nothing to parse but the key's shape; the sender must be a verified
+    // Resend address (`onboarding@resend.dev` while the account has no verified domain).
+    if (!/^re_[A-Za-z0-9_-]{10,}$/.test(resendApiKey)) throw new Error('MAIL_RESEND_API_KEY is not a Resend API key');
+    return { smtpUrl: '', from: from || 'Saint Elms University <onboarding@resend.dev>', resendApiKey };
   }
   if (smtpUrl && /[\r\n]/.test(smtpUrl)) {
     throw new Error('MAIL_SMTP_URL must not contain line breaks');
@@ -70,12 +79,32 @@ const templates = {
 type TemplateName = keyof typeof templates;
 
 /**
+ * The one call the Resend API needs, shaped like a nodemailer transport so the mailer treats
+ * both the same way: an accepted send names the recipient, anything else throws.
+ */
+export function resendTransport(apiKey: string, fetchFn: typeof fetch = fetch): Pick<Transporter, 'sendMail'> {
+  return {
+    sendMail: async (options: { from?: string; to?: string; subject?: string; text?: string }) => {
+      const response = await fetchFn('https://api.resend.com/emails', {
+        method: 'POST',
+        headers: { authorization: `Bearer ${apiKey}`, 'content-type': 'application/json' },
+        body: JSON.stringify({ from: options.from, to: options.to, subject: options.subject, text: options.text }),
+        signal: AbortSignal.timeout(15_000),
+      });
+      if (!response.ok) throw new Error(`resend answered ${response.status}`);
+      return { accepted: [options.to], rejected: [] };
+    },
+  } as unknown as Pick<Transporter, 'sendMail'>;
+}
+
+/**
  * All sends fail loudly: there is no code path that reports mail as sent without SMTP accepting
  * it. Recipient addresses and links are never logged.
  */
-export function createMailer(config: MailConfig, transport?: Transporter): Mailer {
+export function createMailer(config: MailConfig, transport?: Transporter, fetchFn: typeof fetch = fetch): Mailer {
   const transporter =
     transport ??
+    (config.resendApiKey ? resendTransport(config.resendApiKey, fetchFn) : undefined) ??
     nodemailer.createTransport({
       url: config.smtpUrl,
       connectionTimeout: 10_000,

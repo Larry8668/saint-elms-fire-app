@@ -37,6 +37,7 @@ the repo); `INSTABOX_API_KEY` comes from `~/.config/sef/instabox.env`.
 | uni | `UNI_PUBLIC_URL` | | `https://sef-uni.onrender.com` (production requires https) |
 | uni | `BETTER_AUTH_SECRET` | yes | generated, 32+ chars |
 | uni | `MAIL_SMTP_URL` | | `smtp://127.0.0.1:1025`: a deliberate no-op. Demo (legacy) logins send no mail; sign-up, verification and password reset will fail until this is a real relay |
+| uni | `MAIL_RESEND_API_KEY` | | Set instead of `MAIL_SMTP_URL` to send through Resend's HTTPS API (Render blocks outbound SMTP ports). `MAIL_FROM` defaults to `onboarding@resend.dev`, the only sender a Resend account without a verified domain may use; such an account also delivers only to its owner's address |
 | uni | `SEED_DEMO`, `DEMO_PASSWORD` | password: yes | `true`; production refuses the public `harbor-lantern`, so a private one is generated |
 | uni | `INSTABOX_API_KEY` | yes | operator key |
 | uni | `SEF_GOLDEN_SNAPSHOT_ID` | | `sn_agquw3rpykrsqophbvuy3hnlpy` |
