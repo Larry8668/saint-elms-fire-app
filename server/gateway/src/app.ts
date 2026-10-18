@@ -15,6 +15,8 @@ interface Route {
   model: boolean;
   /** Listing endpoints are filtered down to the allowlist. */
   list?: 'ollama' | 'openai';
+  /** The body is multipart/form-data (audio uploads): the model is a form field, and the body is forwarded as-is. */
+  multipart?: boolean;
 }
 
 /**
@@ -33,7 +35,23 @@ const ROUTES: Record<string, Route> = {
   '/v1/completions': { method: 'POST', kind: 'any', model: true },
   '/v1/embeddings': { method: 'POST', kind: 'any', model: true },
   '/v1/models': { method: 'GET', kind: 'any', model: false, list: 'openai' },
+  // Audio chunks from a hosted session's source ingest; only Ollama serves this route (gemma4 E-models).
+  '/v1/audio/transcriptions': { method: 'POST', kind: 'ollama', model: true, multipart: true },
 };
+
+const MULTIPART_RE = /^multipart\/form-data\s*;.*boundary=/i;
+
+/** The `model` form field of a multipart body, or undefined when the body is not valid multipart. */
+async function multipartModel(body: Uint8Array, contentType: string): Promise<string | undefined | 'invalid'> {
+  if (!MULTIPART_RE.test(contentType)) return 'invalid';
+  try {
+    const form = await new Response(body as unknown as ConstructorParameters<typeof Response>[0], { headers: { 'content-type': contentType } }).formData();
+    const named = form.get('model');
+    return typeof named === 'string' ? named : undefined;
+  } catch {
+    return 'invalid';
+  }
+}
 
 export interface GatewayDeps {
   config: GatewayConfig;
@@ -101,16 +119,25 @@ export function createGatewayApp({ config, pool, limits, log }: GatewayDeps) {
 
     let body: Uint8Array | undefined;
     let model: string | undefined;
+    // What the worker is told the body is: JSON, or the caller's own multipart boundary.
+    let bodyType = 'application/json';
     if (route.method === 'POST') {
       const read = await readBody(c.req.raw, config.maxBodyBytes);
       if (read === 'too_large') return fail(c, 413, 'too_large', 'request body is too large');
       body = read;
-      try {
-        const parsed = JSON.parse(Buffer.from(body).toString('utf8')) as { model?: unknown; name?: unknown };
-        const named = parsed.model ?? parsed.name;
-        model = typeof named === 'string' ? named : undefined;
-      } catch {
-        return fail(c, 400, 'bad_request', 'request body must be JSON');
+      if (route.multipart) {
+        bodyType = c.req.header('content-type') ?? '';
+        const named = await multipartModel(body, bodyType);
+        if (named === 'invalid') return fail(c, 400, 'bad_request', 'request body must be multipart/form-data');
+        model = named;
+      } else {
+        try {
+          const parsed = JSON.parse(Buffer.from(body).toString('utf8')) as { model?: unknown; name?: unknown };
+          const named = parsed.model ?? parsed.name;
+          model = typeof named === 'string' ? named : undefined;
+        } catch {
+          return fail(c, 400, 'bad_request', 'request body must be JSON');
+        }
       }
       if (route.model && (!model || !allowed.has(normalizeModel(model)))) {
         log.info('gw_rejected', { ...who, path, model: model?.slice(0, 80), reason: 'model' });
@@ -141,7 +168,7 @@ export function createGatewayApp({ config, pool, limits, log }: GatewayDeps) {
       try {
         const res = await fetch(`${candidate.url}${path}`, {
           method: route.method,
-          headers: { 'content-type': 'application/json', accept: c.req.header('accept') ?? '*/*', ...upstreamAuth },
+          headers: { 'content-type': bodyType, accept: c.req.header('accept') ?? '*/*', ...upstreamAuth },
           body: body as RequestInit['body'],
           signal: abort.signal,
         });

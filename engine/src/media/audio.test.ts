@@ -248,3 +248,26 @@ test('a missing ffmpeg is a named failure, and Anthropic is honest about having 
   assert.ok(unavailable instanceof AudioTranscribeError);
   assert.equal(unavailable.code, 'transcription_unavailable');
 });
+
+test('a hosted session posts its chunks to the model gateway with the session token', async () => {
+  const dir = await tempDir();
+  const { run } = fakeRun(10);
+  // What withGateway makes of the `uni` provider: an ollama-kind provider at the gateway root.
+  const hosted = {
+    get: async () =>
+      ({
+        providers: [{ id: 'uni', kind: 'ollama', label: 'University model', baseUrl: 'https://gateway.example.test', apiKey: 'sefgw1.session.token' }],
+        roles: { vision: { provider: 'uni', model: 'gemma4:e2b' } },
+      }) as StoredSettings,
+  };
+  const posts: Array<{ url: string; authorization: string | undefined; model: ReturnType<FormData['get']> }> = [];
+  const fetchFn = async (url: string | URL | Request, init?: RequestInit) => {
+    posts.push({ url: String(url), authorization: (init?.headers as Record<string, string> | undefined)?.authorization, model: (init?.body as FormData).get('model') });
+    return new Response(JSON.stringify({ text: 'force equals mass times acceleration' }), { status: 200 });
+  };
+  const transcriber = new AudioTranscriber(hosted, { run, fetchFn: fetchFn as typeof fetch, tmpRoot: dir });
+  const result = await transcriber.transcribe(bytes, 'audio/wav');
+  assert.equal(result.failedChunks, 0);
+  assert.match(result.text, /force equals mass/);
+  assert.deepEqual(posts, [{ url: 'https://gateway.example.test/v1/audio/transcriptions', authorization: 'Bearer sefgw1.session.token', model: 'gemma4:e2b' }]);
+});

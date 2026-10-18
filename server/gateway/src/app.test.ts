@@ -125,6 +125,36 @@ test('only allowlisted endpoints and models pass; the worker never sees the call
   assert.deepEqual(up.seen, ['POST /api/embed auth=Bearer worker-key', 'GET /api/tags auth=Bearer worker-key']);
 });
 
+test('audio transcriptions pass through as multipart, with the model checked from the form', async () => {
+  const up = await fakeUpstream((req, res, body) => {
+    res.writeHead(200, { 'content-type': 'application/json' });
+    res.end(JSON.stringify({ text: 'force equals mass times acceleration', type: req.headers['content-type'], size: body.length }));
+  });
+  const gw = await gateway([up.url], { upstreamToken: 'worker-key' });
+  const token = mintGatewayToken(SECRET, { sub: 'acct_test', vm: 'm_vm1', ttlSeconds: 600 });
+  const post = (model: string) => {
+    const form = new FormData();
+    form.append('file', new Blob([new Uint8Array(2048)], { type: 'audio/wav' }), 'chunk.wav');
+    form.append('model', model);
+    form.append('response_format', 'verbose_json');
+    return fetch(`${gw.base}/v1/audio/transcriptions`, { method: 'POST', headers: { authorization: `Bearer ${token}` }, body: form });
+  };
+
+  const res = await post('gemma4:e2b');
+  assert.equal(res.status, 200);
+  const echoed = (await res.json()) as { text: string; type: string; size: number };
+  assert.equal(echoed.text, 'force equals mass times acceleration');
+  assert.match(echoed.type, /^multipart\/form-data; boundary=/, 'the worker gets the caller\'s own boundary');
+  assert.ok(echoed.size > 2048, 'the whole multipart body reaches the worker');
+  assert.equal(up.seen[0], 'POST /v1/audio/transcriptions auth=Bearer worker-key');
+
+  const denied = await post('llama3');
+  assert.equal(denied.status, 403);
+  assert.equal(((await denied.json()) as { error: { code: string } }).error.code, 'model_not_allowed');
+  assert.equal((await gw.call('/v1/audio/transcriptions', { json: { model: 'gemma4:e2b' } })).status, 400, 'JSON is not a transcription request');
+  assert.equal(up.seen.length, 1, 'refused requests never reach the worker');
+});
+
 test('a share screen reaches the worker with its logprobs and options untouched', async () => {
   let forwarded = '';
   const up = await fakeUpstream((req, res, body) => {

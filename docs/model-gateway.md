@@ -64,6 +64,7 @@ The gateway needs nothing new for that.
 | `POST /api/embed`, `/api/embeddings` | `POST /v1/embeddings` |
 | `POST /api/show`, `GET /api/version` | `GET /v1/models` (filtered) |
 | `GET /api/tags` (filtered to the allowlist) | |
+| `POST /v1/audio/transcriptions` (multipart; the `model` form field is checked) | |
 
 Everything else answers 404, including pull, push, create, copy, delete, ps and blobs.
 POST bodies must name a model from `GATEWAY_MODELS` (`name` also matches `name:latest`).
@@ -221,7 +222,6 @@ network or TLS, and should never be published without the gateway in front.
 
 - Thinking control, `num_ctx` and stream usage on the `/v1` path (see "Pointing an engine
   at the gateway"); `include_usage` would make streamed chat budgets exact.
-- Audio transcription (`/v1/audio/transcriptions`, multipart) is not routed yet.
 - A shared limit store (Redis or Postgres) for multiple gateway replicas.
 - Hot-reloading `GATEWAY_UPSTREAMS` (or registering workers through an admin API), so
   adding a worker needs no restart.
