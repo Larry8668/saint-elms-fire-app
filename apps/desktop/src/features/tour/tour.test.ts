@@ -44,16 +44,16 @@ test('completion is remembered per account under sef.tour.done:<account>', () =>
   assert.equal(store.data.get(TOUR_DONE_KEY), '1', 'no account: one shared flag');
 });
 
-test('a requested tour runs once, and never after it was finished', () => {
+test('a requested tour runs once per request, on every sign-in, even after it was finished before', () => {
   const session = memory();
   const local = memory();
-  assert.equal(consumeTourRequest('ananya', session, local), false);
+  assert.equal(consumeTourRequest('ananya', session, local), false, 'nothing requested');
   requestTour(session);
   assert.equal(consumeTourRequest('ananya', session, local), true);
   assert.equal(consumeTourRequest('ananya', session, local), false, 'consumed');
   markTourDone('ananya', local);
   requestTour(session);
-  assert.equal(consumeTourRequest('ananya', session, local), false);
+  assert.equal(consumeTourRequest('ananya', session, local), true, 'the next sign-in shows it again');
 });
 
 test('storage that throws or is missing never breaks the tour', () => {
