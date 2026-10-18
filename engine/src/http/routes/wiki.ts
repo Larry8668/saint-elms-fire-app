@@ -1,6 +1,6 @@
 import { Hono } from 'hono';
 import type { ContentfulStatusCode } from 'hono/utils/http-status';
-import { CONTRACT_VERSION, IdentifierSchema, SaveAnswerRequestSchema, SourceReceiptSchema, WikiIndexSchema, WikiPageViewSchema } from '@sef/shared';
+import { CONTRACT_VERSION, IdentifierSchema, SaveAnswerRequestSchema, SourceReceiptSchema, WikiGraphSchema, WikiIndexSchema, WikiPageViewSchema } from '@sef/shared';
 import { WikiQuery } from '../../brain/query';
 import { SourceRejection } from '../../brain/sources/ingest';
 import { VaultConflictError } from '../../brain/vault-errors';
@@ -28,6 +28,16 @@ export function wikiRoutes(deps: EngineDeps) {
       return c.json(WikiIndexSchema.parse(await new WikiQuery(c.get('ws').wiki).index()));
     } catch (error) {
       const { body, status } = handled(error, 'index_failed');
+      return c.json(body, status);
+    }
+  });
+
+  /** The whole wiki as nodes and edges — derived, read-only, one request for the brain map. */
+  app.get('/wiki/graph', guard, async (c) => {
+    try {
+      return c.json(WikiGraphSchema.parse(await new WikiQuery(c.get('ws').wiki).graph()));
+    } catch (error) {
+      const { body, status } = handled(error, 'graph_failed');
       return c.json(body, status);
     }
   });

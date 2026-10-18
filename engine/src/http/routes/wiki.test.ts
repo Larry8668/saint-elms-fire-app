@@ -3,7 +3,7 @@ import { mkdtemp } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { test } from 'node:test';
-import type { CompileResult, EngineSettings, ProposalAcceptance, SourceReceipt, WikiIndex, WikiPageView } from '@sef/shared';
+import type { CompileResult, EngineSettings, ProposalAcceptance, SourceReceipt, WikiGraph, WikiIndex, WikiPageView } from '@sef/shared';
 import type { ContentStore } from '../../content/store';
 import type { SettingsReader } from '../../settings/store';
 import { SessionStore, type Session } from '../../sessions/store';
@@ -94,6 +94,39 @@ test('the wiki catalogue and one page are served over HTTP', async () => {
 
   assert.equal((await wiki.request('/wiki/pages/nothing-here', { headers: AUTH })).status, 404);
   assert.equal((await wiki.request('/wiki/pages', { headers: { 'content-type': 'application/json' } })).status, 401, 'unauthenticated is refused');
+});
+
+test('the wiki graph is one read: nodes per page, edges only between pages that exist', async () => {
+  const { store, wiki } = await harness('route-wiki-graph');
+  await store.applyProposal(
+    proposal(
+      [
+        { op: 'upsert_page', page: conceptDraft('momentum') },
+        {
+          op: 'upsert_page',
+          page: conceptDraft('damping', {
+            links: [
+              { toPageId: 'momentum', type: 'builds_upon', origin: 'suggested', why: 'Damping removes momentum.', citations: [] },
+              { toPageId: 'momentum', type: 'related_to', origin: 'suggested', why: 'A duplicate pair.', citations: [] },
+              { toPageId: 'not-a-page', type: 'related_to', origin: 'suggested', why: 'Dangling.', citations: [] },
+            ],
+          }),
+        },
+      ],
+      { momentum: null, damping: null },
+    ),
+  );
+
+  const res = await wiki.request('/wiki/graph', { headers: AUTH });
+  assert.equal(res.status, 200);
+  const graph = (await res.json()) as WikiGraph;
+  assert.deepEqual(graph.nodes.map((n) => n.id).sort(), ['damping', 'momentum']);
+  const damping = graph.nodes.find((n) => n.id === 'damping')!;
+  assert.deepEqual(damping.courseIds, ['classical-mechanics']);
+  assert.deepEqual(damping.claimTexts, []);
+  assert.equal(damping.kind, 'concept');
+  assert.deepEqual(graph.edges, [{ source: 'damping', target: 'momentum', type: 'builds_upon', origin: 'suggested' }], 'dangling and duplicate links are dropped');
+  assert.equal((await wiki.request('/wiki/graph', { headers: { 'content-type': 'application/json' } })).status, 401);
 });
 
 test('save → compile → accept writes a synthesis page the wiki index then lists', async () => {

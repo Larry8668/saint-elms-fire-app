@@ -1,7 +1,7 @@
 import type { BrainLogEntry, LearningEvent, PageRecordSummary } from '@sef/shared';
-import { AlertTriangle, Brain, FilePlus2, GraduationCap, History, Lightbulb, Link2, MessageCircleQuestion, Network, PenLine, RefreshCw, Sparkles, Waypoints, Wrench } from 'lucide-react';
+import { AlertTriangle, Brain, Search, FilePlus2, GraduationCap, History, Lightbulb, Link2, MessageCircleQuestion, Network, PenLine, RefreshCw, Sparkles, Waypoints, Wrench } from 'lucide-react';
 import { motion } from 'motion/react';
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { Button } from '@/components/ui/button';
 import { Tabs } from '@/components/ui/overlays';
 import { Badge, EmptyState, PageHeader, Panel } from '@/components/ui/primitives';
@@ -10,8 +10,10 @@ import { ProposalReviewDialog } from '@/features/contribute/ProposalReviewDialog
 import { KIND_STYLE, STATUS_STYLE } from '@/lib/brain-style';
 import { markdownToPlainText } from '@/lib/markdown-text';
 import { useNav } from '@/lib/nav';
-import { useBrainLog, useEvents, useGraph, useJobBoard, useLint, useMaintenance, useRecords, useWikiIndex } from '@/lib/queries';
+import { useBrainLog, useEvents, useGraph, useJobBoard, useLint, useMaintenance, useRecords, useWikiGraph, useWikiIndex } from '@/lib/queries';
 import { shortDate } from '@/lib/time';
+import { BrainMapHero } from './brain-map/BrainMapHero';
+import { buildSearchIndex, searchPages } from './brain-map/search';
 import { ConceptSheet } from './ConceptSheet';
 import { ACTOR_LABEL, EVENT_LABEL } from './GrowthTrail';
 import { MaintenancePanel } from './MaintenancePanel';
@@ -49,6 +51,19 @@ export function BrainView() {
   const graph = useGraph();
   const board = useJobBoard();
   const wiki = useWikiIndex();
+  const wikiGraph = useWikiGraph();
+  const listRef = useRef<HTMLDivElement>(null);
+
+  // Search: typed text echoes at once; the filter runs 150 ms after the last keystroke.
+  const [query, setQuery] = useState('');
+  const [debounced, setDebounced] = useState('');
+  useEffect(() => {
+    const t = setTimeout(() => setDebounced(query), query ? 150 : 0);
+    return () => clearTimeout(t);
+  }, [query]);
+  const searchIndex = useMemo(() => buildSearchIndex(records.data ?? [], wikiGraph.data), [records.data, wikiGraph.data]);
+  const searchResult = useMemo(() => searchPages(searchIndex, debounced), [searchIndex, debounced]);
+  const shownRecords = useMemo(() => (searchResult ? (records.data ?? []).filter((r) => searchResult.set.has(r.id)) : records.data), [records.data, searchResult]);
 
   // A node-backed page opens the sky sheet; everything else (source summaries, orphans) opens the record sheet.
   const selectedNode = useMemo(() => (selectedPageId && graph.data ? (graph.data.nodes.find((n) => n.pageId === selectedPageId) ?? null) : null), [selectedPageId, graph.data]);
@@ -76,6 +91,16 @@ export function BrainView() {
   return (
     <div className="h-full overflow-y-auto">
       <div className="mx-auto max-w-6xl px-8 py-8">
+        <BrainMapHero
+          records={records.data}
+          graph={graph.data}
+          wiki={wikiGraph.data}
+          loading={graph.isLoading || wikiGraph.isLoading}
+          onOpen={openPage}
+          onScrollToList={() => listRef.current?.scrollIntoView({ behavior: 'smooth', block: 'start' })}
+          search={{ query, onQuery: setQuery, result: searchResult }}
+        />
+        <div ref={listRef} className="scroll-mt-6" />
         <PageHeader
           eyebrow="Plain markdown, on this device"
           title="Your brain"
@@ -116,13 +141,16 @@ export function BrainView() {
                 }
               />
             )}
+            {searchResult && searchResult.ids.length === 0 && (
+              <EmptyState icon={<Search />} title="Nothing matches" body={`No page's title, summary or claims mention “${debounced.trim()}”. Press Esc in the search to clear it.`} />
+            )}
             <div className="grid gap-3 md:grid-cols-2 lg:grid-cols-3">
-              {records.data?.map((record, i) => <PageCard key={record.id} record={record} index={i} onOpen={() => openPage(record.id)} />)}
+              {shownRecords?.map((record, i) => <PageCard key={record.id} record={record} index={i} onOpen={() => openPage(record.id)} />)}
             </div>
           </>
         )}
 
-        {tab === 'wiki' && <WikiIndexPanel index={wiki.data} loading={wiki.isLoading} onOpen={setWikiPageId} />}
+        {tab === 'wiki' && <WikiIndexPanel index={wiki.data} loading={wiki.isLoading} onOpen={setWikiPageId} matchIds={searchResult?.set ?? null} />}
 
         {tab === 'sources' && (
           <div className="max-w-2xl">
