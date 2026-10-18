@@ -32,6 +32,7 @@ The orchestrator runs `bash /data/home/sef-seat/session-start.sh` in one exec, p
 | `MODEL_GATEWAY_URL` | yes on this image | the central model gateway (PR-43): its root, or the `/v1` URL the orchestrator passes (the engine drops the `/v1` and speaks the native `/api/*` surface) |
 | `MODEL_GATEWAY_TOKEN` | no | a short-lived per-VM token from the orchestrator, sent as `Authorization: Bearer` |
 | `OBJECT_STORE_ENDPOINT`, `_BUCKET`, `_ACCESS_KEY`, `_SECRET_KEY`, `_REGION`, `_FORCE_PATH_STYLE` | no | vault sync (PR-41) |
+| `SEARXNG_URL` | no | the hosted SearXNG for web search (https origin or loopback http, no path) |
 | `VAULT_SYNC_ACCOUNT` | no | the uni account whose vault syncs (PR-41b). It must be one of `ENGINE_SEAT_OWNER`, or the script refuses: the engine would refuse to boot with sync on |
 | `SYNC_FLUSH_TOKEN` | no | the bearer for the engine's flush endpoint (PR-41b's `session-stop.sh`). At least 24 characters, or the script refuses: a shorter one keeps the endpoint shut |
 

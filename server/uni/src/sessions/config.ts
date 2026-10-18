@@ -23,6 +23,8 @@ export interface SessionConfig {
   /** What the VM calls the university at (UNI_SERVER_URL on the box). */
   uniPublicUrl: string;
   gatewayUrl: string;
+  /** The hosted SearXNG (SEARXNG_URL), passed to the VM for the Philosopher's web search; unset leaves web search off there. */
+  searxngUrl?: string;
   gatewaySecret: string | null;
   gatewayTokenMinutes: number;
   /** OBJECT_STORE_* passed through to the VM for vault sync (PR-41); empty values are dropped. */
@@ -85,6 +87,16 @@ export const OBJECT_STORE_KEYS = [
   'OBJECT_STORE_FORCE_PATH_STYLE',
 ] as const;
 
+const SEARXNG_ORIGIN = /^(https:\/\/[a-z0-9.-]+|http:\/\/(localhost|127\.0\.0\.1|\[::1\]))(:\d{1,5})?$/i;
+
+/** SEARXNG_URL: a bare origin (https, or http on loopback), no path, query or credentials. Unset or blank is fine. */
+export function parseSearxngUrl(raw: string | undefined): string | undefined {
+  const v = raw?.trim().replace(/\/+$/, '');
+  if (!v) return undefined;
+  if (!SEARXNG_ORIGIN.test(v)) throw new Error('SEARXNG_URL must be an https origin (or http on loopback) with no path or query');
+  return v;
+}
+
 const value = (env: NodeJS.ProcessEnv, name: string) => env[name]?.trim() || undefined;
 
 export function parseSessionConfig(env: NodeJS.ProcessEnv = process.env, uniPublicUrl = env.UNI_PUBLIC_URL?.trim() || 'http://localhost:4200'): SessionConfig | null {
@@ -119,6 +131,7 @@ export function parseSessionConfig(env: NodeJS.ProcessEnv = process.env, uniPubl
     pinnedAccounts,
     uniPublicUrl: uniPublicUrl.replace(/\/+$/, ''),
     gatewayUrl: value(env, 'MODEL_GATEWAY_URL') ?? 'https://gateway.invalid/v1',
+    searxngUrl: parseSearxngUrl(env.SEARXNG_URL),
     gatewaySecret,
     gatewayTokenMinutes: envInt('MODEL_GATEWAY_TOKEN_MINUTES', 8 * 60, { min: 5, max: 24 * 60 }, env),
     objectStore,

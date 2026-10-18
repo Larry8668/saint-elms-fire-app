@@ -78,3 +78,14 @@ test('APP_PUBLIC_ORIGIN: one https origin (http on loopback), passed to the VM a
   const withApp = sessionStartEnvs(parseSessionConfig({ ...base, APP_PUBLIC_ORIGIN: 'https://sef.vercel.app' })!, row);
   assert.equal(withApp.ENGINE_ALLOWED_ORIGINS, 'https://sef.vercel.app');
 });
+
+test('SEARXNG_URL: optional, a bare origin, passed to the VM only when set', () => {
+  const row = { url: 'https://4100-m1.instabox.tech', account_id: 'u_1', flush_token: 'f'.repeat(43), machine_id: 'm_1' };
+  assert.equal(sessionStartEnvs(parseSessionConfig(base)!, row).SEARXNG_URL, undefined);
+  assert.equal(sessionStartEnvs(parseSessionConfig({ ...base, SEARXNG_URL: ' ' })!, row).SEARXNG_URL, undefined);
+  assert.equal(sessionStartEnvs(parseSessionConfig({ ...base, SEARXNG_URL: 'https://sef-search.onrender.com/' })!, row).SEARXNG_URL, 'https://sef-search.onrender.com');
+  assert.equal(parseSessionConfig({ ...base, SEARXNG_URL: 'http://127.0.0.1:8888' })!.searxngUrl, 'http://127.0.0.1:8888');
+  for (const bad of ['http://search.example.com', 'https://search.example.com/search', 'https://search.example.com/?q=1', 'https://u:p@search.example.com', 'ftp://x.test', 'search.example.com']) {
+    assert.throws(() => parseSessionConfig({ ...base, SEARXNG_URL: bad }), /SEARXNG_URL/, bad);
+  }
+});

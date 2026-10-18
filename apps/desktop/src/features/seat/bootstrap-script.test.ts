@@ -147,7 +147,7 @@ test('missing required inputs fail the inputs step with a reason', () => {
 });
 
 const GOLDEN = { SEAT_REF: 'feat/44-golden-snapshot', SEAT_MODE: 'golden' };
-const SESSION_KEYS = /^(ENGINE_PUBLIC_HOST|ENGINE_SEAT_OWNER|UNI_SERVER_URL|MODEL_GATEWAY_URL|MODEL_GATEWAY_TOKEN|OLLAMA_URL)=/m;
+const SESSION_KEYS = /^(ENGINE_PUBLIC_HOST|ENGINE_SEAT_OWNER|UNI_SERVER_URL|MODEL_GATEWAY_URL|MODEL_GATEWAY_TOKEN|SEARXNG_URL|OLLAMA_URL)=/m;
 
 test('central model mode skips Ollama and the models, and leaves the gateway to session.env', () => {
   const home = freshHome();
@@ -255,6 +255,14 @@ test('session-start writes the per-session env privately and never prints a valu
   assert.match(run.output, /wrote session\.env: .*VAULT_SYNC_ACCOUNT SYNC_FLUSH_TOKEN/);
 });
 
+test('session-start passes SEARXNG_URL through when set', () => {
+  const home = freshHome();
+  assert.equal(bootstrap(home, GOLDEN).code, 0);
+  const run = bootstrap(home, { ...SESSION, SEARXNG_URL: 'https://sef-search.onrender.com' }, SESSION_START);
+  assert.equal(run.code, 0, run.output);
+  assert.equal(envOf(run.read('session.env')).SEARXNG_URL, 'https://sef-search.onrender.com');
+});
+
 test('session-start takes the sync account from a multi-owner seat, and sync stays optional', () => {
   const home = freshHome();
   assert.equal(bootstrap(home, GOLDEN).code, 0);
@@ -276,6 +284,8 @@ for (const [label, override] of [
   ['a VAULT_SYNC_ACCOUNT not in ENGINE_SEAT_OWNER', { VAULT_SYNC_ACCOUNT: 'acct_999' }],
   ['a VAULT_SYNC_ACCOUNT that only prefixes an owner', { ENGINE_SEAT_OWNER: 'acct_1234', VAULT_SYNC_ACCOUNT: 'acct_123' }],
   ['a SYNC_FLUSH_TOKEN under 24 characters', { SYNC_FLUSH_TOKEN: 'short-flush-token-12345' }],
+  ['a SEARXNG_URL with a path', { SEARXNG_URL: 'https://sef-search.onrender.com/search' }],
+  ['a plain-http SEARXNG_URL off loopback', { SEARXNG_URL: 'http://sef-search.onrender.com' }],
   ['a SYNC_FLUSH_TOKEN with a quote', { SYNC_FLUSH_TOKEN: "flush-0123456789abcdef'$(id)" }],
 ] as const) {
   test(`session-start refuses ${label}`, () => {
