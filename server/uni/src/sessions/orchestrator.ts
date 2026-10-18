@@ -407,7 +407,14 @@ export class SessionOrchestrator {
           await this.client.waitOperation(await this.client.start(machineId, newIdempotencyKey(machineId, 'start')), deadline);
           continue;
         } else if (machine.state === 'suspended') {
-          await this.client.waitOperation(await this.client.resume(machineId, newIdempotencyKey(machineId, 'resume')), deadline);
+          try {
+            await this.client.waitOperation(await this.client.resume(machineId, newIdempotencyKey(machineId, 'resume')), deadline);
+          } catch (error) {
+            if (!(error instanceof InstaboxError) || error.code !== 'no_capacity') throw error;
+            // Resume can lack capacity for a long time while /start on the same suspended box succeeds.
+            log.warn('session_resume_fallback_start', { machineId });
+            await this.client.waitOperation(await this.client.start(machineId, newIdempotencyKey(machineId, 'start')), deadline);
+          }
           continue;
         } else if (machine.state === 'error' || machine.state === 'deleting' || machine.state === 'deleted') {
           throw new SpawnError('machine_unusable', `The session machine is ${machine.state}.`);
