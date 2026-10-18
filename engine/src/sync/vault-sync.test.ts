@@ -346,3 +346,26 @@ test('a lazily fetched blob that does not match its hash is refused, and nothing
   await assert.rejects(b.materialize(raw), /does not match its hash/);
   assert.equal(await exists(raw), false);
 });
+
+test('a released course file the store lost is skipped with a count; a student page that is missing still fails', async () => {
+  const store = new MemoryObjectStore();
+  const rootA = await profileRoot();
+  const a = new VaultSync({ store, account: ACCOUNT, root: rootA });
+  await a.restore();
+  await put(rootA, 'brain/concepts/photosynthesis.md', '# Photosynthesis\n');
+  await put(rootA, 'content/courses/calculus/semester-2/01-lesson.md', '# Lesson\n\npip install numpy\n');
+  await a.push();
+  // An edge filter refused the lesson's upload (or the store lost it): the object is gone, the manifest still names it.
+  await store.delete(vaultKey(ACCOUNT, 'content/courses/calculus/semester-2/01-lesson.md'));
+
+  const rootB = await profileRoot();
+  const restored = await new VaultSync({ store, account: ACCOUNT, root: rootB }).restore();
+  assert.deepEqual([restored.fetched, restored.missing], [1, 1]);
+  assert.equal(await read(rootB, 'brain/concepts/photosynthesis.md'), '# Photosynthesis\n');
+  assert.equal(await exists(path.join(rootB, 'content/courses/calculus/semester-2/01-lesson.md')), false);
+
+  await store.delete(vaultKey(ACCOUNT, 'brain/concepts/photosynthesis.md'));
+  const c = new VaultSync({ store, account: ACCOUNT, root: await profileRoot() });
+  await assert.rejects(c.restore(), /object is missing/);
+  assert.equal(c.state, 'error');
+});
