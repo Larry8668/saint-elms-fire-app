@@ -10,7 +10,7 @@ import { INGEST_LIMITS, checkPageCount, countChars, sliceChars, type Limits, typ
  * into a job that cannot record why it failed.
  */
 
-export type ExtractionMethod = 'text' | 'pdf' | 'vision' | 'audio' | 'student_correction';
+export type ExtractionMethod = 'text' | 'pdf' | 'vision' | 'audio' | 'video' | 'student_correction';
 
 export interface ExtractionResult {
   method: ExtractionMethod;
@@ -184,6 +184,32 @@ export function recordAudioTranscript(bytes: Uint8Array, transcript: { text: str
       partial: transcript.partial || truncated,
       ...(notes.length ? { note: `${notes.join('; ')}.` } : {}),
       units: transcript.chunks,
+    },
+  };
+}
+
+/**
+ * A lecture video's merged reading — its audio transcript interleaved with what was legible
+ * on screen. The reader reports its own gaps (failed chunks or frames); truncation adds to
+ * the same note. `units` counts every piece actually read: audio chunks plus frames.
+ */
+export function recordVideoReading(
+  bytes: Uint8Array,
+  reading: { text: string; chunks: number; framesRead: number; partial: boolean; note?: string },
+  limits: Limits = {},
+): ExtractionOutcome {
+  const maxChars = limits.maxExtractedChars ?? INGEST_LIMITS.maxExtractedChars;
+  const truncated = countChars(reading.text) > maxChars;
+  const notes = [reading.note?.replace(/\.+$/, ''), truncated ? `Only the first ${maxChars.toLocaleString('en-GB')} characters of the reading were kept` : ''].filter(Boolean);
+  return {
+    ok: true,
+    result: {
+      method: 'video',
+      text: sliceChars(reading.text, maxChars),
+      sha256: sha256(bytes),
+      partial: reading.partial || truncated,
+      ...(notes.length ? { note: `${notes.join('; ')}.` } : {}),
+      units: reading.chunks + reading.framesRead,
     },
   };
 }

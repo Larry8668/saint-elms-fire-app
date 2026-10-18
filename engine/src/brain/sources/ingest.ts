@@ -15,8 +15,9 @@ import {
 import type { ContentfulStatusCode } from 'hono/utils/http-status';
 import { errorFields, log } from '../../config';
 import { AudioTranscribeError, type AudioProbe, type AudioTranscription } from '../../media/audio';
+import { VideoReadError, type VideoProbe, type VideoReading } from '../../media/video';
 import { ImageReadError, type ImageReader } from '../../media/vision';
-import { extractPdf, extractText, recordAudioTranscript, recordStudentCorrection, recordVisionText, sha256, type ExtractionMethod, type ExtractionResult } from './extract';
+import { extractPdf, extractText, recordAudioTranscript, recordStudentCorrection, recordVideoReading, recordVisionText, sha256, type ExtractionMethod, type ExtractionResult } from './extract';
 import { probeImageDimensions } from './image';
 import { assertJobCapacity, advanceJob, cancelJob, createJob, jobStore, JobConflictError, JobStateError, listProfileJobs, retryJob } from './jobs';
 import { checkAudioDuration, checkImageDimensions, checkMediaType, checkSourceBytes, countChars, isAudioMedia, isVideoMedia, sanitiseTitle, sliceChars, titleIsSafe, INGEST_LIMITS, type Limits } from './limits';
@@ -45,6 +46,12 @@ export type IngestKind = 'note' | 'document' | 'image' | 'audio' | 'video' | 'se
 export interface AudioReader {
   probe(bytes: Uint8Array, mediaType: string): Promise<AudioProbe>;
   transcribe(bytes: Uint8Array, mediaType: string, opts?: { seconds?: number; maxSeconds?: number }): Promise<AudioTranscription>;
+}
+
+/** What the video lane must answer — length and tracks up front, the merged reading on read. */
+export interface VideoReader {
+  probe(bytes: Uint8Array, mediaType: string): Promise<VideoProbe>;
+  read(bytes: Uint8Array, mediaType: string, opts?: { seconds?: number; maxSeconds?: number }): Promise<VideoReading>;
 }
 
 /** The committed transcript range a session source covers — the checkpoint written with it. */
@@ -137,6 +144,7 @@ export class SourceIngestor {
     private readonly profile: () => Promise<ProfileIdentity>,
     private readonly audio?: AudioReader,
     private readonly vision?: ImageReader,
+    private readonly video?: VideoReader,
   ) {
     // Jobs live under the vault's own .meta/jobs — the same place WikiStore.readJob looks.
     this.jobs = jobStore(store.root);
@@ -189,12 +197,28 @@ export class SourceIngestor {
       throw new SourceRejection(`A ${input.kind} cannot be filed as '${origin}' material.`, 'origin_mismatch', 400);
     }
 
-    // Audio is probed before the bytes are stored: a recording too long to transcribe is a
-    // named refusal, and one ffmpeg cannot parse is not an audio file at all. A video's
-    // audio track probes exactly the same. With no transcriber wired the probe is skipped —
-    // the stored source then reports why instead.
+    // Media is probed before the bytes are stored: a recording or video too long to read is
+    // a named refusal, and one ffmpeg cannot parse is not that kind of file at all. A fetched
+    // video's kept audio track probes exactly like a recording. With no reader wired the
+    // probe is skipped — the stored source then reports why instead.
     let audioSeconds: number | undefined;
-    if ((audioMedia || videoMedia) && this.audio) {
+    if (videoMedia && this.video) {
+      try {
+        const probe = await this.video.probe(input.bytes, input.mediaType);
+        audioSeconds = probe.seconds;
+        if (Number.isFinite(audioSeconds)) {
+          const duration = checkAudioDuration(audioSeconds, limits);
+          if (duration) throw new SourceRejection(duration.message.replace('recording', 'video'), duration.code, 413);
+        }
+      } catch (error) {
+        if (error instanceof SourceRejection) throw error;
+        if (error instanceof VideoReadError) {
+          throw new SourceRejection(error.message, error.code === 'ffmpeg_missing' ? 'ffmpeg_missing' : 'unsupported_media', error.code === 'ffmpeg_missing' ? 503 : 415);
+        }
+        throw error;
+      }
+    }
+    if (audioMedia && this.audio) {
       try {
         const probe = await this.audio.probe(input.bytes, input.mediaType);
         audioSeconds = probe.seconds;
@@ -274,6 +298,7 @@ export class SourceIngestor {
     const method = this.intendedMethod(record);
     if (method === 'audio') return Boolean(this.audio);
     if (method === 'vision') return Boolean(this.vision);
+    if (method === 'video') return Boolean(this.video);
     return false;
   }
 
@@ -364,8 +389,8 @@ export class SourceIngestor {
     if (record.mediaType.startsWith('application/pdf')) return 'pdf';
     if (record.mediaType.startsWith('image/')) return 'vision';
     if (record.mediaType.startsWith('audio/')) return 'audio';
-    // An uploaded video reads through its audio track.
-    if (isVideoMedia(record.mediaType)) return 'audio';
+    // An uploaded video: its audio track and key frames, merged into one reading.
+    if (isVideoMedia(record.mediaType)) return 'video';
     return 'text';
   }
 
@@ -405,6 +430,19 @@ export class SourceIngestor {
         const outcome = recordAudioTranscript(bytes, transcript, limits);
         return outcome.ok ? outcome.result : this.readFailure(record, outcome.rejection.message);
       }
+      if (method === 'video') {
+        if (!this.video) {
+          return this.readFailure(record, 'Video reading is not configured on this device.');
+        }
+        const reading = await this.video.read(bytes, record.mediaType, {
+          ...(audioSeconds !== undefined && Number.isFinite(audioSeconds) ? { seconds: audioSeconds } : {}),
+          ...(limits.maxAudioSeconds !== undefined ? { maxSeconds: limits.maxAudioSeconds } : {}),
+        });
+        const outcome = recordVideoReading(bytes, reading, limits);
+        if (!outcome.ok) return this.readFailure(record, outcome.rejection.message);
+        if (!outcome.result.text.trim()) return this.readFailure(record, reading.note ?? 'Nothing could be heard or read in this video.');
+        return outcome.result;
+      }
       if (method === 'pdf') {
         const reader = await openPdf(bytes, limits);
         try {
@@ -435,7 +473,7 @@ export class SourceIngestor {
     } catch (error) {
       // A bug in the extractor is not a "could not read" — keep it visible in the log so a
       // broken reader is not indistinguishable from a corrupt file.
-      const named = error instanceof PdfParseError || error instanceof AudioTranscribeError || error instanceof ImageReadError;
+      const named = error instanceof PdfParseError || error instanceof AudioTranscribeError || error instanceof ImageReadError || error instanceof VideoReadError;
       if (!named) {
         log.error('source_extraction_unexpected', { sourceId: record.id, mediaType: record.mediaType, ...errorFields(error) });
       }

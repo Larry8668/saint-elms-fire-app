@@ -2,14 +2,15 @@ import assert from 'node:assert/strict';
 import { test } from 'node:test';
 import { AudioTranscribeError } from '../../media/audio';
 import { ImageReadError, type ImageReader } from '../../media/vision';
-import { SourceIngestor, SourceRejection, type AudioReader, type IngestResult } from './ingest';
+import { VideoReadError } from '../../media/video';
+import { SourceIngestor, SourceRejection, type AudioReader, type IngestResult, type VideoReader } from './ingest';
 import { JobConflictError, JobStateError } from './jobs';
 import { PROFILE, tempRoot, vault } from '../testing/fixtures';
 
-const harness = async (prefix: string, audio?: AudioReader, vision?: ImageReader) => {
+const harness = async (prefix: string, audio?: AudioReader, vision?: ImageReader, video?: VideoReader) => {
   const store = await vault(prefix);
   const jobsRoot = await tempRoot(`${prefix}-jobs`);
-  const ingestor = new SourceIngestor(store, async () => PROFILE, audio, vision);
+  const ingestor = new SourceIngestor(store, async () => PROFILE, audio, vision, video);
   return { store, jobsRoot, ingestor };
 };
 
@@ -592,4 +593,112 @@ test('a read interrupted by a restart resumes from the kept bytes when the job i
   await fresh.settled(result.jobId);
   assert.equal((await store.readJob(result.jobId))?.stage, 'awaiting_source_review');
   assert.match((await store.readExtractionText(result.source.id)) ?? '', /Resumed/);
+});
+
+const fakeVideo = (over: Partial<VideoReader> = {}): VideoReader => ({
+  probe: async () => ({ seconds: 40, hasAudio: true }),
+  read: async () => ({
+    text: "[0:00] Today: Newton's second law.\n[0:06] (on screen) Newton's second law / F = ma\n[0:21] Now, momentum.\n[0:22] (on screen) Momentum p = mv",
+    seconds: 40,
+    chunks: 1,
+    failedChunks: 0,
+    frames: 10,
+    framesRead: 10,
+    failedFrames: 0,
+    framesKept: 2,
+    partial: false,
+  }),
+  ...over,
+});
+
+test('an uploaded video is read in the background into one transcript-plus-screen reading', async () => {
+  const seen: Array<{ mediaType: string; opts: unknown }> = [];
+  const { store, ingestor } = await harness(
+    'ingest-video-read',
+    fakeAudio(),
+    undefined,
+    fakeVideo({
+      read: async (bytes, mediaType, opts) => {
+        seen.push({ mediaType, opts });
+        return fakeVideo().read(bytes, mediaType, opts);
+      },
+    }),
+  );
+  const result = await ingestor.ingest(uploadedVideo());
+  assert.equal((await store.readJob(result.jobId))?.stage, 'reading');
+  const read = await afterRead(ingestor, result);
+  assert.equal(read.extraction?.method, 'video');
+  assert.match(read.extraction?.text ?? '', /\[0:06\] \(on screen\) Newton's second law \/ F = ma/);
+  assert.match(read.extraction?.text ?? '', /\[0:21\] Now, momentum\./);
+  assert.equal(read.job?.stage, 'awaiting_source_review');
+  assert.deepEqual(seen, [{ mediaType: 'video/mp4', opts: { seconds: 40 } }], 'the probed length rides into the read');
+  assert.equal((await store.readSource(result.source.id))?.extractions.at(-1)?.method, 'video');
+});
+
+test('a video over the length cap, or one ffmpeg sees no picture in, is refused before storage', async () => {
+  const { store, ingestor } = await harness('ingest-video-probe', fakeAudio(), undefined, fakeVideo({ probe: async () => ({ seconds: 7200, hasAudio: true }) }));
+  const long = await ingestor.ingest(uploadedVideo(), { maxAudioSeconds: 3600 }).catch((e: unknown) => e);
+  assert.ok(long instanceof SourceRejection);
+  assert.equal(long.code, 'audio_too_long');
+  assert.match(long.message, /That video is 2:00:00/);
+
+  const blind = await harness(
+    'ingest-video-blind',
+    fakeAudio(),
+    undefined,
+    fakeVideo({
+      probe: async () => {
+        throw new VideoReadError('That file does not contain a readable video stream.', 'video_unreadable');
+      },
+    }),
+  );
+  const refused = await blind.ingestor.ingest(uploadedVideo()).catch((e: unknown) => e);
+  assert.ok(refused instanceof SourceRejection);
+  assert.equal(refused.code, 'unsupported_media');
+  assert.equal(refused.status, 415);
+  assert.deepEqual(Object.keys(await store.listSources()), []);
+  assert.deepEqual(Object.keys(await blind.store.listSources()), []);
+});
+
+test('a video that yields nothing fails its job by name — no transcript is invented', async () => {
+  const { ingestor } = await harness(
+    'ingest-video-empty',
+    fakeAudio(),
+    undefined,
+    fakeVideo({
+      read: async () => ({
+        text: '',
+        seconds: 40,
+        chunks: 1,
+        failedChunks: 1,
+        frames: 3,
+        framesRead: 0,
+        failedFrames: 3,
+        framesKept: 0,
+        partial: true,
+        note: 'The audio track could not be transcribed — the model could not be reached; 3 of 10 frames could not be read.',
+      }),
+    }),
+  );
+  const read = await afterRead(ingestor, await ingestor.ingest(uploadedVideo()));
+  assert.equal(read.extraction?.method, 'video');
+  assert.equal(read.extraction?.text, '');
+  assert.equal(read.job?.stage, 'failed');
+  assert.match(read.job?.error ?? '', /audio track could not be transcribed/);
+  assert.match(read.source.note ?? '', /3 of 10 frames could not be read/);
+});
+
+test('a partial video reading still waits for review, with units counting chunks and frames', async () => {
+  const { ingestor } = await harness(
+    'ingest-video-partial',
+    fakeAudio(),
+    undefined,
+    fakeVideo({
+      read: async () => ({ text: '[0:00] Some of it.', seconds: 40, chunks: 1, failedChunks: 0, frames: 10, framesRead: 9, failedFrames: 1, framesKept: 0, partial: true, note: '1 of 10 frames could not be read.' }),
+    }),
+  );
+  const read = await afterRead(ingestor, await ingestor.ingest(uploadedVideo()));
+  assert.equal(read.job?.stage, 'awaiting_source_review');
+  assert.equal(read.extraction?.partial, true);
+  assert.equal(read.extraction?.note, '1 of 10 frames could not be read.');
 });

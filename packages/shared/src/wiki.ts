@@ -46,7 +46,7 @@ export const CourseConceptRefSchema = z.strictObject({
 export type CourseConceptRef = z.infer<typeof CourseConceptRefSchema>;
 
 /** How a source's text was produced — the last ledger entry is the text a compile would read. */
-export const ExtractionMethodSchema = z.enum(['text', 'pdf', 'vision', 'audio', 'student_correction']);
+export const ExtractionMethodSchema = z.enum(['text', 'pdf', 'vision', 'audio', 'video', 'student_correction']);
 export type ExtractionMethod = z.infer<typeof ExtractionMethodSchema>;
 
 const sourceBase = z.strictObject({

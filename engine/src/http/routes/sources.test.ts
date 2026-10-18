@@ -6,7 +6,7 @@ import type { ContentStore } from '../../content/store';
 import type { SettingsReader } from '../../settings/store';
 import { SessionStore, type Session } from '../../sessions/store';
 import type { WikiStore } from '../../brain/wiki-store';
-import { SourceIngestor, type AudioReader } from '../../brain/sources/ingest';
+import { SourceIngestor, type AudioReader, type VideoReader } from '../../brain/sources/ingest';
 import type { ImageReader } from '../../media/vision';
 import { YouTubeError, type YouTube } from '../../media/youtube';
 import { AudioTranscribeError } from '../../media/audio';
@@ -80,10 +80,10 @@ interface RouteHarness {
   sessions: SessionStore;
 }
 
-async function routeHarness(prefix: string, opts: { store?: WikiStore; studentId?: string; audio?: AudioReader; vision?: ImageReader; youtube?: Partial<YouTube>; propose?: (prompt: string) => Promise<KeeperDraft> } = {}): Promise<RouteHarness> {
+async function routeHarness(prefix: string, opts: { store?: WikiStore; studentId?: string; audio?: AudioReader; vision?: ImageReader; video?: VideoReader; youtube?: Partial<YouTube>; propose?: (prompt: string) => Promise<KeeperDraft> } = {}): Promise<RouteHarness> {
   const store = opts.store ?? (await vault(prefix));
   const identity = { ...PROFILE, studentId: opts.studentId ?? PROFILE.studentId };
-  const sources = new SourceIngestor(store, async () => identity, opts.audio, opts.vision);
+  const sources = new SourceIngestor(store, async () => identity, opts.audio, opts.vision, opts.video);
   const compiler = new WikiCompiler(store, { settings, content, profile: async () => identity, propose: opts.propose });
   const sessions = new SessionStore(await tempRoot(`${prefix}-sessions`));
   const profile = { id: identity.studentId, name: 'Student', email: 's@example.test', cohortId: 'cohort-a' };
@@ -414,6 +414,44 @@ test('a video link previews metadata-only, then the consented fetch files a vide
   assert.equal(detail.extraction?.method, 'audio', 'the fetched track reads through the audio pipeline');
   assert.match(detail.extraction?.text ?? '', /Kepler/);
   assert.deepEqual(calls, ['preview:https://youtu.be/abc123XYZ_0', `fetch:${link.url}`], 'preview and fetch are the two distinct, consented calls');
+});
+
+test('an uploaded lecture video answers 201 at once, then its merged reading compiles like any other', async () => {
+  const mp4 = Buffer.from([0x00, 0x00, 0x00, 0x18, 0x66, 0x74, 0x79, 0x70]);
+  const prompts: string[] = [];
+  const { app, sources } = await routeHarness('route-video-read', {
+    video: {
+      probe: async () => ({ seconds: 40, hasAudio: true }),
+      read: async () => ({
+        text: "[0:00] Today: Newton's second law.\n[0:06] (on screen) F = ma",
+        seconds: 40,
+        chunks: 1,
+        failedChunks: 0,
+        frames: 10,
+        framesRead: 10,
+        failedFrames: 0,
+        framesKept: 1,
+        partial: false,
+      }),
+    },
+    propose: async (prompt) => {
+      prompts.push(prompt);
+      return draft({ pages: [pageDraft({ title: 'Force', claims: [{ text: 'F = ma', kind: 'source_fact', quote: 'F = ma' }] })] });
+    },
+  });
+  const filed = await post(app, '/sources', { kind: 'video', title: 'Lecture 4', mediaType: 'video/mp4', data: mp4.toString('base64') });
+  assert.equal(filed.status, 201);
+  const receipt = (await filed.json()) as SourceReceipt;
+  assert.equal(receipt.extraction, null);
+  await sources.settled(receipt.jobId);
+  const detail = (await (await app.request(`/sources/${receipt.source.id}`, { headers: AUTH })).json()) as SourceDetail;
+  assert.equal(detail.extraction?.method, 'video');
+  assert.equal(detail.job?.stage, 'awaiting_source_review');
+
+  const compiled = await post(app, `/sources/${receipt.jobId}/compile`, {});
+  assert.equal(compiled.status, 200);
+  assert.equal(((await compiled.json()) as CompileResult).job.stage, 'awaiting_review');
+  assert.match(prompts.join('\n'), /\(on screen\) F = ma/, 'the compiler reads the merged video reading');
 });
 
 test('a long media read does not block the 201 — the client polls the job out of reading', async () => {
