@@ -1,13 +1,14 @@
 # Object store: where vaults live between sessions
 
-Status: **PR-41a** added an S3-compatible bucket and an engine adapter; **PR-41b/41c** sync the
-seat owner's profile through it (below). With `OBJECT_STORE_*` or `VAULT_SYNC_ACCOUNT` unset (the
-default), the engine behaves exactly as before.
+Status: vault sync through an S3-compatible store is implemented and optional
+(`engine/src/store/` adapter, `engine/src/sync/` service). With `OBJECT_STORE_*` or
+`VAULT_SYNC_ACCOUNT` unset (the default), the engine behaves exactly as before.
 
-Why it exists: study sessions are moving to ephemeral per-session VMs. A backend spawns a fresh
+Why it exists: hosted study sessions run on ephemeral per-session VMs. The uni spawns a fresh
 VM, restores the student's vault from a central store, syncs often, then makes a final sync and
-tears the VM down on idle. The store is S3-compatible: MinIO locally and in docker, and
-DigitalOcean Spaces later. Switching is configuration only.
+tears the VM down on idle. Use MinIO or another endpoint that passes the adapter contract,
+including conditional `If-Match` writes; S3 compatibility alone is insufficient. Switching is
+configuration only.
 
 ## What is stored where
 
@@ -57,8 +58,9 @@ store holds anything you care about. The defaults are local-only.
 **Image note.** Upstream MinIO stopped publishing images and archived its repository in 2026;
 `minio/minio` and `minio/mc` no longer pull from Docker Hub. Compose uses Chainguard's maintained
 builds (`cgr.dev/chainguard/minio`, `…/minio-client`), pinned by multi-arch index digest. Bump the
-digests in `docker-compose.yml` and `infra/minio/init.Dockerfile` together. Any S3-compatible
-server works with the adapter if this source ever goes away.
+digests in `docker-compose.yml` and `infra/minio/init.Dockerfile` together. Another
+S3-compatible server can stand in for it — subject to the same adapter contract, including
+`If-Match` — if this source ever goes away.
 
 ### Integration test
 
@@ -76,23 +78,28 @@ OBJECT_STORE_TEST_ACCESS_KEY=sef-engine OBJECT_STORE_TEST_SECRET_KEY=sef-engine-
 It writes under a random `vaults/test-<uuid>/` prefix and deletes it afterwards. Versioning keeps
 delete markers, which are harmless in a dev bucket.
 
-## Switch to DigitalOcean Spaces
+## Switch to another endpoint
 
-1. Create a Space (bucket) in a region, e.g. `blr1`, and turn on versioning in its settings.
-2. Go to **API → Spaces Keys → Generate New Key**. Prefer a key limited to that one bucket
-   (Spaces supports per-bucket access keys) with read/write rights.
-3. Set the engine environment:
+MinIO is the reference implementation. Another endpoint may be used only after it passes the
+adapter contract — including conditional `If-Match` writes — verified with the integration
+test above before any migration. S3 compatibility alone is insufficient.
+
+1. Create/prepare the bucket and turn on versioning where the provider supports it.
+2. Create a key limited to that one bucket where the provider supports it, with read/write
+   rights.
+3. Set the engine environment, for example:
 
    ```bash
-   OBJECT_STORE_ENDPOINT=https://blr1.digitaloceanspaces.com
-   OBJECT_STORE_REGION=blr1
-   OBJECT_STORE_BUCKET=<your-space>
-   OBJECT_STORE_ACCESS_KEY=<spaces key>
-   OBJECT_STORE_SECRET_KEY=<spaces secret>
-   OBJECT_STORE_FORCE_PATH_STYLE=false   # https://<space>.blr1.digitaloceanspaces.com/<key>
+   OBJECT_STORE_ENDPOINT=https://<endpoint>
+   OBJECT_STORE_REGION=<region>
+   OBJECT_STORE_BUCKET=<bucket>
+   OBJECT_STORE_ACCESS_KEY=<key>
+   OBJECT_STORE_SECRET_KEY=<secret>
+   OBJECT_STORE_FORCE_PATH_STYLE=false   # virtual-hosted-style endpoints
    ```
 
-4. Run `pnpm store:check`.
+4. Run the contract test against it (`OBJECT_STORE_TEST_*`, as in the integration test
+   above), then `pnpm store:check`.
 
 ## Adapter
 
@@ -232,10 +239,12 @@ OBJECT_STORE_TEST_ACCESS_KEY=sef-engine OBJECT_STORE_TEST_SECRET_KEY=sef-engine-
 
 - **One shared engine key in v1.** Any VM holding it can read and write every student's prefix,
   so `content/` (and the vault) are only as trusted as the bucket. Per-session credentials scoped
-  to `vaults/<accountId>/` (STS or a session policy) are the follow-up, as are leases in Postgres
-  (PR-42).
+  to `vaults/<accountId>/` (STS or a session policy) remain a follow-up. PostgreSQL
+  workspace leases are implemented by the [session orchestrator](session-orchestrator.md);
+  a lease does not scope the shared object-store key.
 - **`If-Match` on PUT** is supported by MinIO and AWS S3. Run the store contract test against
-  DigitalOcean Spaces before switching: a store that ignored the header would make the CAS a no-op.
+  any replacement endpoint before switching: a store that ignored the header would make the
+  CAS a no-op.
 - Bodies are whole buffers: a 256 MB recording is held in memory while it uploads or downloads.
   Streaming is a follow-up.
 - A compile job running at teardown is restored as it was last written, as after any engine restart.

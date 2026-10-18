@@ -25,10 +25,9 @@ Build environment variables:
 |---|---|---|
 | `VITE_UNI_URL` | the university server, e.g. `https://uni.example.edu` | Portal links (back to "Open my workspace", account pages). |
 | `VITE_WORKSPACE_HOST_SUFFIX` | `.instabox.tech` (the default) | The app only accepts a `?workspace=` URL whose host ends with this, over https, with no credentials, path, query or fragment. A forged link to any other host is ignored. |
+| `VITE_DEMO_MODE` | `true` for a hosted demo | Shows the demo students as a manual flow: they prompt for the demo password, which is never embedded in the bundle — embedding happens only when `VITE_DEMO_SELF_SERVE` **and** `VITE_DEMO_PASSWORD` are both set (see Self-serve demo). Unset or `false`: plain sign-in only. |
 
-| `VITE_DEMO_MODE` | `true` (production) | Shows the one-click demo students. On a hosted build they prompt for the demo password instead of filling a known one, so the private `DEMO_PASSWORD` never ships in the bundle. Unset or `false`: plain sign-in only. |
-
-Leave `VITE_ENGINE_URL` unset (a student without a workspace falls back to a local engine at `127.0.0.1:4100`).
+Leave `VITE_ENGINE_URL` unset. A hosted build opened without a stored workspace sends the visitor to the portal rather than silently falling back; the local-engine fallback at `127.0.0.1:4100` applies to local builds.
 
 Set it once and redeploy (Vite bakes it in at build time):
 
@@ -54,7 +53,7 @@ A judge gets one URL (the portal) and picks a student; everything else happens b
 | `VITE_DEMO_SELF_SERVE` | `true` | The portal's sign-in leads with **Try the demo** (three persona cards). A click signs the persona in and opens the workspace with no further click; the app then signs in on the workspace by itself. It implies `VITE_DEMO_MODE`. |
 | `VITE_DEMO_PASSWORD` | the uni's `DEMO_PASSWORD` | Embedded in the public JavaScript. **Acceptable only for a demo deployment** whose personas hold seeded data; rotate `DEMO_PASSWORD` after the event. Without it self-serve is off. |
 
-Self-serve stays off unless both are set; a failed automatic sign-in falls back to the existing password panel. The portal shows the section only when the uni seeds demo students (`SEED_DEMO`).
+Self-serve stays off unless both are set; a failed automatic sign-in falls back to the existing password panel. The portal shows the section only when the uni seeds demo students (`SEED_DEMO`). A self-serve build requests the guided tour on every arrival; ×/Esc closes it and **Tour** above Settings restarts it.
 
 ### Session replay (PostHog)
 
@@ -64,7 +63,7 @@ Self-serve stays off unless both are set; a failed automatic sign-in falls back 
 | app build and portal build | `VITE_POSTHOG_HOST` | optional, default `https://us.i.posthog.com` |
 | uni server | `PORTAL_ANALYTICS_ORIGINS` | `https://us.i.posthog.com,https://us-assets.i.posthog.com`, added to the `/app` shell's `connect-src`. Without it the portal's CSP blocks PostHog and only the app is recorded. |
 
-Pageviews, autocapture and session replay (text inputs masked); the recorder is bundled, so no third-party script loads. URLs are sent without their query or fragment, and a portal visit carrying a reset `?token=` is never recorded. Sessions are identified as `demo:<persona>`, never by email. Named events: `demo_self_serve_started`, `workspace_signed_in`, `tour_started`, `tour_completed`, `source_uploaded` (`kind`), `teacher_turn_sent` (`teacher`). The portal and the app are different origins, so a judge's visit is two recordings; once the persona is identified on both sides they sit under the same person.
+Pageviews, autocapture and session replay (inputs masked via `maskAllInputs` — input masking is not a promise that every displayed page is excluded from replay); the recorder is bundled, so no third-party script loads. URLs are sent without their query or fragment, and a portal visit carrying a reset `?token=` is never recorded. Sessions are identified as `demo:<persona>`, never by email. Named events: `demo_self_serve_started`, `workspace_signed_in`, `tour_started`, `tour_completed`, `source_uploaded` (`kind`), `teacher_turn_sent` (`teacher`). The portal and the app are different origins, so a judge's visit is two recordings; once the persona is identified on both sides they sit under the same person.
 
 ## The app on a workspace
 

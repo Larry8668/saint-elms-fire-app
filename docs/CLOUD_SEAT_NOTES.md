@@ -1,6 +1,12 @@
 # Cloud seat notes (PR-37..40): Instabox working notes and handover
 
-Last updated: 2026-10-17 (PR-38 done; see section 8. PR-42 orchestrator smoke: section 10). This folder is gitignored. Contains NO secrets.
+> **Historical document.** These are dated engineering notes. Observations, machine/snapshot
+> ids, paths and timings below may be obsolete, and private ops scripts they reference may not
+> exist in this repository — this is not a current machine inventory or an executable
+> deployment procedure. For the current state see [START_HERE.md](START_HERE.md) and
+> [../HANDOVER.md](../HANDOVER.md).
+
+Last updated: 2026-10-17 (PR-38 done; see section 8. PR-42 orchestrator smoke: section 10). Originally kept as private working notes; this copy is tracked. Keep secrets and current private operator material under `docs/internal/`.
 
 ## 1. Purpose and status
 The "cloud seat" series (PR-37 engine served from the box, PR-38 seat provisioning, PR-39 seat card/wake UX, PR-40 snapshot/teardown) puts each student's engine on an Instabox machine. This file holds the verified API facts, the live probe results and a runbook. Status: API verified against the OpenAPI spec, the site docs and ONE live probe machine (`sef-probe-1`, since deleted). PR-38 is not yet built.

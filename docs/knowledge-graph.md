@@ -5,7 +5,7 @@ Saint Elms Fire keeps two graphs and draws one on top of the other:
 - the **course sky**: every concept in the courses released to the student, and how they connect. It is built deterministically from lesson frontmatter, so it's identical for every student with the same releases;
 - the **second brain**: what *this* student understands, one markdown page per concept, with evidence, misconceptions and links they made.
 
-What you see in the Sky view is the course sky, coloured and connected by the brain. That's why three students on the same Mechanics course see three different skies.
+What you see in the Sky view is the course sky, coloured and connected by the brain. That's why three students on the same Mechanics course see three different skies. The separate **Brain** view draws the second graph on its own: a full-screen map of the student's wiki, not the curriculum.
 
 ---
 
@@ -319,7 +319,11 @@ artifact (`res_*`), a code-built proposal adds its id to the page's `learner.evi
 and a page still in the earlier format is adopted (`upgradeLegacyPage`) first — there is no
 legacy bypass writer left. `submitQuiz` accepts an `attemptId` (or falls back to a hash of
 the answers) and keys the stored result on it, so retries and double-submits replay the
-same result rather than stacking evidence. The old `BrainVault` only *reads* typed pages
+same result rather than stacking evidence. Generation itself is asynchronous:
+`POST /api/quiz/:key` answers `202` with `{jobId, key}` and the UI polls
+`GET /api/quiz/jobs/:jobId` for the stage and the finished quiz; the jobs live
+in memory, so an engine restart loses them (`quiz_job_not_found` — retry
+generation). The old `BrainVault` only *reads* typed pages
 now (as concept views for the sky and mastery); its `save`/`writeSeeded` refuse to touch them.
 
 The student sees the diff, including what the deterministic pass dropped and why, in the
@@ -386,10 +390,12 @@ The compiled wiki is the first place a question is looked up, not the last
   tutor-role call with thinking off composes the answer, citing `[[page-id]]`. Code then
   keeps only citations to pages that were in that context — an invented or unread page id
   is removed and listed in `droppedCitations`; teacher-style `[lesson: …]` / `[claim: …]`
-  citations are removed too, because an ask never had that evidence. The response is SSE
+  citations are removed too, because an ask never had that evidence. The check verifies
+  that a citation names a real page that was shown, not that the page's claims are true —
+  Ask is not an independent fact checker. The response is SSE
   (`status`, `pages`, citation-checked `delta`s, one `done` with
   `{ answer, citations, droppedCitations, pagesSearched, pagesRead, askId, evidence: 'student_wiki' }`),
-  so the first words land well inside a hosted edge's ~21 s budget. An empty brain or a
+  so status and page-selection events can arrive before the answer; model latency still depends on the provider. An empty brain or a
   question no page matches is answered honestly with no model call. The answer is kept
   under the profile root (`asks/`, outside the vault), and **Save to wiki** with
   `{ askId }` freezes it as an `answer` source exactly like a teacher answer.
@@ -456,6 +462,12 @@ relayed to the university's authenticated feed by `PeerShareService`:
 - **Next up** (`next-up.ts`) points the student at open misconceptions first, then the next unseen concepts in teaching order.
 - Clicking a star opens the **concept sheet**, which is kind-aware: a course concept offers a quick quiz and "Talk it through with the Guide"; a synthesis or question (and any personal concept with no introducing lesson) shows its record and growth trail instead — the quiz action exists only where a real lesson can back it.
 - **Deep links**: the Sky view reads `?page=<pageId>` (`lib/nav.tsx`) to select a node — the stable anchor hook PR-21 builds on. The Brain view honours the same parameter for its record sheets.
+
+### The Brain view
+
+`apps/desktop/src/features/brain/BrainView.tsx` opens with a full-screen Canvas 2D wiki map (`brain-map/`), separate from the course-oriented Sky. Pan, zoom, select pages and replay growth. Search matches titles, ids, summaries and claim text; the Ask switch calls the wiki-only answer flow above and lights the cited pages. Page links use `#/brain?page=<pageId>`.
+
+Scroll below the map for **What your brain learned** (growth events grouped with source modality), **Your brain disagrees with itself** (disputed claims and semantic-review findings), then Pages, Wiki, Sources, Open questions, Maintenance and Timeline. A page's **Built from** row opens its source and extracted reading together. The map and story expose existing evidence and provenance; mastery and proposal acceptance still follow the engine's normal rules.
 
 ## 6. Demo brains
 

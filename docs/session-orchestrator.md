@@ -1,6 +1,6 @@
 # Session orchestrator (PR-42)
 
-When a student signs in on the web, the university server gives them their own short-lived study workspace. It is an Instabox VM made from the golden snapshot (PR-44) and running the engine. When they log out or go idle, the server flushes their vault to the object store (PR-41) and deletes the VM.
+When a student signs in on the web, the university server gives them their own short-lived study workspace. It is an Instabox VM made from the golden snapshot (PR-44) and running the engine. An ordinary workspace end flushes the vault to the object store and deletes the VM. Accounts in `SESSION_PINNED_ACCOUNTS` keep their VM on the student's own end request; staff end, idle reaping and lease expiry still retire them.
 
 **Product promise: this is "uni-hosted".** The university's operator holds the Instabox key, the VMs, the vault store and the central model. Staff tooling can see that a session exists, and the operator can reach the VM. It is not "a machine only you control", and the docs and the UI must not claim that it is. Prompts that contain vault excerpts reach the central model gateway (PR-43). The local laptop engine and vault export stay as they are, for students who want their data to stay on their own device.
 
@@ -19,7 +19,10 @@ student ──POST /v1/session──▶ uni ── lease (Postgres row; one live
                                └─ health  GET <url>/api/health until ok and (sync.state = 'ready' or no sync field)
 student ◀── {state:'ready', url} ── GET /v1/session (polled by the "Starting your workspace…" screen)
 student ──POST /v1/session/heartbeat (every minute or so)──▶ extends the lease
-student ──DELETE /v1/session (logout)──▶ stopping → exec session-stop.sh (flush) → DELETE machine → ended
+student ──DELETE /v1/session (workspace end)──▶ stopping → exec session-stop.sh (flush) → DELETE machine → ended
+              └─ pinned account: flush, keep the VM + lease, stay ready
+UI sign-out also calls POST /api/auth/logout afterwards — that revokes only the calling
+engine session (other devices keep the profile's uni credential; the last device clears it)
 reaper (every 30 s): no heartbeat for SESSION_IDLE_MINUTES, or lease expired → same teardown; orphan sweep
 ```
 
@@ -96,7 +99,7 @@ The orchestrator mints with `mintGatewayToken` from `packages/shared/src/node/ga
 
 - **Portal** (`apps/desktop/src/portal`): an approved student's page offers **Open my workspace**. It POSTs `/v1/session`, polls `GET /v1/session` (1 s while spawning, 3 s while queued) and shows the steps' `label`s, the queue `position`, a capacity note, and a failure with retry. On `ready` the browser reads `<url>/api/health` itself (the `/app` CSP allows `SESSION_WORKSPACE_ORIGINS`; the engine lets any origin read public health) and redirects only when it is `ok` and `sync.state` is `ready` or absent. With `VITE_APP_URL` set on the portal build, the redirect goes to the web app instead, as `<app>/?workspace=<VM url>` (PR-45d, `docs/deploy-vercel.md`).
 - **Sign-in on the VM**: v1 signs in again with the device code. The student is already signed in on the portal in the same browser, so approving the code is one click. There is no email field to pre-fill.
-- **Heartbeat and logout**: the served UI cannot call the uni (its CSP is same-origin, and the uni's cookie is on the uni's origin), so the engine relays them with the credential it already holds for the profile: `POST /api/workspace/heartbeat` → `POST /v1/session/heartbeat`, `DELETE /api/workspace` → `DELETE /v1/session`. Both need an engine session and only work when the engine is a hosted workspace (`ENGINE_PUBLIC_HOST` and `ENGINE_SEAT_OWNER` set). The UI beats every 60 s while the tab is visible and not at all while it is hidden, so a workspace nobody looks at is reaped after `SESSION_IDLE_MINUTES`. Signing out on a workspace ends it first, while the engine still holds the uni credential.
+- **Heartbeat and logout**: the served UI cannot call the uni (its CSP is same-origin, and the uni's cookie is on the uni's origin), so the engine relays them with the credential it already holds for the profile: `POST /api/workspace/heartbeat` → `POST /v1/session/heartbeat`, `DELETE /api/workspace` → `DELETE /v1/session`. Both need an engine session and only work when the engine is a hosted workspace (`ENGINE_PUBLIC_HOST` and `ENGINE_SEAT_OWNER` set). The UI beats every 60 s while the tab is visible and not at all while it is hidden, so a workspace nobody looks at is reaped after `SESSION_IDLE_MINUTES`. Signing out on a workspace ends it first, while the engine still holds the uni credential — `DELETE /api/workspace` → `DELETE /v1/session` (which retires an ordinary workspace for everyone using it, and merely flushes a pinned one) — and then calls `POST /api/auth/logout`, which revokes only the calling engine session: while another device session remains the profile's uni credential is kept, and the last device's logout additionally attempts uni sign-out and clears the stored credential/entitlement.
 - **One-time hand-off ticket** (skipping the second sign-in): deferred. See the follow-ups below.
 
 ## Failure modes
