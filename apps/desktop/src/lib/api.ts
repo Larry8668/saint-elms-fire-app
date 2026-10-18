@@ -78,6 +78,7 @@ import type {
   WebPreview,
   WikiIndex,
   WikiPageView,
+  WikiJob,
   WikiProposalRecord,
 } from '@sef/shared';
 import { log } from './log';
@@ -326,7 +327,8 @@ export const api = {
   readSource: (id: string) => post<SourceReadResult>(`/api/sources/${encodeURIComponent(id)}/read`),
   compileJob: (jobId: string) => post<CompileResult>(`/api/sources/${encodeURIComponent(jobId)}/compile`),
   cancelJob: (jobId: string) => post<void>(`/api/sources/${encodeURIComponent(jobId)}/cancel`),
-  retryJob: (jobId: string) => post<void>(`/api/sources/${encodeURIComponent(jobId)}/retry`),
+  /** `reading` means the retry is a fresh background read — poll it rather than compiling. */
+  retryJob: (jobId: string) => post<{ stage: WikiJob['stage'] } | undefined>(`/api/sources/${encodeURIComponent(jobId)}/retry`),
   proposals: () => request<ProposalList>('/api/proposals'),
   proposalPreview: (id: string) => request<ProposalPreview>(`/api/proposals/${encodeURIComponent(id)}`),
   acceptProposal: (id: string, only?: { pageIds: string[] }) => post<ProposalAcceptance>(`/api/proposals/${encodeURIComponent(id)}/accept`, only ?? {}),

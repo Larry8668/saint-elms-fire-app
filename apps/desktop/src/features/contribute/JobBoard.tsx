@@ -12,7 +12,7 @@ import { api } from '@/lib/api';
 import { cn } from '@/lib/cn';
 import { useInvalidateBrain } from '@/lib/queries';
 import { timeAgo } from '@/lib/time';
-import { FLOW_STEPS, STAGE_INFO, flowStep, isLiveJob, sourceKindLabel } from './review';
+import { FLOW_STEPS, STAGE_INFO, canWithdraw, flowStep, isLiveJob, isWorking, readingLabel, sourceKindLabel } from './review';
 
 /** Kept → read → proposed → decided → in your wiki; drawn from the journal, not a timer. */
 function FlowRail({ stage }: { stage: WikiJob['stage'] }) {
@@ -68,7 +68,7 @@ function JobRow({ job, sources, onInspect, onReviewProposal, busy, onCompile, on
         </div>
       </div>
       <div className="flex shrink-0 items-center gap-1.5">
-        {(job.stage === 'queued' || job.stage === 'extracting' || job.stage === 'compiling') && <WorkingLabel label={info.label} className="text-beacon-300" />}
+        {isWorking(job.stage) && <WorkingLabel label={job.stage === 'reading' && covered[0] ? readingLabel(covered[0]) : info.label} className="text-beacon-300" />}
         {job.stage === 'awaiting_source_review' && covered[0] && (
           <>
             <Button size="sm" variant="outline" onClick={() => onInspect(covered[0].id)}>
@@ -89,7 +89,7 @@ function JobRow({ job, sources, onInspect, onReviewProposal, busy, onCompile, on
             Retry
           </Button>
         )}
-        {(job.stage === 'queued' || job.stage === 'extracting' || job.stage === 'awaiting_source_review') && (
+        {canWithdraw(job.stage) && (
           <ConfirmButton size="sm" variant="ghost" confirmLabel="Withdraw?" onConfirm={() => onCancel(job)}>
             Withdraw
           </ConfirmButton>
@@ -107,15 +107,18 @@ export function JobBoard({ board, onInspect, onReviewProposal }: { board: JobLis
   const invalidateBrain = useInvalidateBrain();
 
   const invalidate = () => invalidateBrain();
-  const compiled = (result: { job: WikiJob; proposalId: string | null }) => {
+  const compiled = (result: { job: WikiJob; proposalId: string | null } | null) => {
     invalidate();
+    // null: the retry restarted a background read — the board polls it from here.
+    if (!result) return;
     if (result.job.stage === 'awaiting_review' && result.proposalId) onReviewProposal(result.proposalId);
     else if (result.job.stage === 'no_changes') toast.info('The keeper proposed no changes for this source.');
   };
   const compile = useMutation({ mutationFn: (job: WikiJob) => api.compileJob(job.id), onSuccess: compiled, onError: (e) => toast.error((e as Error).message) });
   const retry = useMutation({
     mutationFn: async (job: WikiJob) => {
-      await api.retryJob(job.id);
+      const retried = await api.retryJob(job.id);
+      if (retried?.stage === 'reading') return null;
       return api.compileJob(job.id);
     },
     onSuccess: compiled,

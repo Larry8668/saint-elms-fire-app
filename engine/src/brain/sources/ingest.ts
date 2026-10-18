@@ -15,11 +15,12 @@ import {
 import type { ContentfulStatusCode } from 'hono/utils/http-status';
 import { errorFields, log } from '../../config';
 import { AudioTranscribeError, type AudioProbe, type AudioTranscription } from '../../media/audio';
+import { VideoReadError, type VideoProbe, type VideoReading } from '../../media/video';
 import { ImageReadError, type ImageReader } from '../../media/vision';
-import { extractPdf, extractText, recordAudioTranscript, recordStudentCorrection, recordVisionText, sha256, type ExtractionMethod, type ExtractionResult } from './extract';
+import { extractPdf, extractText, recordAudioTranscript, recordStudentCorrection, recordVideoReading, recordVisionText, sha256, type ExtractionMethod, type ExtractionResult } from './extract';
 import { probeImageDimensions } from './image';
 import { assertJobCapacity, advanceJob, cancelJob, createJob, jobStore, JobConflictError, JobStateError, listProfileJobs, retryJob } from './jobs';
-import { checkAudioDuration, checkImageDimensions, checkMediaType, checkSourceBytes, countChars, sanitiseTitle, sliceChars, titleIsSafe, INGEST_LIMITS, type Limits } from './limits';
+import { checkAudioDuration, checkImageDimensions, checkMediaType, checkSourceBytes, countChars, isAudioMedia, isVideoMedia, sanitiseTitle, sliceChars, titleIsSafe, INGEST_LIMITS, type Limits } from './limits';
 import { openPdf, PdfParseError } from './pdf';
 import type { WikiStore } from '../wiki-store';
 
@@ -47,6 +48,12 @@ export interface AudioReader {
   transcribe(bytes: Uint8Array, mediaType: string, opts?: { seconds?: number; maxSeconds?: number }): Promise<AudioTranscription>;
 }
 
+/** What the video lane must answer — length and tracks up front, the merged reading on read. */
+export interface VideoReader {
+  probe(bytes: Uint8Array, mediaType: string): Promise<VideoProbe>;
+  read(bytes: Uint8Array, mediaType: string, opts?: { seconds?: number; maxSeconds?: number }): Promise<VideoReading>;
+}
+
 /** The committed transcript range a session source covers — the checkpoint written with it. */
 export interface SessionRef {
   sessionId: string;
@@ -72,7 +79,7 @@ export interface IngestInput {
   session?: SessionRef;
   /** Required for kind 'peer'; carries the share attribution verbatim. */
   share?: PeerShareRef;
-  /** Required for kind 'video'; keeps where the recording was fetched from forever. */
+  /** Required for a fetched video (kind 'video' over its audio track); keeps where it came from forever. Absent on an uploaded video file. */
   link?: SourceLink;
   /**
    * Who the student says wrote this. Kinds restrict the choice: a note is always the
@@ -97,6 +104,13 @@ export interface IngestResult {
   reused: boolean;
 }
 
+/**
+ * Background reads in flight, keyed by vault root and job. Module-level rather than per
+ * ingestor: a workspace reopened after logout builds a new ingestor over the same vault,
+ * and must see the read the old one started instead of starting a second.
+ */
+const READS_IN_FLIGHT = new Map<string, Promise<void>>();
+
 const newSourceId = (): string => `src_${randomUUID().replace(/-/g, '').slice(0, 20)}`;
 
 const ORIGIN: Record<IngestKind, 'student' | 'external' | 'peer' | 'model'> = {
@@ -116,7 +130,7 @@ const ALLOWED_ORIGIN: Record<IngestKind, ReadonlyArray<'student' | 'external' | 
   document: ['external'],
   image: ['student', 'external'],
   audio: ['student', 'external'],
-  video: ['external'],
+  video: ['student', 'external'],
   session: ['student'],
   answer: ['model'],
   peer: ['peer'],
@@ -130,6 +144,7 @@ export class SourceIngestor {
     private readonly profile: () => Promise<ProfileIdentity>,
     private readonly audio?: AudioReader,
     private readonly vision?: ImageReader,
+    private readonly video?: VideoReader,
   ) {
     // Jobs live under the vault's own .meta/jobs — the same place WikiStore.readJob looks.
     this.jobs = jobStore(store.root);
@@ -146,14 +161,17 @@ export class SourceIngestor {
     const rejection = checkSourceBytes(input.bytes, input.mediaType, limits);
     if (rejection) throw new SourceRejection(rejection.message, rejection.code, rejection.code === 'empty' ? 400 : 413);
 
-    // The audio family pins the kind both ways: an audio mime filed as a document would
+    // The media family pins the kind both ways: an audio mime filed as a document would
     // transcribe without the duration probe, and an 'audio'/'video' kind over text would
-    // probe bytes that were never a recording. A video's stored bytes *are* its audio
-    // track, so both kinds accept the family.
-    const isAudioMedia = input.mediaType.split(';')[0]!.trim().toLowerCase().startsWith('audio/');
+    // probe bytes that were never a recording. A fetched video's stored bytes *are* its
+    // audio track, so 'video' accepts the audio family too — but uploaded video bytes are
+    // only ever filed as 'video'.
+    const audioMedia = isAudioMedia(input.mediaType);
+    const videoMedia = isVideoMedia(input.mediaType);
     const isAudioKind = input.kind === 'audio' || input.kind === 'video';
-    if (isAudioKind !== isAudioMedia) {
-      throw new SourceRejection(`Audio bytes are filed as kind 'audio' or 'video' — a '${input.kind}' cannot declare ${input.mediaType}.`, 'kind_mismatch', 400);
+    if (videoMedia ? input.kind !== 'video' : isAudioKind !== audioMedia) {
+      const expected = videoMedia ? "kind 'video'" : "kind 'audio' or 'video'";
+      throw new SourceRejection(`${videoMedia ? 'Video' : 'Audio'} bytes are filed as ${expected} — a '${input.kind}' cannot declare ${input.mediaType}.`, 'kind_mismatch', 400);
     }
 
     const identity = await this.profile();
@@ -166,20 +184,41 @@ export class SourceIngestor {
     if (input.kind === 'peer' && !input.share) {
       throw new SourceRejection('A peer source must name the share it came from.', 'missing_share_ref', 400);
     }
-    if (input.kind === 'video' && !input.link) {
+    // A video kept as its audio track came from a link, and must say which; an uploaded
+    // video file is the student's own bytes and carries none.
+    if (input.kind === 'video' && audioMedia && !input.link) {
       throw new SourceRejection('A video source must carry the link it was fetched from.', 'missing_link_ref', 400);
     }
-    const origin = input.origin ?? ORIGIN[input.kind];
-    if (!ALLOWED_ORIGIN[input.kind].includes(origin)) {
+    const linked = input.kind === 'video' && Boolean(input.link);
+    const origin = input.origin ?? (input.kind === 'video' && !linked ? 'student' : ORIGIN[input.kind]);
+    // A fetched link is never the student's own material, whatever the upload claims.
+    const allowed = linked ? (['external'] as const) : ALLOWED_ORIGIN[input.kind];
+    if (!allowed.includes(origin)) {
       throw new SourceRejection(`A ${input.kind} cannot be filed as '${origin}' material.`, 'origin_mismatch', 400);
     }
 
-    // Audio is probed before the bytes are stored: a recording too long to transcribe is a
-    // named refusal, and one ffmpeg cannot parse is not an audio file at all. A video's
-    // audio track probes exactly the same. With no transcriber wired the probe is skipped —
-    // the stored source then reports why instead.
+    // Media is probed before the bytes are stored: a recording or video too long to read is
+    // a named refusal, and one ffmpeg cannot parse is not that kind of file at all. A fetched
+    // video's kept audio track probes exactly like a recording. With no reader wired the
+    // probe is skipped — the stored source then reports why instead.
     let audioSeconds: number | undefined;
-    if (isAudioMedia && this.audio) {
+    if (videoMedia && this.video) {
+      try {
+        const probe = await this.video.probe(input.bytes, input.mediaType);
+        audioSeconds = probe.seconds;
+        if (Number.isFinite(audioSeconds)) {
+          const duration = checkAudioDuration(audioSeconds, limits);
+          if (duration) throw new SourceRejection(duration.message.replace('recording', 'video'), duration.code, 413);
+        }
+      } catch (error) {
+        if (error instanceof SourceRejection) throw error;
+        if (error instanceof VideoReadError) {
+          throw new SourceRejection(error.message, error.code === 'ffmpeg_missing' ? 'ffmpeg_missing' : 'unsupported_media', error.code === 'ffmpeg_missing' ? 503 : 415);
+        }
+        throw error;
+      }
+    }
+    if (audioMedia && this.audio) {
       try {
         const probe = await this.audio.probe(input.bytes, input.mediaType);
         audioSeconds = probe.seconds;
@@ -211,7 +250,7 @@ export class SourceIngestor {
       extractions: [],
       ...(input.kind === 'session' || input.kind === 'answer' ? { session: input.session } : {}),
       ...(input.kind === 'peer' ? { share: input.share } : {}),
-      ...(input.kind === 'video' ? { link: input.link } : {}),
+      ...(linked ? { link: input.link } : {}),
     });
 
     // The original is durable before anything is read out of it.
@@ -219,19 +258,20 @@ export class SourceIngestor {
     let stored = storedAt;
     log.info('source_stored', { sourceId: stored.id, kind: stored.kind, bytes: stored.bytes, alreadyPresent });
 
+    // A model read — a recording, a video, a photo — can run far longer than one request
+    // may stay open (a hosted edge cuts at ~21 s), so it runs in the background: the job
+    // sits in `reading` and the caller polls it. Text and PDFs read locally in milliseconds
+    // and stay inline.
+    if (!input.extraction && this.readsInBackground(stored)) {
+      const job = await this.trackReading(stored, limits, identity, audioSeconds);
+      return { source: this.summaryOf(stored, null), extraction: null, jobId: job.id, reused: alreadyPresent || job.reused };
+    }
+
     const extraction = input.extraction ? this.adopted(input.extraction, input.bytes, limits) : await this.extract(stored, input.bytes, limits, audioSeconds);
     // The extraction pass is part of the record: without it a later listing cannot say
     // whether the source ever produced text. The text itself is frozen beside the record
     // so the compiler reads back the same words rather than re-running the reader.
-    if (extraction) {
-      const chars = countChars(extraction.text);
-      await this.store.recordExtraction(
-        stored.id,
-        { method: extraction.method, sha256: extraction.sha256, chars, partial: extraction.partial, ...(extraction.note ? { note: extraction.note } : {}) },
-        extraction.text || undefined,
-      );
-      stored = { ...stored, extractions: [...stored.extractions, { revision: stored.revision, method: extraction.method, sha256: extraction.sha256, createdAt: new Date().toISOString(), chars, partial: extraction.partial, ...(extraction.note ? { note: extraction.note } : {}) }] };
-    }
+    if (extraction) stored = await this.recordPass(stored, extraction);
     const job = await this.track(stored.id, limits, identity);
 
     return {
@@ -242,11 +282,115 @@ export class SourceIngestor {
     };
   }
 
+  /** Writes one extraction pass to the ledger and returns the record as it now stands. */
+  private async recordPass(stored: SourceRecord, extraction: ExtractionResult): Promise<SourceRecord> {
+    const chars = countChars(extraction.text);
+    const entry = { method: extraction.method, sha256: extraction.sha256, chars, partial: extraction.partial, ...(extraction.note ? { note: extraction.note } : {}) };
+    await this.store.recordExtraction(stored.id, entry, extraction.text || undefined);
+    return { ...stored, extractions: [...stored.extractions, { revision: stored.revision, createdAt: new Date().toISOString(), ...entry }] };
+  }
+
+  /**
+   * Whether this source's read goes to a model — and so runs after the response. A lane
+   * with no reader wired answers at once ("not configured") and stays inline.
+   */
+  private readsInBackground(record: SourceRecord): boolean {
+    const method = this.intendedMethod(record);
+    if (method === 'audio') return Boolean(this.audio);
+    if (method === 'vision') return Boolean(this.vision);
+    if (method === 'video') return Boolean(this.video);
+    return false;
+  }
+
+  /**
+   * Joins a model-read source to its job in the `reading` stage and starts the read. A
+   * reused live job is left where it is — unless it is still `reading` with nothing in
+   * flight (the engine restarted mid-read), in which case the read resumes from the kept
+   * bytes.
+   */
+  private async trackReading(stored: SourceRecord, limits: Limits, identity: ProfileIdentity, seconds?: number): Promise<{ id: string; reused: boolean }> {
+    const { job, reused } = await createJob(this.jobs, { profile: identity, sourceIds: [stored.id], now: new Date() }, limits);
+    let stage = job.stage;
+    if (stage === 'queued') stage = (await advanceJob(this.jobs, job.id, 'reading', { progress: { completed: 0, total: job.sourceIds.length } })).stage;
+    if (stage === 'reading') void this.startRead(job.id, limits, seconds);
+    return { id: job.id, reused };
+  }
+
+  private readKey(jobId: string): string {
+    return `${this.store.root}|${jobId}`;
+  }
+
+  /**
+   * The background read for one `reading` job. Total: whatever happens, the job leaves
+   * `reading` — to `awaiting_source_review` with the reading recorded, or to `failed` with
+   * the named reason. A job withdrawn mid-read keeps its withdrawal; the late reading is
+   * dropped rather than written over it.
+   */
+  private startRead(jobId: string, limits: Limits = {}, seconds?: number): Promise<void> {
+    const key = this.readKey(jobId);
+    const running = READS_IN_FLIGHT.get(key);
+    if (running) return running;
+    const started = Date.now();
+    const task = (async () => {
+      const job = await this.jobs.read(jobId);
+      if (!job || job.stage !== 'reading') return;
+      const sourceId = job.sourceIds[0]!;
+      const record = await this.store.readSource(sourceId);
+      const bytes = record ? await this.store.readSourceBytes(sourceId) : null;
+      if (!record || !bytes) {
+        await advanceJob(this.jobs, jobId, 'failed', { error: 'The kept original could not be found, so nothing was read.' });
+        return;
+      }
+      const extraction = await this.extract(record, new Uint8Array(bytes), limits, seconds);
+      if ((await this.jobs.read(jobId))?.stage !== 'reading') {
+        log.info('source_read_discarded', { jobId, sourceId, ms: Date.now() - started });
+        return;
+      }
+      await this.recordPass(record, extraction);
+      if (extraction.text.trim()) {
+        await advanceJob(this.jobs, jobId, 'awaiting_source_review', { progress: { completed: job.sourceIds.length, total: job.sourceIds.length } });
+      } else {
+        // Nothing came back: the job fails by name, and the ledger keeps the same reason.
+        // No transcript is ever invented to fill the gap.
+        await advanceJob(this.jobs, jobId, 'failed', { error: (extraction.note ?? 'Nothing could be read from this source.').slice(0, 500) });
+      }
+      log.info('source_read_finished', { jobId, sourceId, method: extraction.method, chars: countChars(extraction.text), partial: extraction.partial, ms: Date.now() - started });
+    })()
+      .catch(async (error: unknown) => {
+        log.error('source_read_crashed', { jobId, ...errorFields(error) });
+        await advanceJob(this.jobs, jobId, 'failed', { error: 'The read stopped unexpectedly. The original is kept — retry to read it again.' }).catch(() => {});
+      })
+      .finally(() => READS_IN_FLIGHT.delete(key));
+    READS_IN_FLIGHT.set(key, task);
+    return task;
+  }
+
+  /** Resolves once the job's background read (if any) has settled — for callers and tests that must wait. */
+  async settled(jobId: string): Promise<void> {
+    await READS_IN_FLIGHT.get(this.readKey(jobId));
+  }
+
+  /**
+   * A `reading` job with no read running in this process was interrupted — the engine
+   * restarted, or the workspace was reopened. It resumes from the kept bytes rather than
+   * sitting in `reading` forever.
+   */
+  private resumeInterrupted(jobs: WikiJob[]): void {
+    for (const job of jobs) {
+      if (job.stage === 'reading' && !READS_IN_FLIGHT.has(this.readKey(job.id))) {
+        log.info('source_read_resumed', { jobId: job.id });
+        void this.startRead(job.id);
+      }
+    }
+  }
+
   /** The method a source would have used — reported even when no text was produced. */
   private intendedMethod(record: SourceRecord): ExtractionResult['method'] {
     if (record.mediaType.startsWith('application/pdf')) return 'pdf';
     if (record.mediaType.startsWith('image/')) return 'vision';
     if (record.mediaType.startsWith('audio/')) return 'audio';
+    // An uploaded video: its audio track and key frames, merged into one reading.
+    if (isVideoMedia(record.mediaType)) return 'video';
     return 'text';
   }
 
@@ -272,7 +416,7 @@ export class SourceIngestor {
   }
 
   /** Reads the source. A failure is reported in the result, never thrown: the original is safe. */
-  private async extract(record: SourceRecord, bytes: Uint8Array, limits: Limits, audioSeconds?: number): Promise<ExtractionResult | null> {
+  private async extract(record: SourceRecord, bytes: Uint8Array, limits: Limits, audioSeconds?: number): Promise<ExtractionResult> {
     const method = this.intendedMethod(record);
     try {
       if (method === 'audio') {
@@ -285,6 +429,19 @@ export class SourceIngestor {
         });
         const outcome = recordAudioTranscript(bytes, transcript, limits);
         return outcome.ok ? outcome.result : this.readFailure(record, outcome.rejection.message);
+      }
+      if (method === 'video') {
+        if (!this.video) {
+          return this.readFailure(record, 'Video reading is not configured on this device.');
+        }
+        const reading = await this.video.read(bytes, record.mediaType, {
+          ...(audioSeconds !== undefined && Number.isFinite(audioSeconds) ? { seconds: audioSeconds } : {}),
+          ...(limits.maxAudioSeconds !== undefined ? { maxSeconds: limits.maxAudioSeconds } : {}),
+        });
+        const outcome = recordVideoReading(bytes, reading, limits);
+        if (!outcome.ok) return this.readFailure(record, outcome.rejection.message);
+        if (!outcome.result.text.trim()) return this.readFailure(record, reading.note ?? 'Nothing could be heard or read in this video.');
+        return outcome.result;
       }
       if (method === 'pdf') {
         const reader = await openPdf(bytes, limits);
@@ -316,7 +473,7 @@ export class SourceIngestor {
     } catch (error) {
       // A bug in the extractor is not a "could not read" — keep it visible in the log so a
       // broken reader is not indistinguishable from a corrupt file.
-      const named = error instanceof PdfParseError || error instanceof AudioTranscribeError || error instanceof ImageReadError;
+      const named = error instanceof PdfParseError || error instanceof AudioTranscribeError || error instanceof ImageReadError || error instanceof VideoReadError;
       if (!named) {
         log.error('source_extraction_unexpected', { sourceId: record.id, mediaType: record.mediaType, ...errorFields(error) });
       }
@@ -338,6 +495,8 @@ export class SourceIngestor {
   private summaryOf(record: SourceRecord, extraction: ExtractionResult | null): SourceSummary {
     const ledger = record.extractions.at(-1);
     const last = extraction;
+    // The ledger keeps the note too — a background read's reason must survive into the listing.
+    const note = last ? last.note : ledger?.note;
     return SourceSummarySchema.parse({
       id: record.id,
       revision: record.revision,
@@ -348,7 +507,7 @@ export class SourceIngestor {
       sha256: record.sha256,
       extracted: last ? last.text !== '' : (ledger?.chars ?? 0) > 0,
       partial: last?.partial ?? ledger?.partial ?? false,
-      ...(last?.note ? { note: last.note } : {}),
+      ...(note ? { note } : {}),
       capturedAt: record.createdAt,
     });
   }
@@ -378,6 +537,7 @@ export class SourceIngestor {
   async list(): Promise<JobList> {
     const identity = await this.profile();
     const { jobs, active } = await listProfileJobs(this.jobs, identity);
+    this.resumeInterrupted(jobs);
     const records = Object.values(await this.store.listSources())
       // The vault root is already per-profile; the filter is stated anyway so a store
       // that ever becomes shared cannot leak another student's catalogue.
@@ -411,6 +571,7 @@ export class SourceIngestor {
       : null;
     const { jobs } = await listProfileJobs(this.jobs, identity);
     const job = jobs.find((candidate) => candidate.sourceIds.includes(record.id)) ?? null;
+    if (job) this.resumeInterrupted([job]);
     return { record, extraction, job };
   }
 
@@ -475,9 +636,27 @@ export class SourceIngestor {
     await cancelJob(this.jobs, id);
   }
 
-  async retry(id: string): Promise<void> {
+  /**
+   * A failed job goes back to `queued` for a compile to pick up — unless its source is a
+   * model read that never produced text, in which case the retry is a fresh read in the
+   * background. The returned stage tells the caller which happened.
+   */
+  async retry(id: string): Promise<WikiJob['stage']> {
     await this.assertOwns(id);
-    await retryJob(this.jobs, id);
+    const job = await retryJob(this.jobs, id);
+    if (job.sourceIds.length === 1) {
+      const record = await this.store.readSource(job.sourceIds[0]!);
+      if (record && this.readsInBackground(record)) {
+        const latest = record.extractions.at(-1);
+        const text = latest ? await this.store.readExtractionText(record.id) : null;
+        if (!text?.trim()) {
+          await advanceJob(this.jobs, id, 'reading', { progress: { completed: 0, total: 1 } });
+          void this.startRead(id);
+          return 'reading';
+        }
+      }
+    }
+    return job.stage;
   }
 }
 

@@ -458,6 +458,29 @@ test('pinned accounts: logout flushes but keeps the machine and the lease; the n
   }, { pinnedAccounts: ['ananya'] });
 });
 
+test('resume without capacity: a suspended ready session is started instead and comes back ready', testOptions, async () => {
+  await withSessions(async (h) => {
+    const { cookie } = await approvedStudent(h, 'wakeful');
+    const first = await json(await call(h, 'POST', '/v1/session', cookie));
+    await h.orchestrator.idle();
+    const mid = (await row(h, first.id)).machine_id!;
+    h.fake.machines.get(mid)!.state = 'suspended';
+    h.fake.resumeNoCapacity = 1000;
+
+    // The re-drive a restart (or a wake) does: back to the start step on the suspended box.
+    await h.context.pool.query(`UPDATE student_sessions SET state = 'spawning', step = 'start' WHERE id = $1`, [first.id]);
+    const restarted = h.restart();
+    await restarted.recover();
+    await restarted.idle();
+    assert.equal((await row(h, first.id)).state, 'ready');
+    assert.equal(h.fake.machines.get(mid)!.state, 'running');
+    assert.ok(h.fake.requests('POST', `/v1/machines/${mid}/resume`).length >= 1, 'resume was tried first');
+    assert.ok(h.fake.requests('POST', `/v1/machines/${mid}/start`).length >= 1, 'then start');
+    assert.equal(h.fake.machines.size, 1, 'one machine');
+    assert.equal(h.fake.created.length, 1);
+  });
+});
+
 test('flush answers from the engine: only push_failed and timeout are retried; every outcome still deletes', testOptions, async () => {
   for (const [answer, attempts] of [['push_failed', 2], ['timeout', 2], ['conflict', 1], ['not_restored', 1]] as const) {
     await withSessions(async (h) => {

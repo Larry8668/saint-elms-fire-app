@@ -49,6 +49,11 @@ test('source variants enforce their origin and detail requirements', () => {
   rejects(SourceRecordSchema, { ...video, origin: 'student' });
   rejects(SourceRecordSchema, { ...video, link: undefined });
   rejects(SourceRecordSchema, { ...video, link: { ...video.link, provider: 'vimeo' } });
+  // An uploaded video keeps the video bytes themselves, needs no link, and may be the student's own.
+  const uploaded = { ...video, link: undefined, mediaType: 'video/mp4', origin: 'student' as const };
+  assert.equal(SourceRecordSchema.parse(uploaded).kind, 'video');
+  assert.equal(SourceRecordSchema.parse({ ...uploaded, origin: 'external' }).origin, 'external');
+  rejects(SourceRecordSchema, { ...uploaded, origin: 'model' });
 });
 
 test('an audio source and its audio extraction pass round-trip the contract', () => {

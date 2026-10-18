@@ -14,7 +14,9 @@ const TERMINAL = new Set<WikiJob['stage']>(['committed', 'no_changes', 'failed',
 
 /** Legal stage moves. Anything else is a bug and is refused rather than silently applied. */
 const TRANSITIONS: Record<WikiJob['stage'], WikiJob['stage'][]> = {
-  queued: ['extracting', 'cancelled', 'failed'],
+  queued: ['extracting', 'reading', 'cancelled', 'failed'],
+  // A model read running in the background; it ends in review, a named failure, or a withdrawal.
+  reading: ['awaiting_source_review', 'failed', 'cancelled'],
   extracting: ['awaiting_source_review', 'compiling', 'failed', 'cancelled'],
   awaiting_source_review: ['extracting', 'compiling', 'cancelled', 'failed'],
   compiling: ['awaiting_review', 'no_changes', 'failed', 'cancelled'],

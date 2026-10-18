@@ -225,7 +225,7 @@ export const ShareImportResultSchema = z.strictObject({
   jobId: IdentifierSchema,
   /** The filed proposal awaiting student review; null when the compile produced none. */
   proposalId: IdentifierSchema.nullable(),
-  stage: z.enum(['queued', 'extracting', 'awaiting_source_review', 'compiling', 'awaiting_review', 'committed', 'no_changes', 'failed', 'cancelled']),
+  stage: z.enum(['queued', 'reading', 'extracting', 'awaiting_source_review', 'compiling', 'awaiting_review', 'committed', 'no_changes', 'failed', 'cancelled']),
   /** True when this share+revision was already imported — nothing new was created. */
   reused: z.boolean(),
   /**

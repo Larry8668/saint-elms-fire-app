@@ -17,6 +17,7 @@ export interface StageInfo {
 
 export const STAGE_INFO: Record<WikiJob['stage'], StageInfo> = {
   queued: { label: 'Queued', hint: 'Kept; waiting its turn', tone: 'neutral', busy: true },
+  reading: { label: 'Reading', hint: 'Gemma is reading the kept original — this can take a minute', tone: 'beacon', busy: true },
   extracting: { label: 'Reading', hint: 'The engine is reading the kept bytes', tone: 'beacon', busy: true },
   awaiting_source_review: { label: 'Check the reading', hint: 'The extracted text is waiting for your eyes', tone: 'gold', busy: false },
   compiling: { label: 'Drafting changes', hint: 'The brain keeper is proposing page updates', tone: 'beacon', busy: true },
@@ -38,6 +39,7 @@ export function flowStep(stage: WikiJob['stage']): number {
   switch (stage) {
     case 'queued':
       return 0;
+    case 'reading':
     case 'extracting':
     case 'awaiting_source_review':
       return 1;
@@ -53,10 +55,11 @@ export function flowStep(stage: WikiJob['stage']): number {
   }
 }
 
-/** What a chosen file becomes. Only a photo or a recording can be the student's own material. */
-export function uploadContribution(mediaType: string, own: boolean): { kind: 'document' | 'image' | 'audio'; origin: 'student' | 'external' } {
+/** What a chosen file becomes. Only a photo, a recording or a video can be the student's own material. */
+export function uploadContribution(mediaType: string, own: boolean): { kind: 'document' | 'image' | 'audio' | 'video'; origin: 'student' | 'external' } {
   if (mediaType.startsWith('image/')) return { kind: 'image', origin: own ? 'student' : 'external' };
   if (mediaType.startsWith('audio/')) return { kind: 'audio', origin: own ? 'student' : 'external' };
+  if (mediaType.startsWith('video/')) return { kind: 'video', origin: own ? 'student' : 'external' };
   return { kind: 'document', origin: 'external' };
 }
 
@@ -82,6 +85,10 @@ export function normalizeMediaType(file: { type: string; name: string }): string
   if (name.endsWith('.flac')) return 'audio/flac';
   if (name.endsWith('.weba')) return 'audio/webm';
   if (/\.3gp?$/.test(name) || name.endsWith('.3g2')) return 'audio/3gpp';
+  if (name.endsWith('.mp4') || name.endsWith('.m4v')) return 'video/mp4';
+  if (name.endsWith('.mov')) return 'video/quicktime';
+  if (name.endsWith('.webm')) return 'video/webm';
+  if (name.endsWith('.mkv')) return 'video/x-matroska';
   return 'application/octet-stream';
 }
 
@@ -103,6 +110,23 @@ export const originLabel = (origin: SourceRecord['origin']): string =>
 
 export const pageKindLabel = (kind: ProposalPreview['pages'][number]['kind']): string =>
   ({ concept: 'Concept', source_summary: 'Source note', synthesis: 'Synthesis', question: 'Question' })[kind] ?? kind;
+
+/**
+ * What the source shows while its background read runs — named for what Gemma is doing
+ * with it. A fetched video is kept as its audio track, so it reads as a recording.
+ */
+export function readingLabel(record: Pick<SourceRecord, 'kind' | 'mediaType'>): string {
+  if (record.mediaType.startsWith('video/')) return 'Watching your video…';
+  if (record.mediaType.startsWith('image/')) return 'Reading your photo…';
+  if (record.mediaType.startsWith('audio/')) return 'Reading your recording…';
+  return 'Reading it…';
+}
+
+/** Jobs a student may still withdraw: anything not yet proposed. */
+export const canWithdraw = (stage: WikiJob['stage']): boolean => stage === 'queued' || stage === 'reading' || stage === 'extracting' || stage === 'awaiting_source_review';
+
+/** Stages where the engine is working and the row shows it. */
+export const isWorking = (stage: WikiJob['stage']): boolean => stage === 'queued' || stage === 'reading' || stage === 'extracting' || stage === 'compiling';
 
 /** Whether a correction can still change what a compile reads. */
 export function canCorrect(job: WikiJob | null): boolean {

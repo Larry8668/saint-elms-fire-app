@@ -244,6 +244,21 @@ export class AudioTranscriber {
     return this.withStagedInput(bytes, (inputPath, work) => this.transcribeFile(inputPath, work, mediaType, opts));
   }
 
+  /**
+   * The same read over a file another lane already staged — a video's container, whose
+   * audio track ffmpeg pulls out in the normalize pass. The PCM gets its own scratch folder.
+   */
+  async transcribePath(inputPath: string, mediaType: string, opts: { seconds?: number; maxSeconds?: number } = {}): Promise<AudioTranscription> {
+    const root = this.tmpRoot ?? tmpdir();
+    if (this.tmpRoot) await mkdir(root, { recursive: true });
+    const work = await mkdtemp(path.join(root, 'sef-audio-'));
+    try {
+      return await this.transcribeFile(inputPath, work, mediaType, opts);
+    } finally {
+      await rm(work, { recursive: true, force: true }).catch((error: unknown) => log.warn('audio_tmp_cleanup_failed', errorFields(error)));
+    }
+  }
+
   private async transcribeFile(inputPath: string, work: string, mediaType: string, opts: { seconds?: number; maxSeconds?: number }): Promise<AudioTranscription> {
     const probed = opts.seconds ?? (await this.probeFile(inputPath)).seconds;
     const resolved = await this.resolveEndpoint();
@@ -251,7 +266,7 @@ export class AudioTranscriber {
     const pcmPath = path.join(work, 'normalized.pcm');
     const normalized = await this.run(
       this.ffmpeg,
-      ['-y', '-hide_banner', '-loglevel', 'error', '-i', inputPath, '-ac', '1', '-ar', String(SAMPLE_RATE), '-f', 's16le', pcmPath],
+      ['-y', '-hide_banner', '-loglevel', 'error', '-i', inputPath, '-vn', '-ac', '1', '-ar', String(SAMPLE_RATE), '-f', 's16le', pcmPath],
       { timeoutMs: FFMPEG_TIMEOUT_MS },
     );
     if (normalized.code !== 0) {

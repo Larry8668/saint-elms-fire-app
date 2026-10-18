@@ -14,7 +14,7 @@ import {
 import { JobConflictError, JobStateError, SourceRejection } from '../../brain/sources/ingest';
 import { ProposalStateError } from '../../brain/compiler/compile';
 import { VaultConflictError } from '../../brain/vault-errors';
-import { INGEST_LIMITS, safeSourceFilename, sanitiseTitle } from '../../brain/sources/limits';
+import { baseMediaType, INGEST_LIMITS, isVideoMedia, safeSourceFilename, sanitiseTitle } from '../../brain/sources/limits';
 import { YouTubeError } from '../../media/youtube';
 import { requireProfile, type EngineDeps, type EngineEnv } from '../context';
 import { friendlyError } from '../errors';
@@ -26,12 +26,13 @@ import { friendlyError } from '../errors';
  */
 
 // Base64 carries 3 bytes in 4 characters; the envelope cap derives from the largest
-// decoded-byte limit (audio) with slack for the whitespace and padding some clients fold in.
-export const MAX_ENVELOPE_CHARS = Math.ceil(INGEST_LIMITS.maxAudioBytes / 3) * 4 + 4 + 64 * 1024;
+// decoded-byte limit (audio or video) with slack for the whitespace and padding some clients fold in.
+export const MAX_ENVELOPE_CHARS = Math.ceil(Math.max(INGEST_LIMITS.maxAudioBytes, INGEST_LIMITS.maxVideoBytes) / 3) * 4 + 4 + 64 * 1024;
 
 const ingestBody = z
   .object({
-    kind: z.enum(['note', 'document', 'image', 'audio']),
+    // 'video' here is an uploaded file; a fetched link goes through /sources/video instead.
+    kind: z.enum(['note', 'document', 'image', 'audio', 'video']),
     title: z.string().min(1).max(300),
     mediaType: z.string().min(1).max(120),
     // Ceiling on the envelope only; the real limit is enforced on the decoded bytes.
@@ -198,14 +199,13 @@ export function sourceRoutes(deps: EngineDeps) {
     try {
       const raw = await c.get('ws').sources.rawBytes(id.data);
       if (!raw) return c.json({ error: 'Source not found', code: 'not_found' }, 404);
-      // Preview types render inside this origin: the two image types and audio, which the
-      // student replays beside its transcript. Everything else — including a stored type a
-      // vault restore once planted — downloads as opaque bytes, with nosniff so the
-      // declared type cannot be re-read by the browser.
-      const mediaType = raw.mediaType.split(';')[0]!.trim().toLowerCase();
+      // Preview types render inside this origin: the two image types, audio and the
+      // accepted video containers, which the student replays beside their transcript.
+      // Everything else — including a stored type a vault restore once planted — downloads
+      // as opaque bytes, with nosniff so the declared type cannot be re-read by the browser.
+      const mediaType = baseMediaType(raw.mediaType);
       const headers: Record<string, string> = { 'x-content-type-options': 'nosniff' };
-      // Audio renders inline too — the student replays the memo beside its transcript.
-      if (mediaType === 'image/png' || mediaType === 'image/jpeg' || mediaType.startsWith('audio/')) {
+      if (mediaType === 'image/png' || mediaType === 'image/jpeg' || mediaType.startsWith('audio/') || isVideoMedia(mediaType)) {
         headers['content-type'] = mediaType;
       } else {
         headers['content-type'] = 'application/octet-stream';
@@ -284,8 +284,10 @@ export function sourceRoutes(deps: EngineDeps) {
 
   app.post('/sources/:jobId/retry', guard, async (c) => {
     try {
-      await c.get('ws').sources.retry(c.req.param('jobId'));
-      return c.body(null, 202);
+      // A failed model read retries as a fresh background read (`reading`); anything else
+      // goes back to `queued` for the caller's compile.
+      const stage = await c.get('ws').sources.retry(c.req.param('jobId'));
+      return c.json({ stage }, 202);
     } catch (error) {
       const { body, status } = handled(error, 'retry_failed');
       return c.json(body, status);

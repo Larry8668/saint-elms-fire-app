@@ -157,8 +157,15 @@ export const useJobBoard = () =>
     queryFn: api.jobBoard,
     refetchInterval: (query) => (query.state.data?.jobs.some((job) => !JOB_TERMINAL.has(job.stage)) ? 2_000 : false),
   });
+/** One source in full. While its background read runs it polls, like the job board does. */
 export const useSourceDetail = (id: string | null) =>
-  useQuery({ queryKey: keys.scoped.source(profile(), id ?? ''), queryFn: () => api.source(id!), enabled: Boolean(id), retry: false });
+  useQuery({
+    queryKey: keys.scoped.source(profile(), id ?? ''),
+    queryFn: () => api.source(id!),
+    enabled: Boolean(id),
+    retry: false,
+    refetchInterval: (query) => (query.state.data?.job?.stage === 'reading' ? 2_000 : false),
+  });
 export const useSourceBytes = (id: string | null) =>
   useQuery({ queryKey: keys.scoped.sourceBytes(profile(), id ?? ''), queryFn: () => api.sourceBytes(id!), enabled: Boolean(id), staleTime: Infinity, retry: false });
 export const useProposals = () => useQuery({ queryKey: keys.scoped.proposals(profile()), queryFn: api.proposals });

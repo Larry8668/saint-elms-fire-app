@@ -62,6 +62,8 @@ export class FakeInstabox {
   /** The next N creates fail `no_capacity`: as a failed Operation ('op') or a synchronous 503 ('http'). */
   noCapacity = 0;
   noCapacityMode: 'op' | 'http' = 'op';
+  /** The next N resumes fail `no_capacity` as a failed Operation; the machine stays suspended (start still works). */
+  resumeNoCapacity = 0;
   /** A snapshot-restored box starts stopped per the docs; the measured one came back running (§9). */
   createdState: MachineState = 'stopped';
   pageSize = 50;
@@ -270,6 +272,10 @@ export class FakeInstabox {
         this.deleted.push(machine.id);
       });
       return [202, this.publicOp(op)];
+    }
+    if (verb === 'resume' && this.resumeNoCapacity > 0) {
+      this.resumeNoCapacity -= 1;
+      return [202, this.publicOp(this.op('resume', machine.id, undefined, { code: 'no_capacity' }))];
     }
     const next: MachineState = verb === 'stop' ? 'stopped' : 'running';
     const op = this.op(verb, machine.id, () => {
