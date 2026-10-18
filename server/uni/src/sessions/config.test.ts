@@ -22,6 +22,12 @@ test('defaults: 3 concurrent (quota 5, the operator box takes one), 15 idle minu
   assert.equal(parseSessionConfig({ ...base, SESSION_IDLE_MINUTES: '10080' })!.idleMinutes, 10080);
 });
 
+test('SESSION_PINNED_ACCOUNTS: a comma list of account ids, empty by default', () => {
+  assert.deepEqual(parseSessionConfig(base)!.pinnedAccounts, []);
+  assert.deepEqual(parseSessionConfig({ ...base, SESSION_PINNED_ACCOUNTS: ' ananya, brinda ,chetna, ' })!.pinnedAccounts, ['ananya', 'brinda', 'chetna']);
+  assert.throws(() => parseSessionConfig({ ...base, SESSION_PINNED_ACCOUNTS: 'ananya;brinda' }), /SESSION_PINNED_ACCOUNTS/);
+});
+
 test('bad values stop boot', () => {
   assert.throws(() => parseSessionConfig({ ...base, SEF_GOLDEN_SNAPSHOT_ID: 'box-c0ab84' }), /snapshot id/);
   assert.throws(() => parseSessionConfig({ ...base, SESSION_MAX_CONCURRENT: '0' }), /SESSION_MAX_CONCURRENT/);
