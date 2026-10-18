@@ -26,7 +26,8 @@ export function TeacherIntro({ teacher, onPick, anchor, onAnchor }: { teacher: T
           <AnchorPicker selected={anchor?.pageId ?? null} onPick={onAnchor} />
         </div>
       )}
-      <div className="relative mt-8 grid gap-2 sm:grid-cols-3">
+      <Eyebrow className="relative mt-8 mb-2.5">Ways to start with this teacher</Eyebrow>
+      <div className="relative grid gap-2 sm:grid-cols-3">
         {profile.samplePrompts.map((p, i) => (
           <motion.button
             key={p}

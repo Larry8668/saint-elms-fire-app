@@ -269,7 +269,7 @@ export function TeachersView() {
             onDismissChoices={() => clearAnchorChoices('philosopher')}
           />
         )}
-        <SuggestionRail teacher={teacher} busy={thread.busy} onPick={sendSuggestion} />
+        <SuggestionRail teacher={teacher} busy={thread.busy} onPick={sendSuggestion} exclude={TEACHERS[teacher].samplePrompts} />
         <Composer
           ref={composer}
           teacher={teacher}

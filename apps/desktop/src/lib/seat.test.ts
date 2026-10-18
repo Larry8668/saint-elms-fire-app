@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
-import { engineTarget, forgetWorkspace, isRemoteTarget, isWorkspaceTarget, normalizeWorkspaceUrl, takeWorkspaceFromUrl, writeWorkspace } from './seat';
+import { engineTarget, forgetWorkspace, isHostedWithoutWorkspace, isRemoteTarget, isWorkspaceTarget, normalizeWorkspaceUrl, readWorkspace, takeWorkspaceFromUrl, workspaceDemoPersona, writeWorkspace } from './seat';
 
 test('engine calls go to the local engine unless the UI is served by an engine itself', () => {
   assert.deepEqual(engineTarget(undefined, 'localhost'), { kind: 'local', base: 'http://127.0.0.1:4100' });
@@ -119,4 +119,32 @@ test('?workspace= intake: stores an allowed VM, strips the parameter, drops a to
   const before = replaced.length;
   assert.equal(intake('https://sef.vercel.app/?tab=chat'), 'none');
   assert.equal(replaced.length, before, 'no parameter, no history change');
+});
+
+test('a hosted page origin with no workspace needs the portal; loopback development does not', () => {
+  const noStore = null;
+  assert.equal(isHostedWithoutWorkspace(engineTarget(undefined, 'app.example.com', noStore), 'app.example.com'), true);
+  for (const host of ['localhost', '127.0.0.1', '[::1]', null]) assert.equal(isHostedWithoutWorkspace(engineTarget(undefined, host, noStore), host), false, String(host));
+  const store = memory();
+  writeWorkspace('https://4100-abc.instabox.tech', store);
+  assert.equal(isHostedWithoutWorkspace(engineTarget(undefined, 'app.example.com', store), 'app.example.com'), false, 'a stored workspace is a workspace');
+  assert.equal(isHostedWithoutWorkspace(engineTarget('same-origin', 'x.instabox.tech', noStore), 'x.instabox.tech'), false, 'a served UI is not local');
+});
+
+test('the hand-off persona is stored beside the workspace in demo builds only, and is always stripped', () => {
+  const take = (href: string, demoMode: boolean) => {
+    const store = memory();
+    const replaced: string[] = [];
+    const result = takeWorkspaceFromUrl({ href, replaceUrl: (u) => replaced.push(u), store, session: memory(), suffix: SUFFIX, demoMode });
+    return { store, replaced, result };
+  };
+  const ok = take(`https://app.example.com/?workspace=${encodeURIComponent(VM)}&demo=brinda`, true);
+  assert.equal(ok.result, 'stored');
+  assert.deepEqual(readWorkspace(ok.store, SUFFIX), { engineUrl: VM, demo: 'brinda' }, 'record round-trips');
+  assert.equal(workspaceDemoPersona(ok.store, SUFFIX), 'brinda');
+  assert.deepEqual(ok.replaced, ['/'], 'both params are stripped');
+
+  assert.equal(readWorkspace(take(`https://a.example/?workspace=${encodeURIComponent(VM)}&demo=nobody`, true).store, SUFFIX)?.demo, undefined, 'unknown persona ignored');
+  assert.equal(readWorkspace(take(`https://a.example/?workspace=${encodeURIComponent(VM)}&demo=brinda`, false).store, SUFFIX)?.demo, undefined, 'ignored outside demo mode');
+  assert.equal(take(`https://a.example/?workspace=${encodeURIComponent(VM)}&demo=brinda`, false).replaced[0], '/');
 });

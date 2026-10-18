@@ -17,3 +17,21 @@ export function personaClick(mode: SignInCopyMode, email: string): PersonaClick 
 export function promptSubmit(email: string, typed: string): PersonaClick | null {
   return typed.length > 0 ? { kind: 'sign-in', email, password: typed } : null;
 }
+
+/**
+ * The demo persona a workspace's own profile list points at. Only an unambiguous answer
+ * preselects: exactly one profile, matching exactly one demo account by email or id.
+ */
+export function matchDemoProfile(profiles: ReadonlyArray<{ id: string; email: string }> | undefined, accounts: ReadonlyArray<{ id: string; email: string }>): string | null {
+  if (profiles?.length !== 1) return null;
+  const [profile] = profiles;
+  const email = profile.email.trim().toLowerCase();
+  const hits = accounts.filter((a) => a.email.toLowerCase() === email || a.id === profile.id);
+  return hits.length === 1 ? hits[0].email : null;
+}
+
+/** The persona to preselect: the portal's hand-off wins, the workspace's own profile list is the fallback. */
+export function preselectedPersona(handedOver: string | null, profiles: ReadonlyArray<{ id: string; email: string }> | undefined, accounts: ReadonlyArray<{ id: string; email: string }>): string | null {
+  const handed = handedOver ? accounts.find((a) => a.id === handedOver) : undefined;
+  return handed?.email ?? matchDemoProfile(profiles, accounts);
+}
