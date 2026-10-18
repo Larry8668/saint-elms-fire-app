@@ -143,10 +143,31 @@ export class SessionOrchestrator {
     return row ? this.statusOf(row) : null;
   }
 
-  /** DELETE /v1/session (logout): a queued lease just ends; a spawning or ready one is torn down. */
+  /**
+   * DELETE /v1/session (logout): a queued lease just ends; a spawning or ready one is torn down.
+   * A pinned account keeps its workspace instead (see keepPinned).
+   */
   async end(account: Account, reason = 'logout'): Promise<StudentSessionStatus | null> {
     const row = await liveSession(this.pool, account.id);
-    return row ? this.endRow(row, reason) : null;
+    if (!row) return null;
+    if (reason === 'logout' && this.config.pinnedAccounts.includes(account.id)) return this.keepPinned(row);
+    return this.endRow(row, reason);
+  }
+
+  /**
+   * A pinned account's logout flushes the vault and leaves the machine and the lease alone:
+   * Instabox suspends the idle box, and the next sign-in resumes it in seconds instead of
+   * restoring a fresh VM. Only the student's own logout is softened this way; a staff end,
+   * the idle reaper and an expired lease still go through endRow.
+   */
+  private async keepPinned(row: SessionRow): Promise<StudentSessionStatus> {
+    if (row.state === 'ready' && row.machine_id && row.ready_at) {
+      const note = await this.flush(row, row.machine_id);
+      log.info('session_kept_pinned', { sessionId: row.id, accountId: row.account_id, machineId: row.machine_id, flush: note ?? 'ok' });
+    } else {
+      log.info('session_kept_pinned', { sessionId: row.id, accountId: row.account_id, state: row.state });
+    }
+    return this.statusOf((await sessionById(this.pool, row.id)) ?? row);
   }
 
   // ---- staff-facing --------------------------------------------------------------------

@@ -14,6 +14,12 @@ export interface SessionConfig {
   reaperIntervalMs: number;
   /** Instabox's own idle suspend on the session VM (120–86400, 0 = never). */
   autoSuspendSeconds: number;
+  /**
+   * Account ids whose workspace outlives a logout (persistent demo workspaces): the vault is
+   * flushed, the machine and lease are kept, Instabox suspends the idle box, and the next
+   * sign-in resumes it. Staff end and the idle reaper still tear it down.
+   */
+  pinnedAccounts: string[];
   /** What the VM calls the university at (UNI_SERVER_URL on the box). */
   uniPublicUrl: string;
   gatewayUrl: string;
@@ -91,6 +97,10 @@ export function parseSessionConfig(env: NodeJS.ProcessEnv = process.env, uniPubl
   if (!gatewaySecret && env.NODE_ENV === 'production') throw new Error('GATEWAY_TOKEN_SECRET is required with the session orchestrator in production');
   const autoSuspendSeconds = envInt('SESSION_AUTO_SUSPEND_SECONDS', 1800, { min: 0, max: 86_400 }, env);
   if (autoSuspendSeconds > 0 && autoSuspendSeconds < 120) throw new Error('SESSION_AUTO_SUSPEND_SECONDS must be 0 or 120-86400');
+  const pinnedAccounts = (value(env, 'SESSION_PINNED_ACCOUNTS') ?? '').split(',').map((id) => id.trim()).filter(Boolean);
+  for (const id of pinnedAccounts) {
+    if (!/^[A-Za-z0-9_.@-]{1,128}$/.test(id)) throw new Error('SESSION_PINNED_ACCOUNTS must be a comma-separated list of account ids');
+  }
   const objectStore: Record<string, string> = {};
   for (const key of OBJECT_STORE_KEYS) {
     const v = value(env, key);
@@ -106,6 +116,7 @@ export function parseSessionConfig(env: NodeJS.ProcessEnv = process.env, uniPubl
     idleMinutes: envInt('SESSION_IDLE_MINUTES', 15, { min: 1, max: 7 * 24 * 60 }, env),
     reaperIntervalMs: envInt('SESSION_REAPER_INTERVAL_SECONDS', 30, { min: 1, max: 3600 }, env) * 1000,
     autoSuspendSeconds,
+    pinnedAccounts,
     uniPublicUrl: uniPublicUrl.replace(/\/+$/, ''),
     gatewayUrl: value(env, 'MODEL_GATEWAY_URL') ?? 'https://gateway.invalid/v1',
     gatewaySecret,

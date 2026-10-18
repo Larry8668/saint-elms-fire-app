@@ -34,7 +34,7 @@ All routes need an **approved, enrolled student**. That can be a better-auth ses
 | `POST /v1/session` | `200` with the ready session, or `202` with `{state:'spawning'|'queued', step, steps[], position?}`. A second call, from another tab or a concurrent login, returns the same session. While the session is `stopping` it says so; call again once it has `ended`. |
 | `GET /v1/session` | The live session, or the most recent one (so the client can show `failed` or `ended`). `404 no_session` if there has never been one. |
 | `POST /v1/session/heartbeat` | Extends the lease by `SESSION_IDLE_MINUTES`. `404` when there is no live session or it is already stopping. |
-| `DELETE /v1/session` | Logout. A queued lease just ends. A spawning or ready session goes to `stopping`, then is torn down (`202`). |
+| `DELETE /v1/session` | Logout. A queued lease just ends. A spawning or ready session goes to `stopping`, then is torn down (`202`). For an account in `SESSION_PINNED_ACCOUNTS` the vault is flushed and the session stays `ready` (`202`): the machine and lease are kept, Instabox suspends the idle box, and the next sign-in resumes it. |
 | `GET /v1/admin/sessions` | Staff (session staff or legacy admin). The live sessions: id, account, state, step, machine id, heartbeat, lease, `lastError`. No URL, token or idempotency key. |
 | `POST /v1/admin/sessions/:id/end` | Staff with a fresh session (30 min), or legacy admin. Force-ends a session; the action is audited. |
 
@@ -63,6 +63,7 @@ The status body (`StudentSessionStatus` in `@sef/shared`) has `steps[]`, each wi
 | `SESSION_IDLE_MINUTES` | `15` | No heartbeat for this long ends the session. Each heartbeat sets the lease to now + this. Up to 10080 (a week), for persistent demo workspaces that Instabox suspends meanwhile. |
 | `SESSION_REAPER_INTERVAL_SECONDS` | `30` | How often the reaper runs. |
 | `SESSION_AUTO_SUSPEND_SECONDS` | `1800` | Instabox's own idle suspend on the VM (0 or 120–86400). Teardown resumes a suspended box before the flush. |
+| `SESSION_PINNED_ACCOUNTS` | unset | Comma-separated account ids (legacy demo ids such as `ananya`, or user ids) whose workspace survives a logout: flushed, kept, suspended by Instabox when idle, resumed on the next sign-in. Staff end, the idle reaper (`SESSION_IDLE_MINUTES`) and an expired lease still tear it down. |
 | `SESSION_CAPACITY_WAIT_SECONDS` | `600` | How long a spawn keeps retrying `no_capacity` or `quota_exceeded` before it fails. |
 | `SESSION_HEALTH_TIMEOUT_SECONDS` | `180` | How long to wait for public health to report ready (vault restore included). |
 | `SESSION_WORKSPACE_ORIGINS` | `https://*.instabox.tech` | Origins the portal page (`/app`) may read a workspace's public health from (CSP `connect-src`), so the browser sees the VM answer before it is handed there (PR-45). https, or http on loopback for tests; anything else stops boot. |

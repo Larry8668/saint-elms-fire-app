@@ -39,6 +39,7 @@ function testConfig(overrides: Partial<SessionConfig> = {}): SessionConfig {
     idleMinutes: 15,
     reaperIntervalMs: 60_000,
     autoSuspendSeconds: 1800,
+    pinnedAccounts: [],
     uniPublicUrl: 'https://uni.example.test',
     gatewayUrl: 'https://gateway.example.test/v1',
     gatewaySecret: GATEWAY_SECRET,
@@ -416,6 +417,45 @@ test('logout: DELETE flushes, then deletes the machine, then ends the row', test
     const next = await json(await call(h, 'POST', '/v1/session', cookie));
     assert.notEqual(next.id, id);
   });
+});
+
+test('pinned accounts: logout flushes but keeps the machine and the lease; the next sign-in reuses it; staff can still end it', testOptions, async () => {
+  await withSessions(async (h) => {
+    const flushes: string[] = [];
+    h.fake.onExec = (_m, body) => {
+      if (String(body.cmd).includes('session-stop.sh')) flushes.push(body.envs.SYNC_FLUSH_TOKEN ? 'flush:token' : 'flush:none');
+      return { stdout: '{"ok":true,"pushed":2,"version":9}', stderr: '', exitCode: 0 };
+    };
+    const { keys } = await statics();
+    const now = Math.floor(Date.now() / 1000);
+    const token = (sub: string, role: 'student' | 'admin') =>
+      signToken({ iss: 'Saint Elms University', sub, role, name: sub, email: `${sub}@saintelms.local`, cohortId: COHORT, stage: '', iat: now, exp: now + 3600 }, keys.privateKey);
+    const first = await json(await call(h, 'POST', '/v1/session', token('ananya', 'student')));
+    await h.orchestrator.idle();
+    const mid = (await row(h, first.id)).machine_id!;
+
+    const out = await call(h, 'DELETE', '/v1/session', token('ananya', 'student'));
+    assert.equal(out.status, 202);
+    assert.equal((await json(out)).state, 'ready', 'the workspace is kept');
+    await h.orchestrator.idle();
+    assert.deepEqual(flushes, ['flush:token'], 'the vault is flushed on logout');
+    assert.equal(h.fake.requests('DELETE', `/v1/machines/${mid}`).length, 0, 'the machine stays');
+    assert.ok(h.fake.machines.has(mid));
+    assert.equal((await row(h, first.id)).state, 'ready');
+
+    const again = await json(await call(h, 'POST', '/v1/session', token('ananya', 'student')));
+    assert.equal(again.id, first.id, 'the next sign-in reuses the workspace');
+    assert.equal(h.fake.machines.size, 1, 'no second machine');
+
+    // Staff end is not softened: flush, delete, ended.
+    const ended = await call(h, 'POST', `/v1/admin/sessions/${first.id}/end`, token('admin', 'admin'));
+    assert.equal(ended.status, 202);
+    await h.orchestrator.idle();
+    assert.equal((await row(h, first.id)).state, 'ended');
+    assert.equal((await row(h, first.id)).end_reason, 'staff_ended');
+    assert.equal(h.fake.machines.has(mid), false);
+    assert.equal(flushes.length, 2);
+  }, { pinnedAccounts: ['ananya'] });
 });
 
 test('flush answers from the engine: only push_failed and timeout are retried; every outcome still deletes', testOptions, async () => {
