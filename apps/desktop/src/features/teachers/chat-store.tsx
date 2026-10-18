@@ -3,6 +3,7 @@ import { useQueryClient } from '@tanstack/react-query';
 import { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 import { toast } from 'sonner';
 import { api, conversationApi, EngineError, streamTurn, TurnRefused } from '@/lib/api';
+import { capture } from '@/lib/analytics';
 import { log } from '@/lib/log';
 import { keys } from '@/lib/queries';
 
@@ -167,6 +168,7 @@ export function ChatProvider({ profileId, children }: { profileId: string; child
     async (teacher, text, attachments) => {
       const thread = threadsRef.current[teacher];
       if (thread.busy || thread.loading) return;
+      capture('teacher_turn_sent', { teacher });
       const userMsg: ChatMessage = { id: uid(), role: 'user', content: text, attachments };
       const assistantId = uid();
       const startedAt = Date.now();

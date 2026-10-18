@@ -1,5 +1,6 @@
 import { driver, type Driver } from 'driver.js';
 import 'driver.js/dist/driver.css';
+import { capture } from '@/lib/analytics';
 import { log } from '@/lib/log';
 import { markTourDone } from './tour-state';
 import { firstVisibleAnchor, TOUR_STEPS } from './tour-steps';
@@ -43,11 +44,15 @@ export function startTour(hooks: { onStart?: () => void; onComplete?: () => void
       active = null;
       markTourDone();
       log.info('tour_ended', { completed });
-      if (completed) hooks.onComplete?.();
+      if (completed) {
+        capture('tour_completed');
+        hooks.onComplete?.();
+      }
     },
   });
   active = tour;
   log.info('tour_started', {});
+  capture('tour_started');
   hooks.onStart?.();
   tour.drive();
 }

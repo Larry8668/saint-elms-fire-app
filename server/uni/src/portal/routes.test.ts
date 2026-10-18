@@ -7,7 +7,7 @@ import { Hono } from 'hono';
 import { config } from '../config';
 import type { AccountAuth } from '../account-auth';
 import type { UniDeps } from '../deps';
-import { portalRoutes } from './routes';
+import { analyticsOrigins, portalRoutes } from './routes';
 
 const withAccount = { accountAuth: { handler: async () => new Response('{}') } as unknown as AccountAuth };
 
@@ -284,4 +284,24 @@ test('only the onboarding shell may read a workspace VM, and only the configured
   const plain = (await off.request('/app/')).headers.get('content-security-policy') ?? '';
   restore();
   assert.ok(plain.includes("connect-src 'self';"), 'no orchestrator, no extra origin');
+});
+
+test('analytics origins are bare https origins only, and unset adds nothing', () => {
+  assert.deepEqual(analyticsOrigins(undefined), []);
+  assert.deepEqual(analyticsOrigins(''), []);
+  assert.deepEqual(analyticsOrigins(' https://us.i.posthog.com , https://us-assets.i.posthog.com/ '), ['https://us.i.posthog.com', 'https://us-assets.i.posthog.com']);
+  assert.deepEqual(analyticsOrigins('http://us.i.posthog.com,https://x.example/path,https://a.example;script-src *,nonsense'), []);
+});
+
+test('configured analytics origins join the onboarding shell connect-src, not the staff portal', async () => {
+  const dir = await builtPortal();
+  const previous = process.env.PORTAL_ANALYTICS_ORIGINS;
+  process.env.PORTAL_ANALYTICS_ORIGINS = 'https://us.i.posthog.com';
+  const { server, restore } = await app(dir);
+  const csp = (await server.request('/app/')).headers.get('content-security-policy') ?? '';
+  restore();
+  if (previous === undefined) delete process.env.PORTAL_ANALYTICS_ORIGINS;
+  else process.env.PORTAL_ANALYTICS_ORIGINS = previous;
+  assert.ok(csp.includes("connect-src 'self' https://us.i.posthog.com"), csp);
+  assert.ok(csp.includes("script-src 'self'"), 'scripts stay same-origin');
 });

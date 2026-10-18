@@ -3,6 +3,7 @@ import { useState } from 'react';
 import { WorkingLabel } from '@/components/ui/loading';
 import { DEMO_ACCOUNTS, type DemoAccount } from '@/lib/demo-accounts';
 import { DEMO_SELF_SERVE_PASSWORD } from '@/lib/demo-self-serve';
+import { capture, identifyDemo } from '@/lib/analytics';
 import { cn } from '@/lib/cn';
 import { Notice } from '../components/Notice';
 import { DEMO_START, selfServeSignIn, type DemoSignIn } from '../demo-sign-in';
@@ -18,6 +19,8 @@ export function TryDemoSection({ onSignedIn }: { onSignedIn: (persona: DemoAccou
 
   const pick = (persona: DemoAccount) => {
     if (busy) return;
+    identifyDemo(persona.id);
+    capture('demo_self_serve_started', { persona: persona.id });
     void selfServeSignIn(persona.id, DEMO_SELF_SERVE_PASSWORD, demoSignIn, setState).then((final) => {
       if (final.phase === 'signed-in') onSignedIn(final.persona);
     });
