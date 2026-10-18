@@ -14,7 +14,7 @@ const findAnchor = (anchor: string) => document.querySelector(`[data-tour="${anc
  * element cannot be clicked, so a step on a nav item never navigates. Finishing or closing it
  * is remembered, so it is not offered by itself again.
  */
-export function startTour(hooks: { onStart?: () => void; onComplete?: () => void } = {}): void {
+export function startTour(hooks: { account?: string | null; onStart?: () => void; onComplete?: () => void } = {}): void {
   if (active?.isActive()) return;
   let completed = false;
   const tour = driver({
@@ -42,7 +42,7 @@ export function startTour(hooks: { onStart?: () => void; onComplete?: () => void
     },
     onDestroyed: () => {
       active = null;
-      markTourDone();
+      markTourDone(hooks.account);
       log.info('tour_ended', { completed });
       if (completed) {
         capture('tour_completed');

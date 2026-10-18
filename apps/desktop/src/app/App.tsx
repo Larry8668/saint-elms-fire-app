@@ -29,17 +29,17 @@ const VIEWS: Record<View, () => ReactNode> = {
   settings: SettingsView,
 };
 
-export function App() {
+export function App({ profileId }: { profileId: string }) {
   const { view, go } = useNav();
   const [railOpen, setRailOpen] = useState(false);
-  // A self-serve demo sign-in asks for the tour once; it runs when the dashboard is up.
+  // A self-serve demo sign-in asks for the tour once per account; it runs when the dashboard is up.
   useEffect(() => {
-    if (consumeTourRequest()) startGuidedTour(go);
-  }, [go]);
+    if (consumeTourRequest(profileId)) startGuidedTour(go, profileId);
+  }, [go, profileId]);
   const Current = VIEWS[view];
   return (
     <div className="flex h-screen overflow-hidden bg-night-950 text-night-100">
-      <Sidebar onOpenAttention={() => setRailOpen(true)} />
+      <Sidebar onOpenAttention={() => setRailOpen(true)} tourAccount={profileId} />
       <main className="relative flex min-w-0 flex-1 flex-col">
         <WorkspaceWakeNotice className="mx-6 mt-4" />
         <WorkspaceSession />
