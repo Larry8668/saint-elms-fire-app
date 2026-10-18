@@ -82,33 +82,24 @@ export function AnchorPicker({ selected, onPick }: { selected?: string | null; o
 }
 
 /**
- * The consent row: what would leave this device if the web is armed this turn — the
- * topic-only query the engine derives, and where it would go. The toggle is one turn's:
- * it disarms after every send.
+ * A passive note: every anchored Philosopher turn looks up real-world context on the web. Only
+ * the topic leaves the device (derived in code from the anchored page), never the student's words.
  */
-function WebConsent({ pageId, armed, onToggle }: { pageId: string; armed: boolean; onToggle: (on: boolean) => void }) {
+function WebNote({ pageId }: { pageId: string }) {
   const preview = useAnchorWebPreview(pageId);
   const p = preview.data;
   return (
-    <div className="rounded-xl border border-white/[0.07] bg-white/[0.03] px-3 py-2.5">
-      <label className="flex cursor-pointer items-center gap-2.5 text-[12.5px] text-night-200 select-none">
-        <input type="checkbox" checked={armed} onChange={(e) => onToggle(e.target.checked)} className="size-3.5 accent-aurora-400" />
-        <Globe className="size-3.5 text-aurora-300" />
-        Search the web on this turn only
-      </label>
-      <p className="mt-1.5 text-[11.5px] leading-5 text-night-500">
-        {preview.isLoading ? (
-          'Checking what would be sent…'
-        ) : p ? (
-          <>
-            Sends the topic <span className="text-night-300">“{p.query}”</span> to your SearXNG at {p.host} — never your words.
-            {!p.reachable && <span className="text-ember-300"> It looks unreachable right now; the answer will say so.</span>}
-          </>
-        ) : (
-          'The preview could not be checked — the answer will say if the web was unreachable.'
-        )}
-      </p>
-    </div>
+    <p className="flex items-center gap-2 px-1 text-[11.5px] leading-5 text-night-500">
+      <Globe className="size-3.5 shrink-0 text-aurora-300" />
+      {p ? (
+        <span>
+          Brings in real-world context from the web on <span className="text-night-300">“{p.query}”</span> — only the topic is sent, never your words.
+          {!p.reachable && <span className="text-ember-300"> Web search looks unreachable right now; the answer will say so.</span>}
+        </span>
+      ) : (
+        <span>Brings in real-world context from the web — only the topic is sent, never your words.</span>
+      )}
+    </p>
   );
 }
 
@@ -185,7 +176,7 @@ export function AnchorBar({
         </div>
       )}
 
-      {anchor && <WebConsent pageId={anchor.pageId} armed={Boolean(thread.webConsent)} onToggle={onConsent} />}
+      {anchor && <WebNote pageId={anchor.pageId} />}
     </div>
   );
 }
