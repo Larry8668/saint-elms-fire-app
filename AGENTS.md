@@ -4,9 +4,9 @@ Start here if you are a coding agent (or a new developer) picking up Saint Elms 
 
 ## What this is, in five lines
 
-- An offline-first study app for a university programme: three Socratic AI teachers (Friend, Guide, Philosopher) running on local Gemma 4, plus a per-student **second brain** (a markdown vault) drawn over a **course sky** (the star map of released concepts).
-- `server/uni` is the university's server: accounts, cohorts, course releases, ed25519-signed course packages, and the registrar admin API.
-- `engine` is the student's local runtime: per-profile workspaces, agents, the brain pipeline, course sync, chat history and offline sign-in.
+- An offline-first study app for a university programme: three Socratic AI teachers (Friend, Guide, Philosopher) running on local Gemma 4, plus a per-student **second brain** (a markdown vault, shown in the separate full-screen **Brain** view) drawn over a **course sky** (the star map of released concepts, shown in the Sky view).
+- `server/uni` is the university's server: accounts, cohorts, course releases, ed25519-signed course packages, and the registrar admin API. `server/gateway` is the token-checked model proxy that hosted engines call.
+- `engine` is the student's runtime — on a laptop or a university-hosted VM: per-profile workspaces, agents, the brain pipeline, course sync, chat history and offline sign-in.
 - `apps/desktop` is the React UI (with a Tauri shell): the student app. The registrar surface is `apps/admin`, a static build the uni serves at `/admin`.
 - `packages/shared` holds the contracts shared by all three.
 
@@ -14,11 +14,14 @@ Start here if you are a coding agent (or a new developer) picking up Saint Elms 
 
 | Doc | When |
 | --- | --- |
+| [docs/START_HERE.md](docs/START_HERE.md) | Index of the current docs |
 | [HANDOVER.md](HANDOVER.md) | Runbook: setup, demo accounts, demo script, data locations, common tasks, troubleshooting |
 | [docs/agentic-layer.md](docs/agentic-layer.md) | Teachers, tools, the chat-turn harness, source attribution, chat history, model providers |
-| [docs/knowledge-graph.md](docs/knowledge-graph.md) | Course sky, second brain, mastery rules, the brain-update pipeline, the Sky view |
+| [docs/knowledge-graph.md](docs/knowledge-graph.md) | Course sky, second brain, mastery rules, the brain-update pipeline, the Sky and Brain views |
 | [docs/hosted-seat.md](docs/hosted-seat.md) | Running the engine on a public URL: env, host/origin gates, rate limits, sessions, served UI, threat notes |
-| [README.md](README.md) | Pitch, architecture diagram, hackathon tracks |
+| [docs/session-orchestrator.md](docs/session-orchestrator.md) | How the uni spawns, leases, suspends and retires per-student workspace VMs |
+| [docs/model-gateway.md](docs/model-gateway.md) | The authenticated model gateway hosted engines call |
+| [README.md](README.md) | Product pitch, architecture, local quickstart |
 
 ## Commands
 
@@ -32,7 +35,7 @@ pnpm --filter @sef/desktop build  # production build of the UI
 pnpm preflight                    # checks tools, models and services
 ```
 
-You'll need Node 22+, pnpm, Ollama with `gemma4:e4b`, and optionally SearXNG (`pnpm search:up`). Every demo account's password is `harbor-lantern`.
+You'll need Node 22+, pnpm 10.18 (pinned in `package.json`), Ollama with `gemma4:e4b`, and optionally SearXNG (`pnpm search:up`). Engine scripts and the Vite UI read the root `.env`; host-run uni scripts read exported shell variables instead. Local demo accounts use `harbor-lantern`; hosted deployments set `DEMO_PASSWORD`, and self-serve builds intentionally expose only that demo credential.
 
 ## Invariants: do not break these
 

@@ -1,14 +1,17 @@
 # Hosted backends on Render
 
-`render.yaml` (a Render Blueprint) describes the hosted half of the demo: the university server
-with the session orchestrator, the model gateway, the MinIO vault store and Postgres. Student
-workspaces are Instabox VMs (docs/session-orchestrator.md); models run on whatever
-`GATEWAY_UPSTREAMS` points at.
+`render.yaml` (a Render Blueprint) describes how to deploy the hosted half of the demo: the
+university server with the session orchestrator, the model gateway, the SearXNG search
+service, the MinIO vault store and Postgres. It declares target configuration — plans, disks
+and env placeholders — not a report of what is currently deployed; verify the console before
+treating any of it as live. Student workspaces are Instabox VMs
+(docs/session-orchestrator.md); models run on whatever `GATEWAY_UPSTREAMS` points at.
 
 ```
 browser ──▶ sef-uni (accounts, /app portal, /v1/session) ──Instabox API──▶ session VM (engine)
                 │ Postgres (sef-uni-db, private network)                      │   │
-                                                                              │   └─▶ sef-minio (vault sync, S3 API)
+                                                                              │   ├─▶ sef-minio (vault sync, S3 API)
+                                                                              │   └─▶ sef-search (SearXNG, via SEARXNG_URL)
                                                                               └─▶ sef-gateway ──▶ GATEWAY_UPSTREAMS (Ollama)
 ```
 
@@ -16,6 +19,7 @@ browser ──▶ sef-uni (accounts, /app portal, /v1/session) ──Instabox AP
 |---|---|---|
 | `sef-uni` | Docker, `infra/docker/node-service.Dockerfile` (`uni` stage), runs `db:migrate` then the server (`start:migrate`) | https://sef-uni.onrender.com (`/health`, `/ready`, `/app`) |
 | `sef-gateway` | same Dockerfile, `SERVICE=@sef/gateway` | https://sef-gateway.onrender.com (`/health`) |
+| `sef-search` | Docker, `infra/searxng/Dockerfile` (SearXNG), port `8080`, health `/healthz`; its URL is the uni's `SEARXNG_URL`, passed to every seat | https://sef-search.onrender.com |
 | `sef-minio` | `cgr.dev/chainguard/minio`, same digest as `docker-compose.yml`; S3 API only (`MINIO_BROWSER=off`, no console port) | https://sef-minio.onrender.com |
 | `sef-uni-db` | Render Postgres 17, internal connection string only | - |
 
@@ -36,17 +40,20 @@ the repo); `INSTABOX_API_KEY` comes from `~/.config/sef/instabox.env`.
 | uni | `UNI_DATABASE_URL` | yes | Postgres internal connection string |
 | uni | `UNI_PUBLIC_URL` | | `https://sef-uni.onrender.com` (production requires https) |
 | uni | `BETTER_AUTH_SECRET` | yes | generated, 32+ chars |
-| uni | `MAIL_SMTP_URL` | | `smtp://127.0.0.1:1025`: a deliberate no-op. Demo (legacy) logins send no mail; sign-up, verification and password reset will fail until this is a real relay |
-| uni | `MAIL_RESEND_API_KEY` | | Set instead of `MAIL_SMTP_URL` to send through Resend's HTTPS API (Render blocks outbound SMTP ports). `MAIL_FROM` defaults to `onboarding@resend.dev`, the only sender a Resend account without a verified domain may use; such an account also delivers only to its owner's address |
-| uni | `SEED_DEMO`, `DEMO_PASSWORD` | password: yes | `true`; production refuses the public `harbor-lantern`, so a private one is generated |
+| uni | `MAIL_SMTP_URL` | | an actual SMTP relay. `smtp://127.0.0.1:1025` satisfies the production check without sending: sign-up, verification and password reset fail until it is real |
+| uni | `MAIL_RESEND_API_KEY` | yes | Alternative to `MAIL_SMTP_URL`: Resend's HTTPS API (Render blocks outbound SMTP ports). `MAIL_FROM` defaults to `onboarding@resend.dev`, the only sender a Resend account without a verified domain may use; such an account also delivers only to its owner's address. Setting the key is no promise that mail arrives |
+| uni | `SEED_DEMO`, `DEMO_PASSWORD` | password: yes | `true` for the public demo build (`false` for a private deployment); production refuses the public `harbor-lantern`, so set a private `DEMO_PASSWORD` |
 | uni | `INSTABOX_API_KEY` | yes | operator key |
-| uni | `SEF_GOLDEN_SNAPSHOT_ID` | | `sn_agquw3rpykrsqophbvuy3hnlpy` |
-| uni | `SESSION_MAX_CONCURRENT`, `SESSION_IDLE_MINUTES` | | `4`, `5` (an idle VM is ended 5 min after its last heartbeat, while the uni is awake) |
+| uni | `SEF_GOLDEN_SNAPSHOT_ID` | | `<current golden snapshot id>` — what the golden build last produced (see Deployment checks) |
+| uni | `SESSION_MAX_CONCURRENT`, `SESSION_IDLE_MINUTES` | | `3` (blueprint), `15` (code default) — configurable capacity/idle limits; `SESSION_PINNED_ACCOUNTS` workspaces survive a student's own workspace end but still yield to staff end, idle reaping and lease expiry |
+| uni | `SESSION_PINNED_ACCOUNTS` | | comma-separated account ids (e.g. the demo personas) whose VMs are kept on `DELETE /v1/session` |
 | uni | `MODEL_GATEWAY_URL` | | `https://sef-gateway.onrender.com/v1` |
 | uni + gateway | `GATEWAY_TOKEN_SECRET` | yes | one value, shared (the uni mints, the gateway verifies) |
-| uni | `OBJECT_STORE_ENDPOINT`, `_BUCKET`, `_REGION`, `_FORCE_PATH_STYLE`, `_ACCESS_KEY` | | the laptop MinIO's tunnel URL (see Vault store), `sef-vaults`, `us-east-1`, `true`, `sef-engine` |
+| uni | `SEARXNG_URL` | | `https://sef-search.onrender.com` — sent to every seat; unset, seats have no web search |
+| uni | `OBJECT_STORE_ENDPOINT`, `_BUCKET`, `_REGION`, `_FORCE_PATH_STYLE`, `_ACCESS_KEY` | | the vault store's endpoint — the persistent-disk MinIO in this blueprint is `https://sef-minio.onrender.com` (see Vault store), `sef-vaults`, `us-east-1`, `true`, `sef-engine` |
 | uni | `OBJECT_STORE_SECRET_KEY` | yes | the engine key's secret (bucket-scoped, created by the init below) |
-| uni | `APP_PUBLIC_ORIGIN` | | not set yet (lands with the client PR) |
+| uni | `APP_PUBLIC_ORIGIN` | | the student web app's https origin, e.g. `https://saint-elms-fire.vercel.app` — required for the Vercel app to call VMs; see [deploy-vercel.md](deploy-vercel.md) |
+| uni (portal build) | `VITE_APP_URL`, `VITE_DEMO_MODE`, `VITE_DEMO_SELF_SERVE`, `VITE_DEMO_PASSWORD` | demo password: yes (public by design) | the web-app origin and the demo/self-serve switches baked into the `/app` bundle — values and analytics keys (`VITE_POSTHOG_*`, `PORTAL_ANALYTICS_ORIGINS`) are in [deploy-vercel.md](deploy-vercel.md) |
 | gateway | `GATEWAY_HOST`, `PORT`/`GATEWAY_PORT` | | `0.0.0.0`, `4300` |
 | gateway | `GATEWAY_MODELS` | | `gemma4:e2b,gemma4:e4b,embeddinggemma,shieldgemma:2b` |
 | gateway | `GATEWAY_UPSTREAMS` | | the model workers (see below) |
@@ -69,10 +76,9 @@ KEYS_DIR=$(mktemp -d) pnpm -s keys:uni:export >> ~/.config/sef/render.env   # ge
 The value is base64 of the PEM (a raw PEM, with real or `\n`-escaped newlines, is accepted too).
 On boot the uni logs `signing_keys_from_env` with the key's fingerprint (sha256 of the SPKI DER,
 16 hex chars), never the key. A value that is not an ed25519 private key refuses to boot. Unset:
-the file behaviour is unchanged. Rotating it invalidates every pinned device (VMs are recreated
-fresh, so only long-lived engines are affected).
+the file behaviour is unchanged. Rotating it invalidates engines that pinned the previous key; preserve continuity for existing students.
 
-Set it through the REST API, then redeploy (see Model workers for the deploy call):
+Set it through the REST API, then deploy the intended revision from the Render dashboard:
 
 ```bash
 T=$(awk '/^ *key:/ {print $2; exit}' ~/.render/cli.yaml)
@@ -105,26 +111,25 @@ curl -fsS -o /dev/null -X PUT -H "Authorization: Bearer $T" -H 'Content-Type: ap
      node --test --import tsx src/store/s3-store.integration.test.ts
    ```
 
-## Vault store: the laptop's MinIO today, DO Spaces tomorrow
+## Vault store: persistent storage and migration
 
-The free `sef-minio` service has no disk and comes back empty after every spin-down, so it is
-**suspended** (kept as a fallback) and the uni points at the laptop's MinIO through a cloudflared
-quick tunnel. Start it with the operator secrets so the tunnel never exposes the dev defaults; the
-named volume `minio-data` keeps vaults across restarts:
+Durable vaults need a persistent store. The blueprint gives `sef-minio` a disk
+(`minio-data`, 5 GB at `/data`) — without one the bucket and engine key are lost on every
+restart and the MinIO init must be re-run. Which endpoint a *live* uni uses is whatever its
+`OBJECT_STORE_*` env says; this guide does not infer it.
 
-```bash
-set -a; . ~/.config/sef/render.env; set +a
-docker compose --profile store up -d --build minio minio-init   # = pnpm store:up, with the real keys
-cloudflared tunnel --no-autoupdate --url http://127.0.0.1:9000   # no --http-host-header: S3 signs the Host
-```
+Switching the store (a different endpoint, a rotated tunnel, back to `sef-minio`) is, in
+order:
 
-Switching the store (a new tunnel URL, DO Spaces, back to `sef-minio`) is one command, in order:
-
-1. **Run the store contract test first** against the new endpoint (the command under First deploy,
-   step 3, with `OBJECT_STORE_TEST_ENDPOINT=<new>`; for Spaces add `OBJECT_STORE_TEST_REGION` and
-   `OBJECT_STORE_TEST_FORCE_PATH_STYLE=false`). It must pass, `If-Match` included.
-2. **Mirror the vaults** if the old store has any (versions are not carried over, current objects are):
-   `mc mirror --preserve old/sef-vaults new/sef-vaults` with root (or Spaces) aliases for both.
+1. **Run the store contract test first** against the new endpoint (the command under First
+   deploy, step 3, with `OBJECT_STORE_TEST_ENDPOINT=<new>` and the matching
+   `OBJECT_STORE_TEST_*` values). It must pass, `If-Match` included — S3 compatibility
+   alone is insufficient.
+2. **Pause new workspace creation and quiesce existing writers**, completing a final flush
+   to the old endpoint before the final mirror. Keep writes paused until the uni and all
+   retained VMs target the new store. **Mirror the vaults** if the old store has any
+   (versions are not carried over, current objects are):
+   `mc mirror --preserve old/sef-vaults new/sef-vaults` with root aliases for both.
 3. Point the uni at it and redeploy:
 
    ```bash
@@ -132,70 +137,54 @@ Switching the store (a new tunnel URL, DO Spaces, back to `sef-minio`) is one co
    scripts/store-target.sh   # prints the uni's current OBJECT_STORE_* (secret masked)
    ```
 
-   DO Spaces: `scripts/store-target.sh https://sgp1.digitaloceanspaces.com <spaces-key> <bucket> sgp1 false`.
-   Turn on bucket versioning there, and use a key limited to that bucket.
+Running sessions keep the endpoint they started with — reconfigure or retire them. A
+student's ordinary `DELETE` retires a non-pinned workspace, while a pinned demo VM is kept
+by design, so ending one needs the staff session end or a recreate.
 
-Running sessions keep the endpoint they started with; end them before switching.
+## Model workers
 
-## Model workers: the tunnel today, a GPU box tomorrow
+`GATEWAY_UPSTREAMS` is a comma-separated list of Ollama/OpenAI-compatible workers the
+gateway load-balances (`#max=N` for per-worker concurrency; `vllm:https://…` for a vLLM
+worker, plus `GATEWAY_UPSTREAM_TOKEN` if it has an API key). `GATEWAY_MODELS` lists the
+models the gateway serves. Seats only ever know the gateway's stable URL and their token,
+so upstreams can be swapped without touching a VM.
 
-`GATEWAY_UPSTREAMS` is the only thing that changes. Today it is a cloudflared quick tunnel to a
-laptop's Ollama. Ollama refuses a non-local `Host` header, so the tunnel rewrites it:
+A typical target is one or more GPU boxes running Ollama with the demo models
+(`gemma4:e2b gemma4:e4b embeddinggemma shieldgemma:2b`), `OLLAMA_HOST=0.0.0.0`,
+`OLLAMA_CONTEXT_LENGTH=12288`, port firewalled to Render's outbound IPs (Dashboard →
+sef-gateway → Connect → Outbound). Secure the network path — the workers see full prompts.
 
-```bash
-cloudflared tunnel --no-autoupdate --http-host-header localhost:11434 --url http://127.0.0.1:11434
-```
+A laptop tunnel (for example cloudflared to a local Ollama, with
+`--http-host-header localhost:11434` because Ollama refuses a non-local `Host`) is a
+development option: quick tunnels rotate hostnames on every restart, so an upstream change
+means updating `GATEWAY_UPSTREAMS` on the gateway service and redeploying it.
 
-A quick tunnel gets a new `*.trycloudflare.com` URL every time it starts. To restart and rotate:
+## Reset demo data
 
-```bash
-cloudflared tunnel --no-autoupdate --http-host-header localhost:11434 --url http://127.0.0.1:11434
-# note the https://<new>.trycloudflare.com it prints, then (the CLI cannot edit env vars; the REST API can):
-T=$(awk '/^ *key:/ {print $2; exit}' ~/.render/cli.yaml); GW=$(DO_NOT_TRACK=1 render services -o json | python3 -c 'import json,sys; print([s["service"]["id"] for s in json.load(sys.stdin) if s.get("service",{}).get("name")=="sef-gateway"][0])')
-curl -fsS -X PUT -H "Authorization: Bearer $T" -H 'Content-Type: application/json' \
-  https://api.render.com/v1/services/$GW/env-vars/GATEWAY_UPSTREAMS -d '{"value":"https://<new>.trycloudflare.com"}'
-curl -fsS -X POST -H "Authorization: Bearer $T" -H 'Content-Type: application/json' \
-  https://api.render.com/v1/services/$GW/deploys -d "{\"commitId\":\"$(git ls-remote origin refs/heads/main | cut -f1)\"}"
-```
+- **Local disposable data:** stop the services and remove `.data/engine/` and
+  `.data/uni/` — see [HANDOVER.md](../HANDOVER.md) §7, including what that does *not*
+  reset.
+- **Hosted sessions:** a student's own workspace end (`DELETE /v1/session`) retires a
+  non-pinned VM; staff `POST /v1/admin/sessions/:id/end` ends any session, pinned ones
+  included.
+- **Production data:** wiping Postgres, the uni disk or the vault bucket is a separate,
+  deliberate maintenance procedure, not part of a demo reset — plan and verify it instead
+  of improvising commands here.
 
-(A deploy request without `commitId` gets a 500 from the API.) Sessions need nothing else: VMs
-only know the gateway's URL.
+## Deployment checks
 
-**DigitalOcean GPU box:** set `GATEWAY_UPSTREAMS=http://<droplet-ip>:11434` (or several,
-comma-separated, `#max=N` for per-worker concurrency; `vllm:https://…` for a vLLM worker, plus
-`GATEWAY_UPSTREAM_TOKEN` if it has an API key). Start Ollama there with `OLLAMA_HOST=0.0.0.0`,
-`OLLAMA_CONTEXT_LENGTH=12288`, firewall 11434 to Render's outbound IPs (Dashboard → sef-gateway →
-Connect → Outbound), and pull `gemma4:e2b gemma4:e4b embeddinggemma shieldgemma:2b`. Nothing else changes.
+The blueprint declares plans, disks and env placeholders; it does not prove what is
+deployed. Verify in the Render console and against the endpoints themselves:
 
-## Reset the demo data
+- `/ready` (not just `/health`) on the uni — it answers 200 only while the account layer
+  is mounted and Postgres answers.
+- `SEF_GOLDEN_SNAPSHOT_ID` matches the snapshot the last golden build produced; `SEARXNG_URL`
+  and `APP_PUBLIC_ORIGIN` are set, or seats get no web search and the Vercel app fails CORS.
+- The portal/app build variables (`VITE_APP_URL`, `VITE_DEMO_*`, `VITE_POSTHOG_*`) come from
+  [deploy-vercel.md](deploy-vercel.md).
+- Paid plans and disks in `render.yaml` are declared intent, not evidence they exist — check
+  each service's actual plan and disk in the console.
 
-- **Sessions only:** `DELETE /v1/session` per student, or staff `POST /v1/admin/sessions/:id/end`.
-- **Accounts and the uni's files:** the uni seeds on first boot, i.e. when `/data` has no accounts.
-  Wipe Postgres (`render psql <db-id>` → `DROP SCHEMA public CASCADE; CREATE SCHEMA public;`) and
-  the uni disk (`render ssh <uni-id>` → `rm -rf /data/*`), then restart (`render restart <uni-id>`).
-  Migrations run again on start.
-- **Vaults:** `mc rm --recursive --force --versions sef/sef-vaults/vaults/<accountId>/` with the root
-  alias (the engine key cannot delete versions, by design).
-
-## After merge
-
-Services were created on the `infra/render` branch. Point them at `main`:
-`render services update <id> --branch main --confirm -o json` for `sef-uni` and `sef-gateway`.
-
-## Current state (2026-10-18): free tier until billing is added
-
-The workspace has no payment method, so Render refused Starter, disks and paid Postgres
-(`render blueprints validate render.yaml` reports `need_payment_info`). The services run on
-**free** plans meanwhile: they sleep after 15 idle minutes (the uni's reaper sleeps with it), have
-no disks, and the free database expires after 30 days. A sleeping MinIO comes back **empty**
-(bucket and engine key gone), so re-run the one-time init after any MinIO restart until it has a disk.
-
-To reach the `render.yaml` target:
-
-1. Dashboard → Workspace settings → Billing → add a card.
-2. `render services update <id> --plan starter --confirm -o json` for `sef-uni`, `sef-gateway`, `sef-minio`.
-3. Dashboard → `sef-uni-db` → Info → Update → Basic-256mb (upgrades in place).
-4. Dashboard → `sef-minio` → Disks → Add disk: mount path `/data`, 5 GB. Same for `sef-uni`, 1 GB.
-   Both disks start empty: re-run the MinIO init, and the uni re-seeds its demo accounts on the
-   next boot (same `DEMO_PASSWORD`). The MinIO image runs as uid 65532 and the uni as `node`:
-   check each service's log for a write error on `/data` after the disk is attached.
+Dated operator notes from earlier deploys are in
+[CLOUD_SEAT_NOTES.md](CLOUD_SEAT_NOTES.md); treat them as historical context, not current
+state.
