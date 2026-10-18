@@ -25,6 +25,7 @@ export const keys = {
     pageRevisions: (p: string, key: string) => ['profile', p, 'page-revisions', key] as const,
     pageRevision: (p: string, key: string, revision: string) => ['profile', p, 'page-revisions', key, revision] as const,
     wikiIndex: (p: string) => ['profile', p, 'wiki-index'] as const,
+    wikiGraph: (p: string) => ['profile', p, 'wiki-graph'] as const,
     wikiPage: (p: string, id: string) => ['profile', p, 'wiki-page', id] as const,
     brainLog: (p: string) => ['profile', p, 'brain-log'] as const,
     lint: (p: string) => ['profile', p, 'lint'] as const,
@@ -79,6 +80,7 @@ const brainKeys = () => {
     keys.scoped.jobBoard(p),
     keys.scoped.proposals(p),
     keys.scoped.wikiIndex(p),
+    keys.scoped.wikiGraph(p),
     // A committed page edit changes both its catalogue row and the revision an anchor pins.
     keys.scoped.anchors(p),
   ];
@@ -181,6 +183,7 @@ export const usePageRevision = (key: string | null, revision: string | null) =>
     retry: false,
   });
 export const useWikiIndex = () => useQuery({ queryKey: keys.scoped.wikiIndex(profile()), queryFn: api.wikiIndex });
+export const useWikiGraph = () => useQuery({ queryKey: keys.scoped.wikiGraph(profile()), queryFn: api.wikiGraph });
 export const useWikiPage = (id: string | null) =>
   useQuery({ queryKey: keys.scoped.wikiPage(profile(), id ?? ''), queryFn: () => api.wikiPage(id!), enabled: Boolean(id), retry: false });
 

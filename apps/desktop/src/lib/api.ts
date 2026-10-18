@@ -76,6 +76,7 @@ import type {
   VaultImportResult,
   VideoPreview,
   WebPreview,
+  WikiGraph,
   WikiIndex,
   WikiPageView,
   WikiJob,
@@ -286,6 +287,8 @@ export const api = {
 
   // The compiled wiki: catalogue, one page's permitted view, and save-an-answer.
   wikiIndex: () => request<WikiIndex>('/api/wiki/pages'),
+  /** The whole wiki as nodes and edges — one request for the brain map. */
+  wikiGraph: () => request<WikiGraph>('/api/wiki/graph'),
   wikiPage: (id: string) => request<WikiPageView>(`/api/wiki/pages/${encodeURIComponent(id)}`),
   /** Freezes one answer turn as a model-provenance source and queues its compile job. */
   saveAnswer: (body: SaveAnswerRequest) => post<SourceReceipt>('/api/wiki/save', body),

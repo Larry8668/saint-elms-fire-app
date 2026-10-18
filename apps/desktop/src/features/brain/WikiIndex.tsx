@@ -55,13 +55,24 @@ function WikiRow({ page, index, onOpen }: { page: WikiPageEntry; index: number; 
  * and claim count — what index.md says, rendered. The filter runs client-side over the
  * same catalogue the teachers search through search_wiki.
  */
-export function WikiIndexPanel({ index, loading, onOpen }: { index: WikiIndex | undefined; loading: boolean; onOpen: (id: string) => void }) {
+export function WikiIndexPanel({
+  index,
+  loading,
+  onOpen,
+  matchIds = null,
+}: {
+  index: WikiIndex | undefined;
+  loading: boolean;
+  onOpen: (id: string) => void;
+  /** The Brain section's search, when one is active: only these pages are listed. */
+  matchIds?: Set<string> | null;
+}) {
   const [filter, setFilter] = useState('');
   const groups = useMemo(() => {
     const q = filter.trim().toLowerCase();
-    const rows = (index?.pages ?? []).filter((p) => !q || `${p.title} ${p.summary} ${p.id}`.toLowerCase().includes(q));
+    const rows = (index?.pages ?? []).filter((p) => (!matchIds || matchIds.has(p.id)) && (!q || `${p.title} ${p.summary} ${p.id}`.toLowerCase().includes(q)));
     return KIND_ORDER.map((kind) => ({ kind, rows: rows.filter((p) => p.kind === kind) })).filter((g) => g.rows.length > 0);
-  }, [index, filter]);
+  }, [index, filter, matchIds]);
 
   if (loading) return <RowListSkeleton />;
 

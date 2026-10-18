@@ -4,6 +4,8 @@ import {
   type SearchMode,
   type SourceRecord,
   type WikiClaimView,
+  type WikiGraph,
+  type WikiGraphEdge,
   type WikiIndex,
   type WikiLink,
   type WikiPageEntry,
@@ -111,6 +113,33 @@ export class WikiQuery {
       counts: { pages: entries.length, sources: Object.keys(sources).length, byKind },
       pages: entries.sort((a, b) => a.kind.localeCompare(b.kind) || a.title.localeCompare(b.title)),
     };
+  }
+
+  /**
+   * The vault as nodes and edges in one read: every readable page, and every link whose
+   * target is a page in this vault (a dangling link has nowhere to be drawn). Duplicate
+   * links between the same pair keep the first — the student's own link order wins.
+   */
+  async graph(): Promise<WikiGraph> {
+    const snapshots = (await this.reader.listPages()).filter((s) => s.state !== 'malformed' && s.state !== 'newer_schema');
+    const ids = new Set(snapshots.map((s) => s.id));
+    const edges: WikiGraphEdge[] = [];
+    const seen = new Set<string>();
+    const nodes = snapshots.map((snapshot) => {
+      const entry = entryOf(snapshot);
+      const meta = snapshot.metadata;
+      const links = meta ? meta.links.map((l) => ({ to: l.toPageId, type: l.type, origin: l.origin })) : (snapshot.legacy?.links ?? []);
+      for (const link of links) {
+        if (link.to === snapshot.id || !ids.has(link.to)) continue;
+        const key = `${snapshot.id}>${link.to}`;
+        if (seen.has(key)) continue;
+        seen.add(key);
+        edges.push({ source: snapshot.id, target: link.to, type: link.type, origin: link.origin });
+      }
+      const courseIds = [...new Set((meta?.courseRefs ?? []).map((ref) => ref.courseId))];
+      return { id: entry.id, kind: entry.kind, title: entry.title, summary: entry.summary, updatedAt: entry.updatedAt, claims: entry.claims, claimTexts: (meta?.claims ?? []).map((claim) => claim.text), sourceIds: entry.sourceIds, courseIds };
+    });
+    return { schemaVersion: CONTRACT_VERSION, nodes, edges };
   }
 
   /**

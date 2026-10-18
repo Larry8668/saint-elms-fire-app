@@ -534,6 +534,42 @@ export const WikiIndexSchema = z.strictObject({
 export type WikiIndex = z.infer<typeof WikiIndexSchema>;
 
 /**
+ * The wiki as a compact graph, for GET /api/wiki/graph: one node per readable page and one
+ * edge per link whose target page exists. Derived from the same snapshots as the index and
+ * read-only — it exists so a visualization of a 1,000+ page vault is one request, not one
+ * per page. Mastery status is not repeated here; it comes from /api/brain/records.
+ */
+export const WikiGraphNodeSchema = z.strictObject({
+  id: IdentifierSchema,
+  kind: z.enum(['concept', 'source_summary', 'synthesis', 'question']),
+  title: z.string(),
+  summary: z.string(),
+  updatedAt: TimestampSchema.nullable(),
+  claims: z.number().int().nonnegative(),
+  /** The claims' text, so a client-side search can reach what a page asserts, not only its title. */
+  claimTexts: z.array(z.string()),
+  sourceIds: IdentifierListSchema,
+  /** Distinct course ids the page is anchored to, in first-seen order. */
+  courseIds: z.array(z.string()),
+});
+export type WikiGraphNode = z.infer<typeof WikiGraphNodeSchema>;
+
+export const WikiGraphEdgeSchema = z.strictObject({
+  source: IdentifierSchema,
+  target: IdentifierSchema,
+  type: z.enum(EDGE_TYPES),
+  origin: z.enum(['course', 'student', 'peer', 'suggested']),
+});
+export type WikiGraphEdge = z.infer<typeof WikiGraphEdgeSchema>;
+
+export const WikiGraphSchema = z.strictObject({
+  schemaVersion: ContractVersionSchema,
+  nodes: z.array(WikiGraphNodeSchema),
+  edges: z.array(WikiGraphEdgeSchema),
+});
+export type WikiGraph = z.infer<typeof WikiGraphSchema>;
+
+/**
  * One claim as the engine judges it right now: assertable means its provenance resolves
  * against the vault's current sources; a withheld claim may be named, never asserted.
  */
