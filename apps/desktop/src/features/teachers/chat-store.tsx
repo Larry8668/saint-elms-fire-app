@@ -227,7 +227,8 @@ export function ChatProvider({ profileId, children }: { profileId: string; child
           // The anchor travels as a claim — page plus the revision it was picked at — and the
           // consent is exactly this turn's: nothing else leaves the device with it.
           ...(teacher === 'philosopher' && anchor ? { anchorPageId: anchor.pageId, anchorRevision: anchor.pageRevision } : {}),
-          ...(teacher === 'philosopher' && threadsRef.current[teacher].webConsent ? { consent: { web: true } } : {}),
+          // The Philosopher's job is real-world context: every anchored turn searches the web (topic only).
+          ...(teacher === 'philosopher' ? { consent: { web: true } } : {}),
         };
         try {
           await streamTurn(turn, onEvent(sessionId), controller.signal);
