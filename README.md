@@ -1,181 +1,110 @@
-# Saint Elms Fire
+<p align="center">
+  <img src="docs/assets/banner.jpg" alt="Saint Elms Fire: a personal teacher with three minds, teaching from a living map of everything you have learned" width="100%">
+</p>
 
-## Reimagining learning and knowledge management in the age of AI
+<p align="center">
+  <a href="docs/gemma-and-multimodal.md"><img alt="Built on Gemma 4" src="https://img.shields.io/badge/built%20on-Gemma%204-6fe3c5?style=flat-square&labelColor=0b1022"></a>
+  <a href="docs/gemma-and-multimodal.md"><img alt="Multimodal: text, images, audio, video" src="https://img.shields.io/badge/multimodal-text%20·%20image%20·%20audio%20·%20video-8fb8ff?style=flat-square&labelColor=0b1022"></a>
+  <a href="docs/features.md#offline-and-hosted"><img alt="Offline-first" src="https://img.shields.io/badge/offline-first-f6b26b?style=flat-square&labelColor=0b1022"></a>
+  <a href="LICENSE"><img alt="Apache 2.0 licence" src="https://img.shields.io/badge/licence-Apache%202.0-b9a3ff?style=flat-square&labelColor=0b1022"></a>
+</p>
 
-Saint Elms Fire is the university of the future. It gives every student their own personal teacher with three minds:
-
-- *Socrates my Friend* is a buddy who knows your logistics and deadlines.
-- *Socrates my Guide* knows the syllabus inside out.
-- *Socrates my Philosopher* challenges you to apply your knowledge to shape the world.
-
-Together, they teach from a living map of your personal learning journey. Every concept you touch becomes a star, and the constellation of your knowledge grows with you over the course.
-
-Designed around GDPR/DPDP-style data minimisation — a technical posture, not a legal certification — the open-weight models do the work, and the second brain is a plain markdown vault that stays the student's own. Run it fully on the student's device (offline-first), or let the university host each student a private workspace — the vault is exportable byte for byte either way.
-
-**In technical terms:** an offline-first study companion with three Socratic AI teachers on Gemma 4 and a second brain that maps what *you* understand onto the course sky — runnable on a student laptop, or as per-student hosted workspaces behind a university portal.
-
-Submission for [Hacktoberfest Hack Day Bengaluru 2026](https://www.mlh.com/events/hacktoberfest-hack-day-bengaluru-a0), October 13–18, 2026 — **Track 1: Best Use of Gemma 4 → G3. Multimodal AI Intelligence** (*"combines information such as text, images or audio to understand context and produce meaningful outcomes"*).
-
-**Team The Org of Fine & Curious Individuals:** [Mahesh Shantaram](https://github.com/thecont1/), [Leharaditya Kumar](https://github.com/Larry8668)
+<p align="center">
+  <a href="docs/features.md"><b>Features</b></a> ·
+  <a href="docs/getting-started.md"><b>Run it locally</b></a> ·
+  <a href="docs/live-demo.md"><b>Hosted demo</b></a> ·
+  <a href="docs/architecture.md"><b>Architecture</b></a> ·
+  <a href="docs/gemma-and-multimodal.md"><b>Gemma &amp; multimodal</b></a> ·
+  <a href="HANDOVER.md"><b>Handover</b></a>
+</p>
 
 ---
 
-## See it live
+**Saint Elms Fire is the university of the future.** Every student gets a personal teacher with three minds. Together they teach from a living map of that student's learning: every concept they touch becomes a star, and the constellation grows with them through the course.
 
-| What | Where |
+The models are open-weight Gemma 4. The second brain is a plain markdown vault that stays the student's own. It runs fully on a student's laptop, or the university hosts each student a private workspace, and the vault exports byte for byte either way.
+
+<p align="center">
+  <img src="docs/assets/screens/brain-map.jpg" alt="The Brain view: a third-year student's 1,384 wiki pages, grown since July 2024" width="100%">
+  <br><sub>A third-year student's second brain: 1,384 pages across physics, mathematics and astrophysics.</sub>
+</p>
+
+## Three minds
+
+| | Mind | What it does |
+| :---: | --- | --- |
+| 🔥 | **Socrates my Friend** | Knows your campus: fees, hostels, calendars and your confirmed deadlines. Never shares another student's details. |
+| 🧭 | **Socrates my Guide** | Knows the syllabus inside out and teaches only from your released lessons, probing the misconceptions you actually hold. |
+| 🔭 | **Socratest my Philosopher** | Starts from a page of your own wiki and takes it onto the web, to real-world applications and recent developments. Every claim is tagged `[course]` or `[web]`. |
+
+## What makes it different
+
+- **Your brain, in your words.** One markdown page per concept, as *you* understand it. Open the folder in Obsidian.
+- **Models only propose.** Gemma drafts page edits; a deterministic compiler decides what may land, and you review the diff before anything is written.
+- **Mastery is earned.** Met, shaky and solid are computed from evidence, never set by a model.
+- **Contradictions stay visible.** When your words and the course disagree, both are kept and the Guide helps you work through it.
+- **Works offline.** With local models, courses, chat and the brain keep working without a network.
+
+## A look inside
+
+<table>
+  <tr>
+    <td width="50%"><img src="docs/assets/screens/sky.jpg" alt="The sky"><br><b>The sky.</b> Every concept in the released courses. Gold is solid, amber is shaky, aurora lines are links you made.</td>
+    <td width="50%"><img src="docs/assets/screens/concept-sheet.jpg" alt="A concept sheet"><br><b>A concept.</b> Your words, the evidence behind its status, and one click to the Guide, a quiz or the Philosopher.</td>
+  </tr>
+  <tr>
+    <td width="50%"><img src="docs/assets/screens/brain-story.jpg" alt="What your brain learned"><br><b>What your brain learned.</b> A timeline of sources compiled into pages, and the places your brain disagrees with itself.</td>
+    <td width="50%"><img src="docs/assets/screens/guide-chat.jpg" alt="The Guide"><br><b>The Guide.</b> Socratic by design: it answers a question with the question that gets you there.</td>
+  </tr>
+</table>
+
+More in **[Features](docs/features.md)**.
+
+## From any evidence to your brain
+
+Notes, PDFs, photos of handwritten pages, voice memos and lecture videos all go through the same reviewed pipeline.
+
+<p align="center">
+  <img src="docs/assets/pipeline.jpg" alt="File it, Gemma reads it, a proposal is drafted, you review it, your brain grows" width="100%">
+</p>
+
+How each format is read, and why every model role is a Gemma: **[Gemma &amp; multimodal](docs/gemma-and-multimodal.md)**.
+
+## How it fits together
+
+<p align="center">
+  <img src="docs/assets/architecture.jpg" alt="Architecture: portal, uni server, one VM per student, vault store, model gateway and Gemma, or a local engine on the laptop" width="100%">
+</p>
+
+Packages, the hosted flow and the deep dives: **[Architecture](docs/architecture.md)**.
+
+## Quick start
+
+```bash
+corepack enable && pnpm install
+cp .env.example .env
+pnpm ollama:pull     # gemma4:e4b + embeddinggemma + shieldgemma:2b
+pnpm dev             # uni :4200 · engine :4100 · web UI :5173
+```
+
+Open <http://localhost:5173>, choose **Exploring the demo?** and pick a student. Prerequisites, the three demo students, the offline drill and every command are in **[Getting started](docs/getting-started.md)**.
+
+## Documentation
+
+| | |
 | --- | --- |
-| Portal — sign in, open your workspace | <https://sef-uni.onrender.com/app> |
-| Web app — the student workspace itself | <https://saint-elms-fire.vercel.app> |
-| Uni API health | <https://sef-uni.onrender.com/health> |
+| [Features](docs/features.md) | The teachers, the second brain, the sky, Add to my wiki, Peers and the registrar |
+| [Getting started](docs/getting-started.md) | Run it locally, demo students, offline test, repository commands |
+| [Hosted demo](docs/live-demo.md) | The deployed portal and web app, and how a hosted workspace starts |
+| [Architecture](docs/architecture.md) | Diagram, packages and links to every deep dive |
+| [Gemma &amp; multimodal](docs/gemma-and-multimodal.md) | Model roles, how each format is read, open-source and privacy posture |
+| [HANDOVER.md](HANDOVER.md) | The operator runbook: setup, demo script, auth, troubleshooting |
+| [AGENTS.md](AGENTS.md) | Start here before changing code |
 
-These are the configured demo entry points; repository updates and deployed revisions are separate.
+## Built at Hacktoberfest Hack Day Bengaluru 2026
 
-On a self-serve demo build, choose a student under **Try the demo**. The portal opens that persona's workspace, signs in there and starts the guided tour. Close it with × or Esc; **Tour** above Settings restarts it. If self-serve is disabled, use **Sign in as a demo student**, enter the operator-provided password, then **Open my workspace** and sign in on that engine.
+A submission for [Hacktoberfest Hack Day Bengaluru 2026](https://www.mlh.com/events/hacktoberfest-hack-day-bengaluru-a0), October 13–18, 2026, in **Track 1: Best Use of Gemma 4 → G3. Multimodal AI Intelligence**.
 
-The three personas share the same B.Sc. Physics/Maths/Astrophysics programme at different stages. Each persona has a persistent workspace shared by everyone trying that persona; individual browsers have separate engine sessions. A self-serve build embeds the demo password in the public portal bundle on purpose — it is only ever the demo credential (see [docs/deploy-vercel.md](docs/deploy-vercel.md)).
+**Team The Org of Fine & Curious Individuals:** [Mahesh Shantaram](https://github.com/thecont1/) and [Leharaditya Kumar](https://github.com/Larry8668).
 
-| | Ananya | Brinda | Chetna |
-| --- | --- | --- | --- |
-| Stage | Semester 1, week 6 | End of Semester 3 | Semester 5, thesis prep |
-| Sky | Early course concepts and open misconceptions | Dense course sky with student-made connections | Advanced concepts, syntheses and research questions |
-| Story | Mechanics half done; textbook misconceptions open in amber | Strong and well connected; her own physics → maths links | Research mode: Philosopher trails, peer links, a self-correcting misconception |
-
-The hosted demo supports peer sharing when demo admission rows are seeded in Postgres. Each persona is in a different cohort, so switching personas does not show the same feed. Video **files** are supported: the engine combines audio transcription with sampled slide/board frames. YouTube links can be blocked on datacenter IPs; upload an audio or video file instead.
-
-How the hosted path works: the portal sign-in asks the uni for the student's workspace → the uni spawns (or resumes) a **per-student VM** from a golden snapshot → the VM restores the student's vault from the object store → the browser is handed to the web app, which drives that VM cross-origin → every model call goes through a token-checked **model gateway** in front of the Ollama workers. The hosted app requests a final vault flush and workspace end on sign-out. Ordinary workspaces are retired; configured pinned demo workspaces remain. Engine logout revokes the calling device's session and retains shared credentials while another device is signed in.
-
-## The idea in one minute
-
-A university releases its courseware as signed packages. A student's engine installs only what has been released to their cohort, and from then on everything runs against that engine — on their laptop, or on their own hosted workspace:
-
-- **Three teachers** with distinct contracts:
-  - **Friend** answers campus questions (fees, hostels, calendars) from the university's support notes and the student's *confirmed* logistics only, and refuses to share other students' details — the refusal check runs before the model does.
-  - **Guide** is a Socratic tutor that teaches only from the student's released lessons and probes their known misconceptions.
-  - **Philosopher** starts from a committed, course-linked page of the student's wiki and explores real-world applications and recent developments. The app enables web search on every Philosopher turn; the anchor bar shows the topic query. Answers distinguish `[course]` and `[web]` evidence and end with a `Trailhead:` question. Without search, it falls back to course evidence.
-- **A second brain**: one markdown page per concept *as the student understands it* — a plain folder you can open in Obsidian. Models only ever *propose* page edits; a deterministic compiler and merge policy decide what lands, model-drafted edits wait for the student's review of a diff, and mastery (met / shaky / solid) is computed from evidence, never set by the model.
-- **The Brain view**: a full-screen, interactive map of the student's wiki, with search, growth replay and **Ask your brain**. Ask answers from that wiki alone, highlights cited pages and can save an answer through proposal review. Scroll down for **What your brain learned**, disagreements, page provenance, sources and maintenance.
-- **The sky**: a star map of every concept in the released courses plus the student's own syntheses and questions. Stars light up as the brain grows: amber for shaky, gold for solid, aurora lines for connections the student made themselves.
-- **Add to my wiki**: any evidence becomes a source — pasted or written notes, a PDF, a photo of handwritten notes (read by the vision model on upload), a voice memo or lecture recording, an uploaded lecture video, or a consented YouTube fetch (video sites can block datacenter IPs — upload the file instead). Audio and video are read in the background. Video combines audio transcription with sampled slide/board frames, merged on timestamps. Extractions can be corrected; any proposed page changes wait for explicit review.
-- **Peers**: publish a page to your cohort's feed; importing a share runs the same source → proposal → review pipeline, never a direct write. An advisory safety screen flags risky payloads — the student still decides.
-- **Proactive, within limits**: an attention rail, suggested questions from recent work, bounded study plans and consented subject feeds — all derived from the student's own stores, no silent writes.
-- **A registrar's desk** hosted by the university itself at `/admin`: applications in, enrolment decisions out, every staff action audited.
-
-With local model providers, the engine, brain and installed courseware can keep working without a network. Local sign-in uses cached password verification or a retained signed entitlement, depending on the account flow ([HANDOVER.md](HANDOVER.md) §6). Hosted mode needs the network; a limited session still permits reads and vault export.
-
-## Run locally
-
-You'll need Node 22+, pnpm 10.18 (the version pinned in `package.json`; `corepack` provides it) and Ollama running. Docker is optional — it runs SearXNG for web search or the container stack. Audio and video files need ffmpeg; YouTube links additionally need yt-dlp and Python 3.
-
-```bash
-corepack enable
-pnpm install
-cp .env.example .env     # first setup only; preserve an existing .env
-pnpm ollama:pull         # gemma4:e4b + embeddinggemma + shieldgemma:2b
-pnpm search:up           # optional: SearXNG web search for the Philosopher (Docker)
-pnpm dev                 # uni server :4200, engine :4100, desktop UI :5173
-```
-
-Open <http://localhost:5173>. The default local demo password is **`harbor-lantern`** (overridable with `DEMO_PASSWORD`).
-
-The engine and the Vite UI read the root `.env`; the uni server's dev script reads the host process environment, so export uni settings (for example a custom `DEMO_PASSWORD`) in the shell that starts it. This quickstart is the no-database demo — real accounts, the staff portal and Peers need Postgres; the bootstrap is in [HANDOVER.md](HANDOVER.md) §4.
-
-| Account | Who | What to look at |
-| --- | --- | --- |
-| `ananya@saintelms.local` | Semester 1, week 6 | Small sky, Mechanics half lit, open misconceptions in amber (force vs. motion, centrifugal force, μN friction) |
-| `brinda@saintelms.local` | End of Semester 3 | Dense, mostly gold sky; her own links from physics to the maths underneath (F = dp/dt → derivative) |
-| `chetna@saintelms.local` | Semester 5, thesis prep | Near-complete sky, Philosopher research trails, peer links, one self-correcting shaky node (band gap) |
-
-Staff sign in at the registrar portal the uni hosts itself (`http://localhost:4200/admin`). It needs the Postgres account stack rather than the local demo setup — the exact bootstrap commands are in [HANDOVER.md](HANDOVER.md) §4.
-
-Compare the three students on the same **Mechanics** course to see how one curriculum grows into three different brains.
-
-**Offline test (local cached password):** sign in once with everything running, then stop only the uni process — run `pnpm dev:uni`, `pnpm dev:engine` and `pnpm dev:app` in separate terminals, since stopping the combined `pnpm dev` stops all three — and keep the engine and Ollama up. Sign out and sign back in with the password: courses, chat and the brain still work; web search, Peers and course sync need their services. Device-authorized real accounts use a signed offline entitlement instead; explicitly signing out of the last device clears it — [HANDOVER.md](HANDOVER.md) §6.
-
-Full setup, demo script and troubleshooting are in **[HANDOVER.md](HANDOVER.md)**. Coding agents start at **[AGENTS.md](AGENTS.md)**. Deep dives:
-
-- **[docs/agentic-layer.md](docs/agentic-layer.md)**: the teachers, their tools, the chat-turn harness, source attribution, chat history and model providers.
-- **[docs/knowledge-graph.md](docs/knowledge-graph.md)**: the course sky, the second brain, mastery rules, the brain-update pipeline and the Sky and Brain views.
-- **[docs/hosted-seat.md](docs/hosted-seat.md)** and **[docs/session-orchestrator.md](docs/session-orchestrator.md)**: running the engine on a public URL, and how the uni spawns, leases, suspends and retires per-student VMs.
-- **[docs/model-gateway.md](docs/model-gateway.md)**: the authenticated, load-balanced gateway hosted engines use instead of a local Ollama.
-- **[docs/object-store.md](docs/object-store.md)**: the S3-compatible vault store (manifest sync, tombstones, compare-and-swap).
-- **[docs/deploy-render.md](docs/deploy-render.md)** / **[docs/deploy-vercel.md](docs/deploy-vercel.md)**: the hosted demo's deploy paths.
-
-## Architecture
-
-```mermaid
-flowchart LR
-  subgraph University
-    U[uni server<br/>accounts · cohorts · releases<br/>signed packages · portal · sessions]
-    C[(courseware/<br/>markdown lessons)] --> U
-    DB[(Postgres)] --- U
-  end
-  subgraph Hosted["Hosted mode — the live demo"]
-    P[portal<br/>/app] -->|sign in| U
-    U -->|one VM per student| VM[seat VM<br/>engine + vault]
-    VM <--> ST[(vault store<br/>S3 / MinIO)]
-    WA[web app<br/>Vercel] <-->|engine session, cross-origin| VM
-    VM -->|token-checked calls| GW[model gateway]
-    GW --> OL[Ollama workers<br/>Gemma 4]
-  end
-  subgraph Device["Local mode — student device"]
-    A[desktop app<br/>Tauri + React] -->|engine session| E[engine :4100<br/>teachers · brain · sync]
-    E --> PF[(profiles/&lt;id&gt;/<br/>content · brain · sessions)]
-    E -->|Gemma 4| O[Ollama]
-    E -->|Philosopher only| S[SearXNG]
-  end
-  E <-->|token, signed packages| U
-```
-
-| Package | Path | Role |
-| --- | --- | --- |
-| `@sef/shared` | `packages/shared` | Types and contracts shared by every package; `@sef/shared/node` holds crypto and the courseware loader |
-| `@sef/uni-server` | `server/uni` | Hono API: auth, cohorts and releases, ed25519-signed course packages, peer-share feed, session orchestration, admin API |
-| `@sef/gateway` | `server/gateway` | Token-checked, load-balanced proxy in front of Ollama/OpenAI-compatible workers for hosted engines |
-| `@sef/engine` | `engine` | Student runtime: per-profile workspaces, Mastra agents, brain pipeline, course sync, chat history, offline sign-in, vault store sync |
-| `@sef/desktop` | `apps/desktop` | React 19 + Tailwind 4 UI, also packaged with Tauri 2; builds the student app and the uni-hosted portal shell |
-| `@sef/admin` | `apps/admin` | Registrar/staff portal, built statically and served by the uni at `/admin` |
-| courseware | `courseware/` | B.Sc. Physics, Mathematics and Astrophysics programme as markdown lessons with frontmatter |
-| seat infra | `infra/seat/` | Seat bootstrap, session start/stop scripts, golden-snapshot build for hosted VMs |
-| e2e | `e2e/` | Playwright release drill against a real uni + engine, no mocks |
-
-## Why it fits the tracks
-
-**Track 1 · Best Use of Gemma 4 — G3. Multimodal AI Intelligence**
-
-The product *is* the multimodal pipeline the track asks for: every input format a student hands it becomes a first-class source in one reasoning system, and the models that touch it are all Gemma by default.
-
-- **Images** — a photo of handwritten notes or a campus notice is read on upload by the vision-role Gemma (native `/api/chat` transcription); a photographed notice can become a logistics proposal the Friend later cites.
-- **Audio** — a voice memo or recorded lecture is ffmpeg-normalised and transcribed in timestamped windows through the vision-role provider's `/v1/audio/transcriptions`.
-- **Video** — an uploaded lecture video (MP4/MOV/WebM/MKV) is read in the background: the audio track is transcribed and at most 12 sampled slide/board frames are read by the vision model, merged on timestamps into one extraction. A pasted YouTube link stays a separate consent-gated fetch.
-- **Text** — pasted or written notes, PDFs (page-wise, with honest partial results), and frozen chat sessions.
-- **Reasoning across formats** — all of it flows through one deterministic *extract → compile → proposal → student review* pipeline, so a single teacher answer can draw on a released lesson, a photographed notice and a lecture recording, with every citation verified before it is shown.
-
-Around that pipeline every model role is a Gemma: tutor (tool-calling chat), brain keeper (structured proposals), vision (images and audio), embed (hybrid retrieval) and ShieldGemma (advisory peer-share screening) — with hardware-tiered suggestions so the models match the machine, and each role swappable between Ollama, the hosted model gateway, or any OpenAI-compatible API, all from Settings.
-
-Small-model reliability is designed in, not hoped for. Schemas are flat, concept names are passed as enums, lane checks run before the model, and output is validated and repaired deterministically afterwards. Thinking mode defaults on for local profiles' brain keeper and off on central-model seats (`ENGINE_THINKING_DEFAULT=false`); these are first-run defaults and stored profile settings win.
-
-**Best Open-Source AI Project**
-- Self-hostable: the compose stack covers PostgreSQL, the uni server, the engine and SearXNG, with optional profiles for Mailpit, MinIO, Ollama and the gateway — production env and migrations are in [HANDOVER.md](HANDOVER.md) §3; a plain `docker compose up` is not the production path.
-- No vendor lock-in for data: the brain is a plain markdown vault with one-command export/import, and courseware is plain markdown.
-- **Local or university-hosted:** with local providers and analytics disabled, study data can stay on the student's device. Hosted workspaces and inference are operated by the university, whose operator can access the VM and store. Sharing, web search, external model providers and optional PostHog analytics have their own network paths; this is a data-minimisation design, not a legal compliance certification. Vault export and source erasure keep student control explicit.
-- Trust is explicit. Course packages are ed25519-signed and hash-checked, and the university key is pinned on first use. Every teacher answer comes with a verification panel listing its sources, tool calls and contract checks.
-
-## Repository commands
-
-```bash
-pnpm dev           # everything, with hot reload (uni :4200, engine :4100, UI :5173)
-pnpm typecheck     # all packages
-pnpm test          # node:test suites (uni auth & signing, engine validator, mastery, offline auth)
-pnpm test:e2e      # Playwright release drill against a real uni + engine
-pnpm eval          # engine agent-eval scenario runner
-pnpm preflight     # checks tools, models and services on a demo machine
-pnpm build:hosted  # the /app portal + /admin bundles the uni serves
-pnpm dev:gateway   # model gateway alone
-pnpm docker:up     # self-hosted stack
-pnpm search:up     # optional SearXNG for the Philosopher
-pnpm store:up      # optional: MinIO object store for vault sync (docs/object-store.md)
-pnpm ollama:pull   # gemma4:e4b + embeddinggemma + shieldgemma:2b
-pnpm desktop       # Tauri desktop shell (needs Rust)
-```
-
-Licence: see `LICENSE`.
+Licensed under [Apache 2.0](LICENSE).
